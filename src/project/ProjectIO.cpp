@@ -9,6 +9,7 @@
 #include <ctime>
 #include <sstream>
 #include <iomanip>
+#include <stdexcept>
 
 using json = nlohmann::json;
 namespace fu = utils::file;
@@ -66,9 +67,9 @@ std::string ProjectIO::nowTimestamp() {
     auto now = std::time(nullptr);
     std::tm tm;
 #ifdef _WIN32
-    localtime_s(&tm, &now);
+    gmtime_s(&tm, &now);
 #else
-    localtime_r(&now, &tm);
+    gmtime_r(&now, &tm);
 #endif
     std::ostringstream oss;
     oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
@@ -178,8 +179,7 @@ Project ProjectIO::load(const std::string& path) {
 void ProjectIO::save(const Project& project) {
     const std::string& p = project.path;
     if (p.empty()) {
-        spdlog::error("Cannot save: project.path is empty");
-        return;
+        throw std::runtime_error("Cannot save: project.path is empty");
     }
 
     // 更新修改时间

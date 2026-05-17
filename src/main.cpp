@@ -12,6 +12,7 @@
 
 #include <CLI/CLI.hpp>
 #include <spdlog/spdlog.h>
+#include <algorithm>
 #include <iostream>
 #include <cstdlib>
 
