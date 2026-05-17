@@ -14,9 +14,8 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(CompilerSettings)
 include(FetchDependencies)
 
-# === Phase 0 source files ===
-# Files are listed explicitly (not globbed) so that adding a new file
-# is a deliberate step — CMake re-runs when this file changes.
+# === Phase 1 source files ===
+# 文件显式列出（不用 glob），新文件必须手动添加，CMake 自动重新生成
 set(SOURCES
     src/main.cpp
 
@@ -30,8 +29,10 @@ set(SOURCES
     src/utils/StringUtils.h
     src/utils/JsonUtils.h
 
-    # project — stubs for Phase 1 (Models.h will grow significantly)
+    # project — Phase 1 data models and I/O
     src/project/Models.h
+    src/project/ProjectIO.h
+    src/project/ProjectIO.cpp
     src/project/ProjectManager.h
     src/project/ProjectManager.cpp
 
@@ -43,7 +44,7 @@ set(SOURCES
 add_executable(novelagent ${SOURCES})
 target_include_directories(novelagent PRIVATE src)
 
-# Only Phase 0 deps: header-only libraries. No system package required.
+# Phase 1 依赖：全部 header-only 库，无需系统安装
 target_link_libraries(novelagent PRIVATE
     nlohmann_json::nlohmann_json
     CLI11::CLI11
