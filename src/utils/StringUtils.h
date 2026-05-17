@@ -1,7 +1,7 @@
 #pragma once
 
-// Common string operations missing from the standard library.
-// All inline — small enough that link-time dedup isn't needed.
+// 标准库里常用但分散的字符串辅助操作。
+// 这些函数都足够轻量，直接内联即可。
 
 #include <string>
 #include <vector>
@@ -31,7 +31,7 @@ inline std::string trimmed(std::string s) {
     return s;
 }
 
-// split on delimiter; empty tokens ARE included (unlike some split implementations)
+// 按分隔符拆分字符串，保留空片段。
 inline std::vector<std::string> split(const std::string& s, char delim) {
     std::vector<std::string> result;
     std::string token;

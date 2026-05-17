@@ -18,7 +18,7 @@ std::string readText(const std::string& path) {
 }
 
 void writeText(const std::string& path, const std::string& content) {
-    // Ensure parent directory exists — project subdirectories may not exist yet
+    // 先确保父目录存在，避免首次写入项目子目录时失败。
     fs::create_directories(fs::path(path).parent_path());
     std::ofstream f(path);
     f << content;
@@ -70,8 +70,7 @@ std::string baseName(const std::string& path) {
 
 std::string homeDir() {
 #ifdef _WIN32
-    // USERPROFILE is the standard Windows equivalent of $HOME
-    // (e.g. C:\Users\kami)
+    // USERPROFILE 是 Windows 上与 $HOME 对应的标准环境变量。
     const char* home = std::getenv("USERPROFILE");
     return home ? home : ".";
 #else

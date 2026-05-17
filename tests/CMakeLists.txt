@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
-# 每个测试可执行文件独立，仅链接所需依赖。
-# 命名约定：test_<模块名>.cpp → 可执行文件 test_<模块名>
+# 每个测试可执行文件都独立构建，只链接自身所需的依赖。
+# 命名约定为 test_<模块名>.cpp，对应生成 test_<模块名> 可执行文件。
 
-# ── Phase 0: smoke test ──
+# Phase 0：冒烟测试。
 add_executable(test_main
     test_main.cpp
 )
@@ -16,7 +16,7 @@ target_link_libraries(test_main PRIVATE
 )
 add_test(NAME test_main COMMAND test_main)
 
-# ── Phase 1: Models 序列化测试 ──
+# Phase 1：Models 序列化测试。
 add_executable(test_models
     test_models.cpp
 )
@@ -28,7 +28,7 @@ target_link_libraries(test_models PRIVATE
 )
 add_test(NAME test_models COMMAND test_models)
 
-# ── Phase 1: ProjectIO 测试 ──
+# Phase 1：ProjectIO 与 ProjectManager 测试。
 add_executable(test_project_io
     test_project_io.cpp
     "${CMAKE_SOURCE_DIR}/src/project/ProjectIO.cpp"

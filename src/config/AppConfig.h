@@ -1,11 +1,11 @@
 #pragma once
 
-// AppConfig manages LLM provider settings and API keys.
-// Persisted as JSON in ~/.novelagent/config.json.
+// AppConfig 用于管理 LLM 提供商配置和 API Key。
+// 配置会以 JSON 形式持久化到 ~/.novelagent/config.json。
 //
-// All three providers (DeepSeek, Kimi, Claude) use OpenAI-compatible APIs,
-// so the same ProviderConfig struct works for all of them.
-// Only base_url, model name, and context_window differ.
+// DeepSeek、Kimi、Claude 都兼容 OpenAI 风格接口，
+// 因此三者共用同一套 ProviderConfig 结构。
+// 实际差异主要在 base_url、model 和 context_window。
 
 #include <string>
 #include <map>
@@ -14,13 +14,13 @@
 struct ProviderConfig {
     std::string name;
     std::string api_key;
-    std::string base_url;       // e.g. "https://api.deepseek.com"
-    std::string model;          // e.g. "deepseek-chat"
-    int context_window = 65536; // model's max context window in tokens
+    std::string base_url;       // 例如 "https://api.deepseek.com"
+    std::string model;          // 例如 "deepseek-chat"
+    int context_window = 65536; // 模型支持的最大上下文窗口（token）
     double temperature = 0.7;
     int max_tokens = 4096;
 
-    // nlohmann macro: auto-generates to_json/from_json
+    // 使用 nlohmann 宏自动生成 to_json/from_json。
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProviderConfig,
         name, api_key, base_url, model, context_window, temperature, max_tokens)
 };
@@ -29,20 +29,20 @@ struct AppConfig {
     std::string default_provider = "deepseek";
     std::map<std::string, ProviderConfig> providers;
 
-    // Load from default location: ~/.novelagent/config.json
+    // 从默认位置 ~/.novelagent/config.json 加载配置。
     static AppConfig load();
 
-    // Load from explicit path
+    // 从指定路径加载配置。
     static AppConfig loadFromFile(const std::string& path);
 
-    // Save to path (creates parent directories)
+    // 保存到指定路径，必要时自动创建父目录。
     void save(const std::string& path) const;
 
-    // Returns nullptr if provider not found
+    // 如果找不到对应 provider，则返回 nullptr。
     const ProviderConfig* getProvider(const std::string& name) const;
     const ProviderConfig* getDefaultProvider() const;
 
-    // Convenience: set API key for a provider (creates entry if needed)
+    // 便捷方法：为某个 provider 设置 API Key，不存在时自动创建条目。
     void setApiKey(const std::string& provider, const std::string& key);
     void addProvider(const std::string& name, const ProviderConfig& config);
 

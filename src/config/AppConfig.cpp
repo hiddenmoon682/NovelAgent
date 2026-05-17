@@ -13,7 +13,8 @@ AppConfig AppConfig::load() {
     if (utils::file::exists(configPath)) {
         return loadFromFile(configPath);
     }
-    // Return empty config; caller will use env vars for API keys
+
+    // 配置文件不存在时返回空配置，由调用方继续尝试环境变量。
     return {};
 }
 
@@ -31,7 +32,7 @@ AppConfig AppConfig::loadFromFile(const std::string& path) {
             }
         }
     } catch (const std::exception& e) {
-        // Don't crash on bad config — warn and continue with empty config
+        // 配置损坏时不让程序崩溃，记录警告后继续使用空配置。
         spdlog::warn("Failed to load config from {}: {}", path, e.what());
     }
     return config;

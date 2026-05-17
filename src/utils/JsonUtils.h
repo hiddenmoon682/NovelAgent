@@ -1,9 +1,9 @@
 #pragma once
 
-// Helpers for safer nlohmann::json access.
-// getOpt returns nullopt when the key doesn't exist or is null —
-// this avoids the exception nlohmann throws for missing keys.
-// getOrDefault returns the default when the key is missing.
+// 更安全地访问 nlohmann::json 的辅助函数。
+// getOpt 在键不存在或值为 null 时返回 nullopt，
+// 可以避免直接访问缺失字段时抛异常。
+// getOrDefault 在键缺失时返回默认值。
 
 #include <nlohmann/json.hpp>
 #include <string>

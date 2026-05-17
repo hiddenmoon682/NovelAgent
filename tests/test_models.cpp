@@ -1,4 +1,4 @@
-// 测试 src/project/Models.h 中所有数据结构的 JSON 序列化往返
+// 测试 src/project/Models.h 中各数据结构的 JSON 序列化与反序列化。
 
 #include "project/Models.h"
 #include <nlohmann/json.hpp>
@@ -11,7 +11,7 @@ using json = nlohmann::json;
 static int tests_run = 0;
 static int tests_passed = 0;
 
-// 简单的测试宏，比 assert 更友好
+// 简单测试宏，输出比原生 assert 更直观。
 #define TEST(name) \
     do { \
         tests_run++; \
@@ -34,10 +34,7 @@ static int tests_passed = 0;
         if (!(cond)) { FAIL(#cond); return; } \
     } while(0)
 
-// ──────────────────────────────────────────────
-// Chapter 序列化往返
-// ──────────────────────────────────────────────
-
+// 验证 Chapter 的完整往返序列化。
 void test_chapter_roundtrip() {
     TEST("Chapter 序列化往返");
 
@@ -54,7 +51,7 @@ void test_chapter_roundtrip() {
     ch.word_count = 4500;
     ch.file_path = "chapters/001-intro.md";
 
-    // 序列化 → 反序列化
+    // 先序列化，再反序列化回来。
     json j = ch;
     Chapter ch2 = j.get<Chapter>();
 
@@ -74,10 +71,7 @@ void test_chapter_roundtrip() {
     PASS();
 }
 
-// ──────────────────────────────────────────────
-// Chapter 默认值 — 空字段
-// ──────────────────────────────────────────────
-
+// 验证 Chapter 的默认字段值。
 void test_chapter_defaults() {
     TEST("Chapter 默认值");
 
@@ -89,8 +83,8 @@ void test_chapter_defaults() {
     Chapter ch2 = j.get<Chapter>();
 
     CHECK(ch2.id == "ch-min");
-    CHECK(ch2.order == 0);              // 默认值
-    CHECK(ch2.status == "outlined");    // 默认值
+    CHECK(ch2.order == 0);
+    CHECK(ch2.status == "outlined");
     CHECK(ch2.scenes.empty());
     CHECK(ch2.pov_characters.empty());
     CHECK(ch2.key_events.empty());
@@ -100,10 +94,7 @@ void test_chapter_defaults() {
     PASS();
 }
 
-// ──────────────────────────────────────────────
-// Character 序列化往返（含 relationships map）
-// ──────────────────────────────────────────────
-
+// 验证 Character 及其关系映射的往返序列化。
 void test_character_roundtrip() {
     TEST("Character 序列化往返（含 relationships）");
 
@@ -147,17 +138,13 @@ void test_character_roundtrip() {
     PASS();
 }
 
-// ──────────────────────────────────────────────
-// Character 空 relationships
-// ──────────────────────────────────────────────
-
+// 验证 Character 中空映射和空数组的处理。
 void test_character_empty_maps() {
     TEST("Character 空 relationships/chapter_appearances");
 
     Character c;
     c.id = "ghost";
     c.name = "无名";
-    // 不设置 relationships 和 chapter_appearances
 
     json j = c;
     Character c2 = j.get<Character>();
@@ -169,10 +156,7 @@ void test_character_empty_maps() {
     PASS();
 }
 
-// ──────────────────────────────────────────────
-// Setting 序列化往返（含 attributes map）
-// ──────────────────────────────────────────────
-
+// 验证 Setting 及属性表的往返序列化。
 void test_setting_roundtrip() {
     TEST("Setting 序列化往返（含 attributes）");
 
@@ -203,10 +187,7 @@ void test_setting_roundtrip() {
     PASS();
 }
 
-// ──────────────────────────────────────────────
-// Outline 序列化往返（含嵌套 Chapter 和 PlotThread）
-// ──────────────────────────────────────────────
-
+// 验证 Outline 内嵌结构的往返序列化。
 void test_outline_roundtrip() {
     TEST("Outline 序列化往返（含嵌套结构）");
 
@@ -249,10 +230,7 @@ void test_outline_roundtrip() {
     PASS();
 }
 
-// ──────────────────────────────────────────────
-// Style 序列化往返
-// ──────────────────────────────────────────────
-
+// 验证 Style 的往返序列化。
 void test_style_roundtrip() {
     TEST("Style 序列化往返");
 
@@ -267,7 +245,7 @@ void test_style_roundtrip() {
     s.chapter_length_target = 4000;
     s.sentence_length = "varied";
     s.vocabulary = "rich";
-    s.notes = "避免现代习语，多用感官细节";
+    s.notes = "避免现代俚语，多用感官细节";
 
     json j = s;
     Style s2 = j.get<Style>();
@@ -282,15 +260,12 @@ void test_style_roundtrip() {
     CHECK(s2.chapter_length_target == 4000);
     CHECK(s2.sentence_length == "varied");
     CHECK(s2.vocabulary == "rich");
-    CHECK(s2.notes == "避免现代习语，多用感官细节");
+    CHECK(s2.notes == "避免现代俚语，多用感官细节");
 
     PASS();
 }
 
-// ──────────────────────────────────────────────
-// Project 手动序列化 — path 不应出现在 JSON 中
-// ──────────────────────────────────────────────
-
+// 验证 Project 手写序列化时不会把 path 写入 JSON。
 void test_project_serialization() {
     TEST("Project to_json/from_json（path 不序列化）");
 
@@ -307,15 +282,11 @@ void test_project_serialization() {
     p.tense = "past";
     p.created = "2026-05-17T10:00:00Z";
     p.modified = "2026-05-17T14:30:00Z";
-    p.path = "D:/novels/my-novel";  // 运行时字段，不应被序列化
+    p.path = "D:/novels/my-novel";  // 运行期字段，不应写入 JSON。
 
-    // 序列化
     json j = p;
 
-    // path 不应该出现在 JSON 中
     CHECK(!j.contains("path"));
-
-    // 所有其他字段应正确序列化
     CHECK(j["format_version"] == 1);
     CHECK(j["title"] == "上古之影");
     CHECK(j["author"] == "测试作者");
@@ -330,7 +301,6 @@ void test_project_serialization() {
     CHECK(j["created"] == "2026-05-17T10:00:00Z");
     CHECK(j["modified"] == "2026-05-17T14:30:00Z");
 
-    // 反序列化
     Project p2 = j.get<Project>();
     CHECK(p2.title == "上古之影");
     CHECK(p2.author == "测试作者");
@@ -340,10 +310,7 @@ void test_project_serialization() {
     PASS();
 }
 
-// ──────────────────────────────────────────────
-// Project 子对象赋值后再检查
-// ──────────────────────────────────────────────
-
+// 验证 Project 聚合的子对象可正常访问。
 void test_project_subobjects() {
     TEST("Project 子对象赋值");
 
@@ -377,10 +344,6 @@ void test_project_subobjects() {
 
     PASS();
 }
-
-// ──────────────────────────────────────────────
-// 入口
-// ──────────────────────────────────────────────
 
 int main() {
     std::cout << "=== test_models ===\n\n";

@@ -1,5 +1,5 @@
-// Phase 0 smoke test — verifies nlohmann/json links and works.
-// If this passes, the build toolchain and dependencies are correctly set up.
+// Phase 0 冒烟测试，用来确认 nlohmann/json 能正确链接并运行。
+// 如果这个测试通过，说明当前构建链路和基础依赖至少是可用的。
 
 #include <nlohmann/json.hpp>
 #include <iostream>

@@ -7,6 +7,9 @@
       }
     }
   },
+  "env": {
+    "PATH": "D:/QT/QT/Tools/QtCreator/bin/clang/bin;${PATH}"
+  },
   "permissions": {
     "allow": [
       "Bash(git add *)",
