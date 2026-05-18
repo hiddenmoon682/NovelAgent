@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026-05-18] PLAN.md 同步更新至 v3.0
+
+- **修改** — PLAN.md 全面刷新，标记 Phase 1 为已完成，反映实际超规格实现
+- **修改** — 目录结构更新：新增 `prompt/`、`WorldRule`、当前测试文件清单
+- **修改** — 数据模型章节新增：10 个 struct 设计说明 + GenerationControl 体系
+- **修改** — Phase 4 步骤数减少（PromptContextBuilder 已提前落地）
+- **修改** — Agent 工具新增 WorldRule CRUD、Phase 3 工具总数更新到 ~21 个
+- **修改** — `.gitignore` 新增 `.cache/` clangd 索引目录
+
 ## [2026-05-18] 模型深化 — GenerationControl + Scene + WorldRule + PromptContextBuilder
 
 - **新增** — `GenerationControl` 字段级提示词控制，每个 struct 自带 `generation` 字段
