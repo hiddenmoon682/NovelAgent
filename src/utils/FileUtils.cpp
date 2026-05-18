@@ -12,6 +12,7 @@ namespace utils::file {
 std::string readText(const std::string& path) {
     std::ifstream f(path);
     if (!f) return {};
+
     std::ostringstream buf;
     buf << f.rdbuf();
     return buf.str();
@@ -20,6 +21,7 @@ std::string readText(const std::string& path) {
 void writeText(const std::string& path, const std::string& content) {
     // 先确保父目录存在，避免首次写入项目子目录时失败。
     fs::create_directories(fs::path(path).parent_path());
+
     std::ofstream f(path);
     f << content;
 }

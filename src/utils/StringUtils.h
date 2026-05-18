@@ -11,21 +11,25 @@
 
 namespace utils::string {
 
+// 原地删除字符串左侧空白字符。
 inline void ltrim(std::string& s) {
     s.erase(s.begin(), std::find_if(s.begin(), s.end(),
         [](unsigned char c) { return !std::isspace(c); }));
 }
 
+// 原地删除字符串右侧空白字符。
 inline void rtrim(std::string& s) {
     s.erase(std::find_if(s.rbegin(), s.rend(),
         [](unsigned char c) { return !std::isspace(c); }).base(), s.end());
 }
 
+// 原地删除字符串两端空白字符。
 inline void trim(std::string& s) {
     ltrim(s);
     rtrim(s);
 }
 
+// 返回去除两端空白后的新字符串，不修改原值副本以外的对象。
 inline std::string trimmed(std::string s) {
     trim(s);
     return s;
@@ -42,6 +46,7 @@ inline std::vector<std::string> split(const std::string& s, char delim) {
     return result;
 }
 
+// 用指定分隔符连接多个字符串片段。
 inline std::string join(const std::vector<std::string>& parts, const std::string& delim) {
     std::string result;
     for (size_t i = 0; i < parts.size(); ++i) {
@@ -51,21 +56,25 @@ inline std::string join(const std::vector<std::string>& parts, const std::string
     return result;
 }
 
+// 判断字符串是否以给定前缀开头。
 inline bool startsWith(const std::string& s, const std::string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 }
 
+// 判断字符串是否以给定后缀结尾。
 inline bool endsWith(const std::string& s, const std::string& suffix) {
     return s.size() >= suffix.size() &&
         s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
+// 返回转换为小写后的字符串副本。
 inline std::string toLower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
         [](unsigned char c) { return std::tolower(c); });
     return s;
 }
 
+// 返回转换为大写后的字符串副本。
 inline std::string toUpper(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
         [](unsigned char c) { return std::toupper(c); });

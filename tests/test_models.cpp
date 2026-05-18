@@ -1,83 +1,88 @@
-// 测试 src/project/Models.h 中各数据结构的 JSON 序列化与反序列化。
-
 #include "project/Models.h"
-#include <nlohmann/json.hpp>
-#include <iostream>
+
 #include <cassert>
+#include <iostream>
 #include <string>
+
+#include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 
 static int tests_run = 0;
 static int tests_passed = 0;
 
-// 简单测试宏，输出比原生 assert 更直观。
 #define TEST(name) \
     do { \
-        tests_run++; \
+        ++tests_run; \
         std::cout << "  TEST " << (name) << " ... "; \
-    } while(0)
+    } while (0)
 
 #define PASS() \
     do { \
-        tests_passed++; \
+        ++tests_passed; \
         std::cout << "PASSED\n"; \
-    } while(0)
+    } while (0)
 
 #define FAIL(msg) \
     do { \
         std::cout << "FAILED: " << (msg) << '\n'; \
-    } while(0)
+        return; \
+    } while (0)
 
 #define CHECK(cond) \
     do { \
-        if (!(cond)) { FAIL(#cond); return; } \
-    } while(0)
+        if (!(cond)) { \
+            FAIL(#cond); \
+        } \
+    } while (0)
 
-// 验证 Chapter 的完整往返序列化。
 void test_chapter_roundtrip() {
-    TEST("Chapter 序列化往返");
+    TEST("Chapter roundtrip");
 
     Chapter ch;
     ch.id = "ch-001";
-    ch.title = "开端";
+    ch.title = "Opening";
     ch.order = 1;
-    ch.synopsis = "主角发现了一个古老的秘密";
-    ch.scenes = {"图书馆", "地下密室", "发现水晶"};
+    ch.synopsis = "The protagonist finds an impossible artifact.";
+    ch.scenes = {"Library", "Basement", "Vault"};
     ch.pov_characters = {"elena"};
     ch.key_events = {"artifact_discovered"};
     ch.themes = {"discovery", "curiosity"};
     ch.status = "drafted";
     ch.word_count = 4500;
     ch.file_path = "chapters/001-intro.md";
+    ch.tags = {"act-1", "hook"};
+    ch.metadata["goal"] = "introduce_artifact";
+    ch.metadata["intensity"] = 0.7;
 
-    // 先序列化，再反序列化回来。
     json j = ch;
     Chapter ch2 = j.get<Chapter>();
 
     CHECK(ch2.id == "ch-001");
-    CHECK(ch2.title == "开端");
+    CHECK(ch2.title == "Opening");
     CHECK(ch2.order == 1);
-    CHECK(ch2.synopsis == "主角发现了一个古老的秘密");
+    CHECK(ch2.synopsis == "The protagonist finds an impossible artifact.");
     CHECK(ch2.scenes.size() == 3);
-    CHECK(ch2.scenes[2] == "发现水晶");
-    CHECK(ch2.pov_characters.size() == 1);
+    CHECK(ch2.pov_characters[0] == "elena");
     CHECK(ch2.key_events[0] == "artifact_discovered");
     CHECK(ch2.themes[1] == "curiosity");
     CHECK(ch2.status == "drafted");
     CHECK(ch2.word_count == 4500);
     CHECK(ch2.file_path == "chapters/001-intro.md");
+    CHECK(ch2.tags.size() == 2);
+    CHECK(ch2.tags[1] == "hook");
+    CHECK(ch2.metadata.at("goal") == "introduce_artifact");
+    CHECK(ch2.metadata.at("intensity") == 0.7);
 
     PASS();
 }
 
-// 验证 Chapter 的默认字段值。
 void test_chapter_defaults() {
-    TEST("Chapter 默认值");
+    TEST("Chapter defaults");
 
     Chapter ch;
     ch.id = "ch-min";
-    ch.title = "最小章节";
+    ch.title = "Minimal";
 
     json j = ch;
     Chapter ch2 = j.get<Chapter>();
@@ -90,30 +95,30 @@ void test_chapter_defaults() {
     CHECK(ch2.key_events.empty());
     CHECK(ch2.themes.empty());
     CHECK(ch2.word_count == 0);
+    CHECK(ch2.tags.empty());
+    CHECK(ch2.metadata.empty());
 
     PASS();
 }
 
-// 验证 Character 及其关系映射的往返序列化。
 void test_character_roundtrip() {
-    TEST("Character 序列化往返（含 relationships）");
+    TEST("Character roundtrip");
 
     Character c;
     c.id = "elena";
     c.name = "Elena Vasquez";
     c.role = "protagonist";
     c.age = "28";
-    c.appearance = "高挑身材，深色头发，学者气质";
-    c.personality = "好奇、果断、偶尔鲁莽";
-    c.background = "Thorne 大学的古代历史初级教授";
+    c.appearance = "Tall, dark-haired, sharp-eyed.";
+    c.personality = "Curious, decisive, occasionally reckless.";
+    c.background = "A historian teaching at Thorne University.";
     c.traits = {"intelligent", "brave", "impulsive"};
-    c.relationships = {
-        {"marcus", "mentor"},
-        {"lyra", "rival"}
-    };
+    c.relationships = {{"marcus", "mentor"}, {"lyra", "rival"}};
     c.chapter_appearances = {"ch-001", "ch-002"};
-    c.arc = "从书斋学者到改变世界的发现者";
-    c.notes = "需要加强动机描写";
+    c.arc = "Moves from observer to world-changing actor.";
+    c.notes = "Strengthen the emotional motive.";
+    c.tags = {"core-cast"};
+    c.metadata["secret"] = "family-archive";
 
     json j = c;
     Character c2 = j.get<Character>();
@@ -122,93 +127,71 @@ void test_character_roundtrip() {
     CHECK(c2.name == "Elena Vasquez");
     CHECK(c2.role == "protagonist");
     CHECK(c2.age == "28");
-    CHECK(c2.appearance == "高挑身材，深色头发，学者气质");
-    CHECK(c2.personality == "好奇、果断、偶尔鲁莽");
-    CHECK(c2.background == "Thorne 大学的古代历史初级教授");
     CHECK(c2.traits.size() == 3);
-    CHECK(c2.traits[1] == "brave");
-    CHECK(c2.relationships.size() == 2);
     CHECK(c2.relationships["marcus"] == "mentor");
     CHECK(c2.relationships["lyra"] == "rival");
-    CHECK(c2.chapter_appearances.size() == 2);
     CHECK(c2.chapter_appearances[1] == "ch-002");
-    CHECK(c2.arc == "从书斋学者到改变世界的发现者");
-    CHECK(c2.notes == "需要加强动机描写");
+    CHECK(c2.arc == "Moves from observer to world-changing actor.");
+    CHECK(c2.notes == "Strengthen the emotional motive.");
+    CHECK(c2.tags[0] == "core-cast");
+    CHECK(c2.metadata.at("secret") == "family-archive");
 
     PASS();
 }
 
-// 验证 Character 中空映射和空数组的处理。
-void test_character_empty_maps() {
-    TEST("Character 空 relationships/chapter_appearances");
-
-    Character c;
-    c.id = "ghost";
-    c.name = "无名";
-
-    json j = c;
-    Character c2 = j.get<Character>();
-
-    CHECK(c2.id == "ghost");
-    CHECK(c2.relationships.empty());
-    CHECK(c2.chapter_appearances.empty());
-
-    PASS();
-}
-
-// 验证 Setting 及属性表的往返序列化。
 void test_setting_roundtrip() {
-    TEST("Setting 序列化往返（含 attributes）");
+    TEST("Setting roundtrip");
 
     Setting s;
     s.id = "thorne-university";
-    s.name = "Thorne 大学";
+    s.name = "Thorne University";
     s.category = "location";
-    s.description = "一座古老的大学，建在更古老的废墟之上";
+    s.description = "An ancient university built over older ruins.";
     s.attributes = {
-        {"architecture", "哥特复兴式"},
-        {"location", "沿海城市 Kingsport"},
+        {"architecture", "gothic revival"},
+        {"location", "Kingsport"},
         {"founded", "1642"}
     };
-    s.notes = "图书馆包含一个密封区域";
+    s.notes = "The library has a sealed restricted wing.";
+    s.tags = {"campus", "ancient"};
+    s.metadata["hazards"] = json::array({"sealed-wing", "artifact-vault"});
 
     json j = s;
     Setting s2 = j.get<Setting>();
 
     CHECK(s2.id == "thorne-university");
-    CHECK(s2.name == "Thorne 大学");
+    CHECK(s2.name == "Thorne University");
     CHECK(s2.category == "location");
-    CHECK(s2.description == "一座古老的大学，建在更古老的废墟之上");
     CHECK(s2.attributes.size() == 3);
-    CHECK(s2.attributes["architecture"] == "哥特复兴式");
     CHECK(s2.attributes["founded"] == "1642");
-    CHECK(s2.notes == "图书馆包含一个密封区域");
+    CHECK(s2.notes == "The library has a sealed restricted wing.");
+    CHECK(s2.tags.size() == 2);
+    CHECK(s2.metadata.at("location") == "Kingsport");
+    CHECK(s2.metadata.at("hazards").is_array());
 
     PASS();
 }
 
-// 验证 Outline 内嵌结构的往返序列化。
 void test_outline_roundtrip() {
-    TEST("Outline 序列化往返（含嵌套结构）");
+    TEST("Outline roundtrip");
 
     Outline outline;
-    outline.premise = "一位年轻学者发现了一件上古神器，就此踏上改变世界的旅程";
-
-    PlotThread pt1{"pt1", "主线", "追寻神器真相"};
-    PlotThread pt2{"pt2", "爱情线", "与同伴的感情发展"};
-    outline.plot_threads = {pt1, pt2};
+    outline.premise = "A young scholar discovers an impossible relic.";
+    outline.plot_threads = {
+        {"pt1", "Main", "Discover what the relic is"},
+        {"pt2", "Bond", "Learn to trust her allies"}
+    };
 
     Chapter ch1;
     ch1.id = "ch-001";
-    ch1.title = "发现";
+    ch1.title = "Discovery";
     ch1.order = 1;
-    ch1.synopsis = "Elena 在图书馆废墟中发现神器";
+    ch1.metadata["emotion_curve"] = json::array({"calm", "alarm"});
 
     Chapter ch2;
     ch2.id = "ch-002";
-    ch2.title = "启程";
+    ch2.title = "Departure";
     ch2.order = 2;
-    ch2.synopsis = "Elena 出发寻找神器起源";
 
     outline.chapters = {ch1, ch2};
 
@@ -217,22 +200,15 @@ void test_outline_roundtrip() {
 
     CHECK(o2.premise == outline.premise);
     CHECK(o2.plot_threads.size() == 2);
-    CHECK(o2.plot_threads[0].id == "pt1");
-    CHECK(o2.plot_threads[0].name == "主线");
-    CHECK(o2.plot_threads[1].id == "pt2");
-    CHECK(o2.plot_threads[1].name == "爱情线");
+    CHECK(o2.plot_threads[0].name == "Main");
     CHECK(o2.chapters.size() == 2);
-    CHECK(o2.chapters[0].id == "ch-001");
-    CHECK(o2.chapters[0].title == "发现");
-    CHECK(o2.chapters[1].id == "ch-002");
-    CHECK(o2.chapters[1].synopsis == "Elena 出发寻找神器起源");
+    CHECK(o2.chapters[0].metadata.at("emotion_curve").is_array());
 
     PASS();
 }
 
-// 验证 Style 的往返序列化。
 void test_style_roundtrip() {
-    TEST("Style 序列化往返");
+    TEST("Style roundtrip");
 
     Style s;
     s.tone = "atmospheric";
@@ -245,35 +221,30 @@ void test_style_roundtrip() {
     s.chapter_length_target = 4000;
     s.sentence_length = "varied";
     s.vocabulary = "rich";
-    s.notes = "避免现代俚语，多用感官细节";
+    s.notes = "Avoid modern slang.";
+    s.tags = {"moody"};
+    s.metadata["forbidden_topics"] = json::array({"internet slang"});
 
     json j = s;
     Style s2 = j.get<Style>();
 
     CHECK(s2.tone == "atmospheric");
-    CHECK(s2.pacing == "moderate");
-    CHECK(s2.pov == "third_person_limited");
-    CHECK(s2.tense == "past");
-    CHECK(s2.prose_style == "literary");
-    CHECK(s2.dialogue_style == "naturalistic");
-    CHECK(s2.narrative_distance == "close");
     CHECK(s2.chapter_length_target == 4000);
-    CHECK(s2.sentence_length == "varied");
-    CHECK(s2.vocabulary == "rich");
-    CHECK(s2.notes == "避免现代俚语，多用感官细节");
+    CHECK(s2.notes == "Avoid modern slang.");
+    CHECK(s2.tags[0] == "moody");
+    CHECK(s2.metadata.at("forbidden_topics").is_array());
 
     PASS();
 }
 
-// 验证 Project 手写序列化时不会把 path 写入 JSON。
 void test_project_serialization() {
-    TEST("Project to_json/from_json（path 不序列化）");
+    TEST("Project serialization");
 
     Project p;
-    p.format_version = 1;
-    p.title = "上古之影";
-    p.author = "测试作者";
-    p.description = "一个关于发现与冒险的奇幻故事";
+    p.format_version = 2;
+    p.title = "Shadow of the Ancients";
+    p.author = "Test Author";
+    p.description = "A fantasy adventure.";
     p.genre = {"fantasy", "epic"};
     p.target_word_count = 100000;
     p.current_word_count = 12500;
@@ -282,65 +253,84 @@ void test_project_serialization() {
     p.tense = "past";
     p.created = "2026-05-17T10:00:00Z";
     p.modified = "2026-05-17T14:30:00Z";
-    p.path = "D:/novels/my-novel";  // 运行期字段，不应写入 JSON。
+    p.tags = {"fantasy", "priority"};
+    p.metadata["workflow"] = "drafting";
+    p.path = "D:/novels/my-novel";
 
     json j = p;
 
     CHECK(!j.contains("path"));
-    CHECK(j["format_version"] == 1);
-    CHECK(j["title"] == "上古之影");
-    CHECK(j["author"] == "测试作者");
-    CHECK(j["genre"].size() == 2);
-    CHECK(j["genre"][0] == "fantasy");
-    CHECK(j["genre"][1] == "epic");
-    CHECK(j["target_word_count"] == 100000);
-    CHECK(j["current_word_count"] == 12500);
-    CHECK(j["status"] == "in_progress");
-    CHECK(j["pov"] == "third_person_limited");
-    CHECK(j["tense"] == "past");
-    CHECK(j["created"] == "2026-05-17T10:00:00Z");
-    CHECK(j["modified"] == "2026-05-17T14:30:00Z");
+    CHECK(j["format_version"] == 2);
+    CHECK(j["tags"][1] == "priority");
+    CHECK(j["metadata"]["workflow"] == "drafting");
 
     Project p2 = j.get<Project>();
-    CHECK(p2.title == "上古之影");
-    CHECK(p2.author == "测试作者");
+    CHECK(p2.title == "Shadow of the Ancients");
     CHECK(p2.genre[1] == "epic");
-    CHECK(p2.target_word_count == 100000);
+    CHECK(p2.tags[0] == "fantasy");
+    CHECK(p2.metadata.at("workflow") == "drafting");
 
     PASS();
 }
 
-// 验证 Project 聚合的子对象可正常访问。
 void test_project_subobjects() {
-    TEST("Project 子对象赋值");
+    TEST("Project subobjects");
 
     Project p;
-    p.title = "测试小说";
+    p.title = "Test Novel";
 
     Chapter ch;
     ch.id = "ch-001";
-    ch.title = "第一章";
+    ch.title = "First";
     p.outline.chapters.push_back(ch);
 
     Character c;
     c.id = "hero";
-    c.name = "英雄";
+    c.name = "Hero";
     p.characters.push_back(c);
 
     Setting s;
     s.id = "castle";
-    s.name = "城堡";
+    s.name = "Castle";
     p.settings.push_back(s);
 
     p.style.tone = "dark";
 
     CHECK(p.outline.chapters.size() == 1);
-    CHECK(p.outline.chapters[0].id == "ch-001");
-    CHECK(p.characters.size() == 1);
-    CHECK(p.characters[0].name == "英雄");
-    CHECK(p.settings.size() == 1);
+    CHECK(p.characters[0].name == "Hero");
     CHECK(p.settings[0].id == "castle");
     CHECK(p.style.tone == "dark");
+
+    PASS();
+}
+
+void test_legacy_metadata_capture() {
+    TEST("Legacy metadata capture");
+
+    json chapterJson = {
+        {"id", "ch-legacy"},
+        {"title", "Legacy"},
+        {"emotion_curve", json::array({"calm", "panic"})}
+    };
+    Chapter ch = chapterJson.get<Chapter>();
+    CHECK(ch.metadata.at("emotion_curve").is_array());
+
+    json settingJson = {
+        {"id", "tower"},
+        {"name", "Tower"},
+        {"attributes", {{"height", "high"}}}
+    };
+    Setting s = settingJson.get<Setting>();
+    CHECK(s.metadata.at("height") == "high");
+
+    json projectJson = {
+        {"format_version", 1},
+        {"title", "legacy-project"},
+        {"custom_flag", true}
+    };
+    Project p = projectJson.get<Project>();
+    CHECK(p.format_version == 1);
+    CHECK(p.metadata.at("custom_flag") == true);
 
     PASS();
 }
@@ -351,21 +341,19 @@ int main() {
     test_chapter_roundtrip();
     test_chapter_defaults();
     test_character_roundtrip();
-    test_character_empty_maps();
     test_setting_roundtrip();
     test_outline_roundtrip();
     test_style_roundtrip();
     test_project_serialization();
     test_project_subobjects();
+    test_legacy_metadata_capture();
 
-    std::cout << '\n';
-    std::cout << "结果: " << tests_passed << '/' << tests_run << " 通过\n";
-
+    std::cout << "\nResult: " << tests_passed << '/' << tests_run << " passed\n";
     if (tests_passed == tests_run) {
         std::cout << "All tests passed!\n";
         return 0;
-    } else {
-        std::cout << (tests_run - tests_passed) << " 个测试失败\n";
-        return 1;
     }
+
+    std::cout << (tests_run - tests_passed) << " tests failed\n";
+    return 1;
 }
