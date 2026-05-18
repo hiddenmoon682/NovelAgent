@@ -57,11 +57,12 @@ void test_createProjectDir() {
     CHECK(utils::file::exists(utils::file::joinPath(kTestDir, "outline.json")));
     CHECK(utils::file::exists(utils::file::joinPath(kTestDir, "characters.json")));
     CHECK(utils::file::exists(utils::file::joinPath(kTestDir, "settings.json")));
+    CHECK(utils::file::exists(utils::file::joinPath(kTestDir, "world_rules.json")));
     CHECK(utils::file::exists(utils::file::joinPath(kTestDir, "style.json")));
 
     auto novelJson = ProjectIO::loadJsonFile(utils::file::joinPath(kTestDir, "novel.json"));
     CHECK(novelJson.has_value());
-    CHECK((*novelJson)["format_version"] == 2);
+    CHECK((*novelJson)["format_version"] == 3);
     CHECK((*novelJson)["tags"].is_array());
     CHECK((*novelJson)["metadata"].is_object());
 
@@ -84,21 +85,24 @@ void test_save_load_roundtrip() {
     TEST("Project save/load roundtrip");
 
     Project orig;
-    orig.format_version = 2;
+    orig.format_version = 3;
     orig.title = "Shadow of the Ancients";
     orig.author = "Test Author";
     orig.description = "A fantasy adventure.";
+    orig.logline = "A scholar steals a relic that wants to be found.";
     orig.genre = {"fantasy", "epic"};
     orig.target_word_count = 100000;
     orig.current_word_count = 12345;
     orig.status = "in_progress";
-    orig.pov = "third_person_limited";
-    orig.tense = "past";
     orig.tags = {"priority"};
     orig.metadata["workflow"] = "drafting";
 
     orig.outline.premise = "A scholar finds an ancient artifact.";
-    orig.outline.plot_threads.push_back({"pt-main", "Main", "Learn the relic's truth"});
+    PlotThread mainThread;
+    mainThread.id = "pt-main";
+    mainThread.name = "Main";
+    mainThread.description = "Learn the relic's truth";
+    orig.outline.plot_threads.push_back(mainThread);
 
     Chapter ch;
     ch.id = "ch-001";
@@ -108,7 +112,11 @@ void test_save_load_roundtrip() {
     ch.status = "drafted";
     ch.word_count = 3500;
     ch.file_path = "chapters/001-discovery.md";
-    ch.scenes = {"Library", "Quake", "Vault"};
+    Scene sc1;
+    sc1.summary = "Elena searches the library stacks.";
+    Scene sc2;
+    sc2.summary = "The vault chamber opens during an earthquake.";
+    ch.scenes = {sc1, sc2};
     ch.pov_characters = {"elena"};
     ch.key_events = {"artifact_discovered"};
     ch.themes = {"discovery", "mystery"};
@@ -121,7 +129,10 @@ void test_save_load_roundtrip() {
     hero.name = "Elena Vasquez";
     hero.role = "protagonist";
     hero.traits = {"intelligent", "brave"};
-    hero.relationships = {{"marcus", "mentor"}};
+    Relationship mentor;
+    mentor.target_character_id = "marcus";
+    mentor.type = "mentor";
+    hero.relationships = {mentor};
     hero.chapter_appearances = {"ch-001"};
     hero.metadata["secret"] = "archive-key";
     orig.characters.push_back(hero);
@@ -131,9 +142,17 @@ void test_save_load_roundtrip() {
     loc.name = "Thorne Library";
     loc.category = "location";
     loc.description = "Ancient library with a sealed vault.";
-    loc.attributes = {{"founded", "1642"}, {"architecture", "gothic"}};
+    loc.metadata["founded"] = "1642";
+    loc.metadata["architecture"] = "gothic";
     loc.metadata["hazards"] = nlohmann::json::array({"sealed-wing"});
     orig.settings.push_back(loc);
+
+    WorldRule rule;
+    rule.id = "relic-echo";
+    rule.name = "Relic Echo";
+    rule.summary = "The relic amplifies a reader's obsession.";
+    rule.limitations = "Only works near old inscriptions.";
+    orig.world_rules.push_back(rule);
 
     orig.style.tone = "atmospheric";
     orig.style.pacing = "moderate";
@@ -145,19 +164,23 @@ void test_save_load_roundtrip() {
 
     Project loaded = ProjectIO::load(kTestDir);
 
-    CHECK(loaded.format_version == 2);
+    CHECK(loaded.format_version == 3);
     CHECK(loaded.title == "Shadow of the Ancients");
+    CHECK(loaded.logline == "A scholar steals a relic that wants to be found.");
     CHECK(loaded.metadata.at("workflow") == "drafting");
     CHECK(loaded.outline.plot_threads.size() == 1);
     CHECK(loaded.outline.chapters[0].metadata.at("emotion_curve").is_array());
+    CHECK(loaded.outline.chapters[0].scenes.size() == 2);
     CHECK(loaded.characters[0].metadata.at("secret") == "archive-key");
-    CHECK(loaded.settings[0].attributes["founded"] == "1642");
+    CHECK(loaded.characters[0].relationships[0].type == "mentor");
     CHECK(loaded.settings[0].metadata.at("founded") == "1642");
+    CHECK(loaded.world_rules.size() == 1);
+    CHECK(loaded.world_rules[0].name == "Relic Echo");
     CHECK(loaded.style.metadata.at("forbidden_topics").is_array());
 
     auto savedNovelJson = ProjectIO::loadJsonFile(utils::file::joinPath(kTestDir, "novel.json"));
     CHECK(savedNovelJson.has_value());
-    CHECK((*savedNovelJson)["format_version"] == 2);
+    CHECK((*savedNovelJson)["format_version"] == 3);
 
     PASS();
 }
@@ -187,17 +210,16 @@ void test_legacy_load_migration() {
         {
             {"id", "archive"},
             {"name", "Archive"},
-            {"attributes", {{"temperature", "cold"}}}
+            {"temperature", "cold"}
         }
     }));
 
     Project loaded = ProjectIO::load(kTestDir);
 
-    CHECK(loaded.format_version == 2);
+    CHECK(loaded.format_version == 3);
     CHECK(loaded.metadata.at("custom_flag") == true);
     CHECK(loaded.outline.chapters[0].metadata.at("emotion_curve").is_array());
     CHECK(loaded.settings[0].metadata.at("temperature") == "cold");
-    CHECK(loaded.settings[0].attributes["temperature"] == "cold");
 
     PASS();
 }

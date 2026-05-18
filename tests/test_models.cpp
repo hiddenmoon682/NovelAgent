@@ -44,14 +44,33 @@ void test_chapter_roundtrip() {
     ch.title = "Opening";
     ch.order = 1;
     ch.synopsis = "The protagonist finds an impossible artifact.";
-    ch.scenes = {"Library", "Basement", "Vault"};
+    ch.goal = "Secure the artifact before anyone else sees it.";
+    ch.conflict = "The vault begins to collapse.";
+    ch.hook = "Someone already knows the relic is missing.";
+    ch.location_id = "thorne-library";
+    ch.time_marker = "Night One";
+    Scene s1;
+    s1.id = "sc-001";
+    s1.summary = "Elena studies the sealed archive.";
+    s1.goal = "Find the hidden chamber.";
+    s1.location_id = "library";
+    s1.tags = {"quiet"};
+    Scene s2;
+    s2.id = "sc-002";
+    s2.summary = "The basement shakes as the vault opens.";
+    s2.conflict = "The old mechanism becomes unstable.";
+    ch.scenes = {s1, s2};
     ch.pov_characters = {"elena"};
     ch.key_events = {"artifact_discovered"};
     ch.themes = {"discovery", "curiosity"};
+    ch.active_plot_threads = {"pt-main"};
+    ch.focus_characters = {"elena"};
+    ch.focus_settings = {"thorne-library"};
     ch.status = "drafted";
     ch.word_count = 4500;
     ch.file_path = "chapters/001-intro.md";
     ch.tags = {"act-1", "hook"};
+    ch.generation.exclude_fields = {"secret"};
     ch.metadata["goal"] = "introduce_artifact";
     ch.metadata["intensity"] = 0.7;
 
@@ -62,15 +81,21 @@ void test_chapter_roundtrip() {
     CHECK(ch2.title == "Opening");
     CHECK(ch2.order == 1);
     CHECK(ch2.synopsis == "The protagonist finds an impossible artifact.");
-    CHECK(ch2.scenes.size() == 3);
+    CHECK(ch2.goal == "Secure the artifact before anyone else sees it.");
+    CHECK(ch2.scenes.size() == 2);
+    CHECK(ch2.scenes[0].summary == "Elena studies the sealed archive.");
+    CHECK(ch2.scenes[1].conflict == "The old mechanism becomes unstable.");
     CHECK(ch2.pov_characters[0] == "elena");
     CHECK(ch2.key_events[0] == "artifact_discovered");
     CHECK(ch2.themes[1] == "curiosity");
+    CHECK(ch2.active_plot_threads[0] == "pt-main");
+    CHECK(ch2.focus_settings[0] == "thorne-library");
     CHECK(ch2.status == "drafted");
     CHECK(ch2.word_count == 4500);
     CHECK(ch2.file_path == "chapters/001-intro.md");
     CHECK(ch2.tags.size() == 2);
     CHECK(ch2.tags[1] == "hook");
+    CHECK(ch2.generation.exclude_fields[0] == "secret");
     CHECK(ch2.metadata.at("goal") == "introduce_artifact");
     CHECK(ch2.metadata.at("intensity") == 0.7);
 
@@ -112,12 +137,27 @@ void test_character_roundtrip() {
     c.appearance = "Tall, dark-haired, sharp-eyed.";
     c.personality = "Curious, decisive, occasionally reckless.";
     c.background = "A historian teaching at Thorne University.";
+    c.goal = "Understand the relic before the cult finds it.";
+    c.motivation = "Her father vanished pursuing the same mystery.";
+    c.secret = "She has already touched the relic in private.";
+    c.speaking_style = "Measured, precise, but sharp under pressure.";
     c.traits = {"intelligent", "brave", "impulsive"};
-    c.relationships = {{"marcus", "mentor"}, {"lyra", "rival"}};
+    c.core_values = {"truth", "loyalty"};
+    c.taboos = {"abandoning a teammate"};
+    Relationship mentor;
+    mentor.target_character_id = "marcus";
+    mentor.type = "mentor";
+    mentor.private_feeling = "She wants his approval.";
+    Relationship rival;
+    rival.target_character_id = "lyra";
+    rival.type = "rival";
+    rival.tension = 7;
+    c.relationships = {mentor, rival};
     c.chapter_appearances = {"ch-001", "ch-002"};
     c.arc = "Moves from observer to world-changing actor.";
     c.notes = "Strengthen the emotional motive.";
     c.tags = {"core-cast"};
+    c.generation.exclude_fields = {"secret"};
     c.metadata["secret"] = "family-archive";
 
     json j = c;
@@ -127,13 +167,18 @@ void test_character_roundtrip() {
     CHECK(c2.name == "Elena Vasquez");
     CHECK(c2.role == "protagonist");
     CHECK(c2.age == "28");
+    CHECK(c2.goal == "Understand the relic before the cult finds it.");
     CHECK(c2.traits.size() == 3);
-    CHECK(c2.relationships["marcus"] == "mentor");
-    CHECK(c2.relationships["lyra"] == "rival");
+    CHECK(c2.relationships.size() == 2);
+    CHECK(c2.relationships[0].target_character_id == "marcus");
+    CHECK(c2.relationships[0].type == "mentor");
+    CHECK(c2.relationships[1].target_character_id == "lyra");
+    CHECK(c2.relationships[1].tension == 7);
     CHECK(c2.chapter_appearances[1] == "ch-002");
     CHECK(c2.arc == "Moves from observer to world-changing actor.");
     CHECK(c2.notes == "Strengthen the emotional motive.");
     CHECK(c2.tags[0] == "core-cast");
+    CHECK(c2.generation.exclude_fields[0] == "secret");
     CHECK(c2.metadata.at("secret") == "family-archive");
 
     PASS();
@@ -147,13 +192,15 @@ void test_setting_roundtrip() {
     s.name = "Thorne University";
     s.category = "location";
     s.description = "An ancient university built over older ruins.";
-    s.attributes = {
-        {"architecture", "gothic revival"},
-        {"location", "Kingsport"},
-        {"founded", "1642"}
-    };
+    s.story_function = "mystery-gateway";
+    s.sensory_profile = "dust, stone, whispers, cold iron";
+    s.related_characters = {"elena"};
+    s.related_rule_ids = {"rule-relic"};
     s.notes = "The library has a sealed restricted wing.";
     s.tags = {"campus", "ancient"};
+    s.metadata["architecture"] = "gothic revival";
+    s.metadata["location"] = "Kingsport";
+    s.metadata["founded"] = "1642";
     s.metadata["hazards"] = json::array({"sealed-wing", "artifact-vault"});
 
     json j = s;
@@ -162,10 +209,10 @@ void test_setting_roundtrip() {
     CHECK(s2.id == "thorne-university");
     CHECK(s2.name == "Thorne University");
     CHECK(s2.category == "location");
-    CHECK(s2.attributes.size() == 3);
-    CHECK(s2.attributes["founded"] == "1642");
+    CHECK(s2.story_function == "mystery-gateway");
     CHECK(s2.notes == "The library has a sealed restricted wing.");
     CHECK(s2.tags.size() == 2);
+    CHECK(s2.metadata.at("founded") == "1642");
     CHECK(s2.metadata.at("location") == "Kingsport");
     CHECK(s2.metadata.at("hazards").is_array());
 
@@ -177,10 +224,17 @@ void test_outline_roundtrip() {
 
     Outline outline;
     outline.premise = "A young scholar discovers an impossible relic.";
-    outline.plot_threads = {
-        {"pt1", "Main", "Discover what the relic is"},
-        {"pt2", "Bond", "Learn to trust her allies"}
-    };
+    outline.story_structure = "three-act";
+    outline.act_summaries = {"discovery", "descent", "confrontation"};
+    PlotThread mainThread;
+    mainThread.id = "pt1";
+    mainThread.name = "Main";
+    mainThread.description = "Discover what the relic is";
+    PlotThread bondThread;
+    bondThread.id = "pt2";
+    bondThread.name = "Bond";
+    bondThread.description = "Learn to trust her allies";
+    outline.plot_threads = {mainThread, bondThread};
 
     Chapter ch1;
     ch1.id = "ch-001";
@@ -199,6 +253,7 @@ void test_outline_roundtrip() {
     Outline o2 = j.get<Outline>();
 
     CHECK(o2.premise == outline.premise);
+    CHECK(o2.story_structure == "three-act");
     CHECK(o2.plot_threads.size() == 2);
     CHECK(o2.plot_threads[0].name == "Main");
     CHECK(o2.chapters.size() == 2);
@@ -213,16 +268,18 @@ void test_style_roundtrip() {
     Style s;
     s.tone = "atmospheric";
     s.pacing = "moderate";
-    s.pov = "third_person_limited";
-    s.tense = "past";
     s.prose_style = "literary";
     s.dialogue_style = "naturalistic";
     s.narrative_distance = "close";
     s.chapter_length_target = 4000;
     s.sentence_length = "varied";
     s.vocabulary = "rich";
+    s.voice_reference = "Elegant but tense.";
+    s.dialogue_density = "dense";
+    s.forbidden_phrases = {"suddenly", "all of a sudden"};
     s.notes = "Avoid modern slang.";
     s.tags = {"moody"};
+    s.generation.exclude_fields = {"humor_level"};
     s.metadata["forbidden_topics"] = json::array({"internet slang"});
 
     json j = s;
@@ -230,8 +287,11 @@ void test_style_roundtrip() {
 
     CHECK(s2.tone == "atmospheric");
     CHECK(s2.chapter_length_target == 4000);
+    CHECK(s2.dialogue_density == "dense");
+    CHECK(s2.forbidden_phrases[0] == "suddenly");
     CHECK(s2.notes == "Avoid modern slang.");
     CHECK(s2.tags[0] == "moody");
+    CHECK(s2.generation.exclude_fields[0] == "humor_level");
     CHECK(s2.metadata.at("forbidden_topics").is_array());
 
     PASS();
@@ -241,33 +301,37 @@ void test_project_serialization() {
     TEST("Project serialization");
 
     Project p;
-    p.format_version = 2;
+    p.format_version = 3;
     p.title = "Shadow of the Ancients";
     p.author = "Test Author";
     p.description = "A fantasy adventure.";
+    p.logline = "A scholar steals a relic that wants to be found.";
+    p.theme = "Knowledge always has a cost.";
+    p.target_audience = "Adult fantasy readers";
     p.genre = {"fantasy", "epic"};
     p.target_word_count = 100000;
     p.current_word_count = 12500;
     p.status = "in_progress";
-    p.pov = "third_person_limited";
-    p.tense = "past";
     p.created = "2026-05-17T10:00:00Z";
     p.modified = "2026-05-17T14:30:00Z";
     p.tags = {"fantasy", "priority"};
+    p.generation.exclude_fields = {"must_avoid_elements"};
     p.metadata["workflow"] = "drafting";
     p.path = "D:/novels/my-novel";
 
     json j = p;
 
     CHECK(!j.contains("path"));
-    CHECK(j["format_version"] == 2);
+    CHECK(j["format_version"] == 3);
     CHECK(j["tags"][1] == "priority");
     CHECK(j["metadata"]["workflow"] == "drafting");
 
     Project p2 = j.get<Project>();
     CHECK(p2.title == "Shadow of the Ancients");
+    CHECK(p2.logline == "A scholar steals a relic that wants to be found.");
     CHECK(p2.genre[1] == "epic");
     CHECK(p2.tags[0] == "fantasy");
+    CHECK(p2.generation.exclude_fields[0] == "must_avoid_elements");
     CHECK(p2.metadata.at("workflow") == "drafting");
 
     PASS();
@@ -314,11 +378,12 @@ void test_legacy_metadata_capture() {
     };
     Chapter ch = chapterJson.get<Chapter>();
     CHECK(ch.metadata.at("emotion_curve").is_array());
+    CHECK(ch.scenes.empty());
 
     json settingJson = {
         {"id", "tower"},
         {"name", "Tower"},
-        {"attributes", {{"height", "high"}}}
+        {"height", "high"}
     };
     Setting s = settingJson.get<Setting>();
     CHECK(s.metadata.at("height") == "high");
@@ -335,6 +400,22 @@ void test_legacy_metadata_capture() {
     PASS();
 }
 
+void test_generation_control() {
+    TEST("Generation control helpers");
+
+    GenerationControl g;
+    g.include_fields = {"goal", "conflict"};
+    g.exclude_fields = {"secret"};
+    g.required_tags = {"main"};
+
+    CHECK(shouldUseField(g, "goal", {"main"}));
+    CHECK(!shouldUseField(g, "secret", {"main"}));
+    CHECK(!shouldUseField(g, "arc", {"main"}));
+    CHECK(!shouldUseField(g, "goal", {"side"}));
+
+    PASS();
+}
+
 int main() {
     std::cout << "=== test_models ===\n\n";
 
@@ -347,6 +428,7 @@ int main() {
     test_project_serialization();
     test_project_subobjects();
     test_legacy_metadata_capture();
+    test_generation_control();
 
     std::cout << "\nResult: " << tests_passed << '/' << tests_run << " passed\n";
     if (tests_passed == tests_run) {

@@ -1,5 +1,21 @@
 # Changelog
 
+## [2026-05-18] 模型深化 — GenerationControl + Scene + WorldRule + PromptContextBuilder
+
+- **新增** — `GenerationControl` 字段级提示词控制，每个 struct 自带 `generation` 字段
+- **新增** — `Scene` 强类型结构体，替代 `vector<string>` 场景列表
+- **新增** — `Relationship` 强类型结构体，替代 `map<string,string>` 角色关系
+- **新增** — `WorldRule` 结构体 + `world_rules.json` 文件，独立规则建模
+- **新增** — `PromptContextBuilder` 模块，按章节智能筛选上下文并渲染 LLM prompt
+- **新增** — `shouldUseField()` 统一白名单/黑名单/标签过滤逻辑
+- **修改** — 所有核心 struct 字段大幅扩展（Chapter/Character/Setting/PlotThread/Outline/Style/Project）
+- **修改** — Setting 移除旧版 `attributes` 字段，相关迁移代码精简
+- **修改** — Character 关系从 `map<string,string>` 迁移到 `vector<Relationship>`
+- **修改** — `format_version` 提升到 3
+- **修改** — `defaultNovelJson()` 改用 Project struct 构造，消除字段重复
+- **注意** — 此为开发阶段破坏性变更，旧版项目 JSON 不兼容
+- 影响范围：`src/project/Models.h`、`src/project/ProjectIO.cpp`、`src/prompt/`、`CMakeLists.txt`、`tests/`
+
 ## [2026-05-18] 数据模型重构 — tags + metadata 扩展
 
 - **新增** — 所有核心 struct（Chapter/Character/Setting/Style/Project）增加 `tags` 和 `metadata` 字段

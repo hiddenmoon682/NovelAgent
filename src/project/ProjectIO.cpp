@@ -16,11 +16,12 @@ namespace fu = utils::file;
 
 namespace {
 
-constexpr int kCurrentFormatVersion = 2;
+constexpr int kCurrentFormatVersion = 3;
 constexpr const char* kNovelJson = "novel.json";
 constexpr const char* kOutlineJson = "outline.json";
 constexpr const char* kCharactersJson = "characters.json";
 constexpr const char* kSettingsJson = "settings.json";
+constexpr const char* kWorldRulesJson = "world_rules.json";
 constexpr const char* kStyleJson = "style.json";
 constexpr const char* kChaptersDir = "chapters";
 constexpr const char* kAgentDir = ".novelagent";
@@ -30,31 +31,17 @@ constexpr const char* kStateJson = "state.json";
 
 // 新建项目时直接写入当前格式版本，并为扩展字段预留空容器。
 json defaultNovelJson(const std::string& title) {
+    Project project;
     const std::string ts = ProjectIO::nowTimestamp();
-    return {
-        {"format_version", kCurrentFormatVersion},
-        {"title", title},
-        {"author", ""},
-        {"description", ""},
-        {"genre", json::array()},
-        {"target_word_count", 0},
-        {"current_word_count", 0},
-        {"status", "planning"},
-        {"pov", "third_person_limited"},
-        {"tense", "past"},
-        {"created", ts},
-        {"modified", ts},
-        {"tags", json::array()},
-        {"metadata", json::object()}
-    };
+    project.format_version = kCurrentFormatVersion;
+    project.title = title;
+    project.created = ts;
+    project.modified = ts;
+    return project;
 }
 
 json defaultOutlineJson() {
-    return {
-        {"premise", ""},
-        {"plot_threads", json::array()},
-        {"chapters", json::array()}
-    };
+    return Outline{};
 }
 
 // 轻量迁移入口：
@@ -62,13 +49,6 @@ json defaultOutlineJson() {
 // 2. 将旧 format_version 提升到当前版本
 // 这里先做无损、低风险的兼容处理，复杂迁移可以后续继续挂在这里。
 void migrateProject(Project& project) {
-    for (auto& setting : project.settings) {
-        project::model_detail::mergeStringMapIntoMetadata(setting.metadata, setting.attributes);
-        if (setting.attributes.empty()) {
-            setting.attributes = project::model_detail::stringMapFromJsonValues(setting.metadata);
-        }
-    }
-
     if (project.format_version < kCurrentFormatVersion) {
         project.format_version = kCurrentFormatVersion;
     }
@@ -105,6 +85,7 @@ void ProjectIO::createProjectDir(const std::string& path, const std::string& tit
     writeIfMissing(fu::joinPath(path, kOutlineJson), defaultOutlineJson());
     writeIfMissing(fu::joinPath(path, kCharactersJson), json::array());
     writeIfMissing(fu::joinPath(path, kSettingsJson), json::array());
+    writeIfMissing(fu::joinPath(path, kWorldRulesJson), json::array());
     writeIfMissing(fu::joinPath(path, kStyleJson), Style{});
 
     const std::string novelAgentDir = ProjectIO::agentDir(path);
@@ -161,6 +142,11 @@ Project ProjectIO::load(const std::string& path) {
         project.settings = settingsJson->get<std::vector<Setting>>();
     }
 
+    const auto worldRulesJson = loadJsonFile(fu::joinPath(path, kWorldRulesJson));
+    if (worldRulesJson && worldRulesJson->is_array()) {
+        project.world_rules = worldRulesJson->get<std::vector<WorldRule>>();
+    }
+
     const auto styleJson = loadJsonFile(fu::joinPath(path, kStyleJson));
     if (styleJson) {
         project.style = styleJson->get<Style>();
@@ -191,6 +177,7 @@ void ProjectIO::save(const Project& project) {
     saveJsonFile(fu::joinPath(p, kOutlineJson), mutableCopy.outline);
     saveJsonFile(fu::joinPath(p, kCharactersJson), mutableCopy.characters);
     saveJsonFile(fu::joinPath(p, kSettingsJson), mutableCopy.settings);
+    saveJsonFile(fu::joinPath(p, kWorldRulesJson), mutableCopy.world_rules);
     saveJsonFile(fu::joinPath(p, kStyleJson), mutableCopy.style);
 
     spdlog::info("Saved project '{}' to {}", project.title, p);

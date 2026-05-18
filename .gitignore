@@ -17,6 +17,9 @@ Thumbs.db
 .novelagent/
 novelagent.json
 
+# Clangd index
+.cache/
+
 # Example novels are user data
 examples/
 .claude/settings.local.json
