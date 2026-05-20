@@ -5,8 +5,21 @@
 // 设计目标：
 // 1. 为小说写作提供足够强的结构化上下文，方便 LLM 理解人物、剧情、世界规则和文风。
 // 2. 保留 tags / metadata 作为柔性扩展，避免频繁改 schema。
-// 3. 通过 generation 控制每个对象或字段是否参与提示词组装，避免“信息越多越好”的僵硬约束。
+// 3. 通过 generation 控制每个对象或字段是否参与提示词组装，避免"信息越多越好"的僵硬约束。
 // 4. 当前项目仍处于开发阶段，因此只保留低成本容错，不主动维护复杂的旧版本兼容分支。
+//
+// 结构层次:
+//   Project
+//   ├── Outline
+//   │   ├── PlotThread[]
+//   │   └── Chapter[]
+//   │       └── Scene[]
+//   ├── Character[]
+//   │   └── Relationship[]
+//   ├── Setting[]
+//   ├── WorldRule[]
+//   └── Style
+
 #include "utils/JsonUtils.h"
 
 #include <algorithm>
@@ -17,12 +30,17 @@
 
 #include <nlohmann/json.hpp>
 
+// ──────────────────────────────────────────────
+//  内部辅助函数（project::model_detail 命名空间）
+// ──────────────────────────────────────────────
+
 namespace project::model_detail {
 
 using json = nlohmann::json;
 using JsonMap = std::map<std::string, json>;
 
-// 读取 metadata，同时把未知字段一并吸收到 metadata 中。
+// 读取 metadata 字段，同时将 JSON 中的未知字段一并吸收到 metadata 中。
+// 这样旧数据里的临时字段、未来版本里的新增字段都不会在加载时丢失。
 inline JsonMap getMetadataWithUnknownKeys(const json& j, const std::set<std::string>& knownKeys) {
     JsonMap metadata = utils::json::getOrDefault<JsonMap>(j, "metadata", {});
     for (auto it = j.begin(); it != j.end(); ++it) {
@@ -33,10 +51,12 @@ inline JsonMap getMetadataWithUnknownKeys(const json& j, const std::set<std::str
     return metadata;
 }
 
+// 判断向量中是否包含目标字符串。
 inline bool contains(const std::vector<std::string>& values, const std::string& target) {
     return std::find(values.begin(), values.end(), target) != values.end();
 }
 
+// 判断两个标签列表是否有交集，用于 GenerationControl 的标签过滤。
 inline bool hasAnyTag(const std::vector<std::string>& left, const std::vector<std::string>& right) {
     for (const auto& value : left) {
         if (contains(right, value)) {
@@ -48,23 +68,29 @@ inline bool hasAnyTag(const std::vector<std::string>& left, const std::vector<st
 
 } // namespace project::model_detail
 
-// generation：控制对象或字段是否参与 LLM 提示词组装。
+// ──────────────────────────────────────────────
+//  GenerationControl — 提示词组装控制器
+// ──────────────────────────────────────────────
+
+// generation：控制对象或其字段是否参与 LLM 提示词组装。
+// 每个核心 struct 都内嵌一个 GenerationControl 实例。
 //
 // 使用建议：
 // - enabled=false：整个对象默认不参与生成。
 // - include_fields 非空：只允许白名单字段进入提示词。
 // - exclude_fields：即使字段存在，也不要喂给模型。
-// - required_tags / blocked_tags：供上层在“按章节挑选上下文”时做筛选。
+// - required_tags / blocked_tags：供上层在"按章节挑选上下文"时做筛选。
 // - prompt_hint：留给提示词组装器的自然语言说明。
 struct GenerationControl {
-    bool enabled = true;
-    std::vector<std::string> include_fields;
-    std::vector<std::string> exclude_fields;
-    std::vector<std::string> required_tags;
-    std::vector<std::string> blocked_tags;
-    std::string prompt_hint;
+    bool enabled = true;                        // 是否整体启用
+    std::vector<std::string> include_fields;    // 白名单：仅允许这些字段进入提示词
+    std::vector<std::string> exclude_fields;    // 黑名单：禁止这些字段进入提示词
+    std::vector<std::string> required_tags;     // 对象必须具备的标签才会被选中
+    std::vector<std::string> blocked_tags;      // 对象如果带有这些标签则排除
+    std::string prompt_hint;                    // 供 PromptContextBuilder 使用的自然语言提示
 };
 
+// GenerationControl 的 JSON 序列化。
 inline void to_json(nlohmann::json& j, const GenerationControl& g) {
     j = nlohmann::json{
         {"enabled", g.enabled},
@@ -76,6 +102,7 @@ inline void to_json(nlohmann::json& j, const GenerationControl& g) {
     };
 }
 
+// GenerationControl 的 JSON 反序列化，缺失字段回落默认值。
 inline void from_json(const nlohmann::json& j, GenerationControl& g) {
     g.enabled = utils::json::getOrDefault(j, "enabled", true);
     g.include_fields = utils::json::getOrDefault(j, "include_fields", std::vector<std::string>{});
@@ -85,7 +112,9 @@ inline void from_json(const nlohmann::json& j, GenerationControl& g) {
     g.prompt_hint = utils::json::getOrDefault(j, "prompt_hint", std::string{});
 }
 
-// 供上层组装提示词时直接调用的字段判定逻辑。
+// 判定一个字段是否应该进入 LLM 提示词。
+// 检查顺序：enabled → required_tags → blocked_tags → include_fields → exclude_fields
+// objectTags 是对象自身的标签列表，用于 required/blocked 标签匹配。
 inline bool shouldUseField(
     const GenerationControl& generation,
     const std::string& fieldName,
@@ -110,235 +139,33 @@ inline bool shouldUseField(
     return true;
 }
 
-// 场景：章节内部的最小戏剧单元。
+// ──────────────────────────────────────────────
+//  Scene — 章节内部的最小戏剧单元
+// ──────────────────────────────────────────────
+
 struct Scene {
-    std::string id;
-    std::string title;
-    std::string summary;
-    std::string goal;
-    std::string conflict;
-    std::string outcome;
-    std::string turning_point;
-    std::string emotional_beat;
-    std::string reveal;
-    std::string foreshadowing;
-    std::string payoff;
-    std::string pov_character_id;
-    std::string location_id;
-    std::string time_marker;
-    std::vector<std::string> participants;
-    std::vector<std::string> plot_thread_ids;
-    std::vector<std::string> tags;
-    GenerationControl generation;
-    std::map<std::string, nlohmann::json> metadata;
+    std::string id;                             // 场景唯一标识
+    std::string title;                          // 场景标题
+    std::string summary;                        // 场景概要
+    std::string goal;                           // 本场景要达成的目的
+    std::string conflict;                       // 场景内的核心冲突
+    std::string outcome;                        // 场景结果：成功/失败/转折
+    std::string turning_point;                  // 场景内的关键转折点
+    std::string emotional_beat;                 // 场景情绪基调
+    std::string reveal;                         // 本场景揭示的新信息
+    std::string foreshadowing;                  // 本场景埋下的伏笔
+    std::string payoff;                         // 本场景回收的伏笔
+    std::string pov_character_id;               // 本场景的 POV 角色 ID
+    std::string location_id;                    // 发生地点 ID
+    std::string time_marker;                    // 时间标记，例如 "黄昏"
+    std::vector<std::string> participants;      // 出场角色 ID 列表
+    std::vector<std::string> plot_thread_ids;   // 关联的剧情线 ID
+    std::vector<std::string> tags;              // 轻量分类标签，如 "quiet"
+    GenerationControl generation;               // 控制场景字段的提示词参与度
+    std::map<std::string, nlohmann::json> metadata; // 场景扩展信息
 };
 
-// 角色关系：显式区分关系类型、公开状态和私下情绪。
-struct Relationship {
-    std::string target_character_id;
-    std::string type;
-    std::string description;
-    std::string public_status;
-    std::string private_feeling;
-    std::string status = "active"; // active|strained|broken|resolved
-    int tension = 0;               // 0-10，供提示词控制戏剧张力
-    std::vector<std::string> tags;
-    GenerationControl generation;
-    std::map<std::string, nlohmann::json> metadata;
-};
-
-// 世界规则：适合奇幻、科幻、悬疑等需要“规则一致性”的小说。
-struct WorldRule {
-    std::string id;
-    std::string name;
-    std::string summary;
-    std::string limitations;
-    std::string costs;
-    std::string exceptions;
-    std::string known_by; // everyone|experts|protagonist_only|hidden
-    std::vector<std::string> related_settings;
-    std::vector<std::string> tags;
-    GenerationControl generation;
-    std::map<std::string, nlohmann::json> metadata;
-};
-
-// 章节：大纲中的单个条目。
-struct Chapter {
-    std::string id;                           // 例如 "ch-001"
-    std::string title;                        // 例如 "发现"
-    int order = 0;                            // 在整部小说中的顺序
-    std::string synopsis;                     // 本章摘要
-    std::string goal;                         // 本章主目标
-    std::string conflict;                     // 本章核心冲突
-    std::string outcome;                      // 结果：成功/失败/部分成功
-    std::string turning_point;                // 关键转折
-    std::string hook;                         // 章末钩子
-    std::string reveal;                       // 本章揭示的信息
-    std::string foreshadowing;                // 本章埋下的伏笔
-    std::string payoff;                       // 本章回收的伏笔
-    std::string emotional_beat;               // 情绪变化摘要
-    std::string location_id;                  // 主要地点 ID
-    std::string time_marker;                  // 时间标记，例如 "第一夜"
-    std::vector<Scene> scenes;                // 场景列表
-    std::vector<std::string> pov_characters;  // 作为 POV 的角色 ID
-    std::vector<std::string> key_events;      // 推进剧情的关键事件
-    std::vector<std::string> themes;          // 例如 "救赎"、"背叛"
-    std::vector<std::string> active_plot_threads; // 本章推进的剧情线 ID
-    std::vector<std::string> focus_characters;    // 本章重点角色 ID
-    std::vector<std::string> focus_settings;      // 本章重点设定/地点/组织 ID
-    std::string status = "outlined";          // outlined|drafting|drafted|revised|final
-    int word_count = 0;
-    std::string file_path;                    // 例如 chapters/001-title.md
-    std::vector<std::string> tags;            // 轻量分类标签，如 "act-1"、"hook"
-    GenerationControl generation;             // 控制本章哪些字段喂给 LLM
-    std::map<std::string, nlohmann::json> metadata; // 章节扩展信息
-};
-
-// 角色：故事中的人物。
-struct Character {
-    std::string id;
-    std::string name;
-    std::string role = "supporting";          // protagonist|antagonist|supporting|minor
-    std::string age;                          // 例如 "28"
-    std::string appearance;                   // 外貌描述
-    std::string personality;                  // 性格与习惯
-    std::string background;                   // 背景经历
-    std::string goal;                         // 当前最想达成的目标
-    std::string motivation;                   // 目标背后的动机
-    std::string internal_conflict;            // 内在冲突
-    std::string external_conflict;            // 外在冲突
-    std::string secret;                       // 暂不应轻易暴露的秘密
-    std::string fear;                         // 核心恐惧
-    std::string misbelief;                    // 角色的错误信念
-    std::string speaking_style;               // 说话风格
-    std::vector<std::string> traits;          // 例如 ["brave", "impulsive"]
-    std::vector<std::string> core_values;     // 价值观，例如 ["loyalty"]
-    std::vector<std::string> taboos;          // 不会做或不能做的事
-    std::vector<Relationship> relationships;  // 结构化关系
-    std::vector<std::string> chapter_appearances; // 出现过的章节 ID
-    std::string arc;                          // 角色弧光摘要
-    std::string notes;                        // 自由补充备注
-    std::vector<std::string> tags;            // 轻量分类标签，如 "core-cast"
-    GenerationControl generation;             // 控制角色字段的提示词参与度
-    std::map<std::string, nlohmann::json> metadata; // 角色扩展信息
-};
-
-// 设定：世界观中的地点、组织、物品或规则载体。
-struct Setting {
-    std::string id;
-    std::string name;                         // 例如 "Thorne University"
-    std::string category = "location";        // location|organization|item|rule|other
-    std::string description;                  // 自由描述
-    std::string story_function;               // 叙事功能，例如 "safe-haven"
-    std::string sensory_profile;              // 感官印象
-    std::vector<std::string> related_characters;
-    std::vector<std::string> related_plot_threads;
-    std::vector<std::string> related_rule_ids;
-    std::string notes;
-    std::vector<std::string> tags;            // 轻量分类标签，如 "campus"、"ancient"
-    GenerationControl generation;             // 控制设定字段的提示词参与度
-    std::map<std::string, nlohmann::json> metadata; // 设定扩展信息
-};
-
-// 剧情线：主线或支线叙事线索。
-struct PlotThread {
-    std::string id;
-    std::string name;                         // 例如 "主线任务"
-    std::string description;
-    std::string type = "main";               // main|subplot|romance|mystery|political|other
-    std::string status = "planned";          // planned|active|paused|resolved
-    int priority = 0;                         // 越高表示越需要被当前生成关注
-    std::string stakes;                       // 失败的代价
-    std::string central_question;             // 这条线最终要回答的问题
-    std::string resolution;                   // 这条线的预期收束方式
-    std::string start_chapter_id;
-    std::string end_chapter_id;
-    std::vector<std::string> related_characters;
-    std::vector<std::string> related_settings;
-    std::vector<std::string> tags;
-    GenerationControl generation;
-    std::map<std::string, nlohmann::json> metadata;
-};
-
-// 大纲：完整的分层剧情结构。
-struct Outline {
-    std::string premise;                      // 一句话故事前提
-    std::string story_structure;              // 例如 "three-act"
-    std::vector<std::string> act_summaries;   // 各幕摘要
-    std::vector<PlotThread> plot_threads;
-    std::vector<Chapter> chapters;
-    std::vector<std::string> tags;
-    GenerationControl generation;
-    std::map<std::string, nlohmann::json> metadata;
-};
-
-// 风格：写作风格配置。
-struct Style {
-    std::string tone = "neutral";             // atmospheric|dark|light|neutral|...
-    std::string pacing = "moderate";          // slow|moderate|fast
-    std::string pov = "third_person_limited"; // first_person|third_person_limited|third_person_omniscient
-    std::string tense = "past";               // past|present
-    std::string prose_style = "literary";     // literary|commercial|minimalist|descriptive
-    std::string dialogue_style = "naturalistic"; // naturalistic|stylized|minimal
-    std::string narrative_distance = "close"; // close|medium|distant
-    int chapter_length_target = 4000;         // 目标章节字数
-    std::string sentence_length = "varied";   // short|medium|long|varied
-    std::string vocabulary = "rich";          // simple|moderate|rich
-    std::string voice_reference;              // 叙事声音参考
-    std::string show_vs_tell_bias = "balanced"; // show|balanced|tell
-    std::string dialogue_density = "moderate";   // sparse|moderate|dense
-    std::string description_density = "moderate"; // sparse|moderate|dense
-    std::string introspection_density = "moderate"; // sparse|moderate|dense
-    std::string humor_level = "low";          // none|low|moderate|high
-    std::string sensory_focus;                // 例如 "visual, tactile"
-    std::vector<std::string> forbidden_phrases;
-    std::vector<std::string> forbidden_tropes;
-    std::string chapter_opening_style;
-    std::string chapter_ending_style;
-    std::string notes;
-    std::vector<std::string> tags;            // 轻量分类标签，如 "moody"
-    GenerationControl generation;             // 控制风格字段的提示词参与度
-    std::map<std::string, nlohmann::json> metadata; // 风格扩展信息
-};
-
-// 项目：小说顶层元数据。
-struct Project {
-    int format_version = 3;                   // 结构版本号，便于后续兼容
-    std::string title;
-    std::string author;
-    std::string description;
-    std::string logline;                      // 一句话卖点
-    std::string theme;                        // 主题
-    std::string central_question;             // 全书要回答的问题
-    std::string target_audience;              // 目标读者
-    std::vector<std::string> genre;
-    std::vector<std::string> comps;           // 参考作品
-    std::string content_rating;               // 例如 "PG-13"
-    std::vector<std::string> must_have_elements;
-    std::vector<std::string> must_avoid_elements;
-    std::vector<std::string> narrative_promises; // 对读者的体验承诺
-    std::string world_rules_summary;          // 世界规则总述
-    std::string ending_type;                  // tragic|bittersweet|happy|open|twist
-    int target_word_count = 0;
-    int current_word_count = 0;
-    std::string status = "planning";          // planning|in_progress|completed|on_hold
-    std::string created;                      // ISO 8601 时间戳
-    std::string modified;                     // ISO 8601 时间戳
-    std::vector<std::string> tags;            // 项目级标签，如题材、优先级、阶段分组
-    GenerationControl generation;             // 项目级提示词控制
-    std::map<std::string, nlohmann::json> metadata; // 项目级扩展信息
-
-    // 运行期字段，不参与序列化，由文件系统位置推导得到。
-    std::string path;
-
-    // 子对象分别从独立 JSON 文件加载，不直接内嵌在 novel.json 中。
-    Outline outline;
-    std::vector<Character> characters;
-    std::vector<Setting> settings;
-    std::vector<WorldRule> world_rules;
-    Style style;
-};
-
+// Scene 的 JSON 序列化。
 inline void to_json(nlohmann::json& j, const Scene& s) {
     j = nlohmann::json{
         {"id", s.id},
@@ -363,6 +190,7 @@ inline void to_json(nlohmann::json& j, const Scene& s) {
     };
 }
 
+// Scene 的 JSON 反序列化，缺失字段回落默认值，未知字段进入 metadata。
 inline void from_json(const nlohmann::json& j, Scene& s) {
     using namespace project::model_detail;
     static const std::set<std::string> kKnownKeys = {
@@ -393,6 +221,24 @@ inline void from_json(const nlohmann::json& j, Scene& s) {
     s.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }
 
+// ──────────────────────────────────────────────
+//  Relationship — 角色之间的关系
+// ──────────────────────────────────────────────
+
+struct Relationship {
+    std::string target_character_id;            // 对方角色 ID
+    std::string type;                           // 关系类型，例如 "mentor"、"rival"
+    std::string description;                    // 关系描述
+    std::string public_status;                  // 公开场合的关系状态
+    std::string private_feeling;                // 私下的真实感受
+    std::string status = "active";              // active|strained|broken|resolved
+    int tension = 0;                            // 戏剧张力 0-10
+    std::vector<std::string> tags;              // 轻量分类标签
+    GenerationControl generation;               // 控制关系字段的提示词参与度
+    std::map<std::string, nlohmann::json> metadata; // 关系扩展信息
+};
+
+// Relationship 的 JSON 序列化。
 inline void to_json(nlohmann::json& j, const Relationship& r) {
     j = nlohmann::json{
         {"target_character_id", r.target_character_id},
@@ -408,6 +254,7 @@ inline void to_json(nlohmann::json& j, const Relationship& r) {
     };
 }
 
+// Relationship 的 JSON 反序列化，缺失字段回落默认值，未知字段进入 metadata。
 inline void from_json(const nlohmann::json& j, Relationship& r) {
     using namespace project::model_detail;
     static const std::set<std::string> kKnownKeys = {
@@ -427,6 +274,26 @@ inline void from_json(const nlohmann::json& j, Relationship& r) {
     r.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }
 
+// ──────────────────────────────────────────────
+//  WorldRule — 世界规则
+// ──────────────────────────────────────────────
+
+// 适合奇幻、科幻、悬疑等需要"规则一致性"的小说。
+struct WorldRule {
+    std::string id;                             // 规则唯一标识
+    std::string name;                           // 规则名称
+    std::string summary;                        // 规则概要
+    std::string limitations;                    // 规则的限制条件
+    std::string costs;                          // 使用该规则的代价
+    std::string exceptions;                     // 规则的例外情况
+    std::string known_by;                       // 知晓范围：everyone|experts|protagonist_only|hidden
+    std::vector<std::string> related_settings;  // 关联的设定 ID
+    std::vector<std::string> tags;              // 轻量分类标签
+    GenerationControl generation;               // 控制规则字段的提示词参与度
+    std::map<std::string, nlohmann::json> metadata; // 规则扩展信息
+};
+
+// WorldRule 的 JSON 序列化。
 inline void to_json(nlohmann::json& j, const WorldRule& r) {
     j = nlohmann::json{
         {"id", r.id},
@@ -443,6 +310,7 @@ inline void to_json(nlohmann::json& j, const WorldRule& r) {
     };
 }
 
+// WorldRule 的 JSON 反序列化，缺失字段回落默认值，未知字段进入 metadata。
 inline void from_json(const nlohmann::json& j, WorldRule& r) {
     using namespace project::model_detail;
     static const std::set<std::string> kKnownKeys = {
@@ -463,6 +331,42 @@ inline void from_json(const nlohmann::json& j, WorldRule& r) {
     r.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }
 
+// ──────────────────────────────────────────────
+//  Chapter — 章节
+// ──────────────────────────────────────────────
+
+struct Chapter {
+    std::string id;                             // 章节唯一标识，例如 "ch-001"
+    std::string title;                          // 章节标题，例如 "发现"
+    int order = 0;                              // 在整部小说中的顺序编号
+    std::string synopsis;                       // 1 到 2 句章节摘要
+    std::string goal;                           // 本章主目标
+    std::string conflict;                       // 本章核心冲突
+    std::string outcome;                        // 本章结果：成功/失败/部分成功
+    std::string turning_point;                  // 本章关键转折
+    std::string hook;                           // 章末钩子，吸引读者继续阅读
+    std::string reveal;                         // 本章向读者揭示的新信息
+    std::string foreshadowing;                  // 本章埋下的伏笔
+    std::string payoff;                         // 本章回收的伏笔（来自前文）
+    std::string emotional_beat;                 // 本章情绪变化摘要
+    std::string location_id;                    // 本章主要发生地点的 ID
+    std::string time_marker;                    // 时间标记，例如 "第三夜"
+    std::vector<Scene> scenes;                  // 章节内的场景列表
+    std::vector<std::string> pov_characters;    // 本章的 POV 角色 ID 列表
+    std::vector<std::string> key_events;        // 本章推进剧情的关键事件
+    std::vector<std::string> themes;            // 本章主题，例如 "救赎"、"背叛"
+    std::vector<std::string> active_plot_threads; // 本章推动的剧情线 ID
+    std::vector<std::string> focus_characters;    // 本章重点角色 ID
+    std::vector<std::string> focus_settings;      // 本章重点设定/地点/组织 ID
+    std::string status = "outlined";            // outlined|drafting|drafted|revised|final
+    int word_count = 0;                         // 当前字数统计
+    std::string file_path;                      // 章节 Markdown 文件路径，例如 chapters/001-title.md
+    std::vector<std::string> tags;              // 轻量分类标签，如 "act-1"、"hook"
+    GenerationControl generation;               // 控制章节字段的提示词参与度
+    std::map<std::string, nlohmann::json> metadata; // 章节扩展信息
+};
+
+// Chapter 的 JSON 序列化。
 inline void to_json(nlohmann::json& j, const Chapter& c) {
     j = nlohmann::json{
         {"id", c.id},
@@ -496,8 +400,11 @@ inline void to_json(nlohmann::json& j, const Chapter& c) {
     };
 }
 
+// Chapter 的 JSON 反序列化，缺失字段回落默认值，未知字段进入 metadata。
 inline void from_json(const nlohmann::json& j, Chapter& c) {
     using namespace project::model_detail;
+    // kKnownKeys 定义当前版本显式支持的核心字段。
+    // 未列入的字段不会报错，而是自动并入 metadata。
     static const std::set<std::string> kKnownKeys = {
         "id", "title", "order", "synopsis", "goal", "conflict", "outcome",
         "turning_point", "hook", "reveal", "foreshadowing", "payoff",
@@ -539,6 +446,39 @@ inline void from_json(const nlohmann::json& j, Chapter& c) {
     c.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }
 
+// ──────────────────────────────────────────────
+//  Character — 角色
+// ──────────────────────────────────────────────
+
+struct Character {
+    std::string id;                             // 角色唯一标识
+    std::string name;                           // 角色姓名
+    std::string role = "supporting";            // protagonist|antagonist|supporting|minor
+    std::string age;                            // 年龄，例如 "28" 或 "二十多岁末"
+    std::string appearance;                     // 外貌描述
+    std::string personality;                    // 性格与行为习惯
+    std::string background;                     // 背景经历
+    std::string goal;                           // 当前最想达成的目标
+    std::string motivation;                     // 目标背后的深层动机
+    std::string internal_conflict;              // 角色的内在冲突
+    std::string external_conflict;              // 角色面对的外在冲突
+    std::string secret;                         // 暂不应轻易暴露的秘密
+    std::string fear;                           // 角色的核心恐惧
+    std::string misbelief;                      // 角色抱持的错误信念
+    std::string speaking_style;                 // 角色的说话风格
+    std::vector<std::string> traits;            // 性格特征，例如 ["brave", "impulsive"]
+    std::vector<std::string> core_values;       // 核心价值观，例如 ["loyalty"]
+    std::vector<std::string> taboos;            // 角色不会做或不能做的事
+    std::vector<Relationship> relationships;    // 与其他角色的结构化关系列表
+    std::vector<std::string> chapter_appearances; // 角色出场过的章节 ID
+    std::string arc;                            // 角色弧光与成长轨迹摘要
+    std::string notes;                          // 自由补充备注
+    std::vector<std::string> tags;              // 轻量分类标签，如 "core-cast"
+    GenerationControl generation;               // 控制角色字段的提示词参与度
+    std::map<std::string, nlohmann::json> metadata; // 角色扩展信息
+};
+
+// Character 的 JSON 序列化。
 inline void to_json(nlohmann::json& j, const Character& c) {
     j = nlohmann::json{
         {"id", c.id},
@@ -569,6 +509,7 @@ inline void to_json(nlohmann::json& j, const Character& c) {
     };
 }
 
+// Character 的 JSON 反序列化，缺失字段回落默认值，未知字段进入 metadata。
 inline void from_json(const nlohmann::json& j, Character& c) {
     using namespace project::model_detail;
     static const std::set<std::string> kKnownKeys = {
@@ -609,6 +550,27 @@ inline void from_json(const nlohmann::json& j, Character& c) {
     c.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }
 
+// ──────────────────────────────────────────────
+//  Setting — 世界观中的地点、组织或物品
+// ──────────────────────────────────────────────
+
+struct Setting {
+    std::string id;                             // 设定唯一标识
+    std::string name;                           // 设定名称，例如 "Thorne University"
+    std::string category = "location";          // location|organization|item|rule|other
+    std::string description;                    // 设定描述
+    std::string story_function;                 // 叙事功能，例如 "safe-haven"、"mystery-gateway"
+    std::string sensory_profile;                // 感官印象，例如 "dust, stone, whispers, cold iron"
+    std::vector<std::string> related_characters;    // 关联角色 ID
+    std::vector<std::string> related_plot_threads;  // 关联剧情线 ID
+    std::vector<std::string> related_rule_ids;      // 关联世界规则 ID
+    std::string notes;                          // 自由补充备注
+    std::vector<std::string> tags;              // 轻量分类标签，如 "campus"、"ancient"
+    GenerationControl generation;               // 控制设定字段的提示词参与度
+    std::map<std::string, nlohmann::json> metadata; // 设定扩展信息
+};
+
+// Setting 的 JSON 序列化。
 inline void to_json(nlohmann::json& j, const Setting& s) {
     j = nlohmann::json{
         {"id", s.id},
@@ -627,6 +589,7 @@ inline void to_json(nlohmann::json& j, const Setting& s) {
     };
 }
 
+// Setting 的 JSON 反序列化，缺失字段回落默认值，未知字段进入 metadata。
 inline void from_json(const nlohmann::json& j, Setting& s) {
     using namespace project::model_detail;
     static const std::set<std::string> kKnownKeys = {
@@ -650,6 +613,30 @@ inline void from_json(const nlohmann::json& j, Setting& s) {
     s.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }
 
+// ──────────────────────────────────────────────
+//  PlotThread — 剧情线
+// ──────────────────────────────────────────────
+
+struct PlotThread {
+    std::string id;                             // 剧情线唯一标识
+    std::string name;                           // 剧情线名称，例如 "主线任务"、"感情线"
+    std::string description;                    // 剧情线概要描述
+    std::string type = "main";                  // main|subplot|romance|mystery|political|other
+    std::string status = "planned";             // planned|active|paused|resolved
+    int priority = 0;                           // 优先级，越高越优先被当前生成关注
+    std::string stakes;                         // 失败的代价
+    std::string central_question;               // 这条剧情线最终要回答的核心问题
+    std::string resolution;                     // 预期收束方式
+    std::string start_chapter_id;               // 起始章节 ID
+    std::string end_chapter_id;                 // 结束章节 ID
+    std::vector<std::string> related_characters;    // 关联角色 ID
+    std::vector<std::string> related_settings;      // 关联设定 ID
+    std::vector<std::string> tags;              // 轻量分类标签
+    GenerationControl generation;               // 控制剧情线字段的提示词参与度
+    std::map<std::string, nlohmann::json> metadata; // 剧情线扩展信息
+};
+
+// PlotThread 的 JSON 序列化。
 inline void to_json(nlohmann::json& j, const PlotThread& p) {
     j = nlohmann::json{
         {"id", p.id},
@@ -671,6 +658,7 @@ inline void to_json(nlohmann::json& j, const PlotThread& p) {
     };
 }
 
+// PlotThread 的 JSON 反序列化，缺失字段回落默认值，未知字段进入 metadata。
 inline void from_json(const nlohmann::json& j, PlotThread& p) {
     using namespace project::model_detail;
     static const std::set<std::string> kKnownKeys = {
@@ -698,6 +686,22 @@ inline void from_json(const nlohmann::json& j, PlotThread& p) {
     p.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }
 
+// ──────────────────────────────────────────────
+//  Outline — 大纲
+// ──────────────────────────────────────────────
+
+struct Outline {
+    std::string premise;                        // 一句话故事前提
+    std::string story_structure;                // 故事结构，例如 "three-act"、"hero-journey"
+    std::vector<std::string> act_summaries;     // 各幕（三段/四段）的情节摘要
+    std::vector<PlotThread> plot_threads;       // 剧情线列表
+    std::vector<Chapter> chapters;              // 章节列表
+    std::vector<std::string> tags;              // 轻量分类标签
+    GenerationControl generation;               // 控制大纲字段的提示词参与度
+    std::map<std::string, nlohmann::json> metadata; // 大纲扩展信息
+};
+
+// Outline 的 JSON 序列化。
 inline void to_json(nlohmann::json& j, const Outline& o) {
     j = nlohmann::json{
         {"premise", o.premise},
@@ -711,6 +715,7 @@ inline void to_json(nlohmann::json& j, const Outline& o) {
     };
 }
 
+// Outline 的 JSON 反序列化，缺失字段回落默认值，未知字段进入 metadata。
 inline void from_json(const nlohmann::json& j, Outline& o) {
     using namespace project::model_detail;
     static const std::set<std::string> kKnownKeys = {
@@ -728,6 +733,39 @@ inline void from_json(const nlohmann::json& j, Outline& o) {
     o.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }
 
+// ──────────────────────────────────────────────
+//  Style — 写作风格配置
+// ──────────────────────────────────────────────
+
+struct Style {
+    std::string tone = "neutral";               // atmospheric|dark|light|neutral|...
+    std::string pacing = "moderate";            // slow|moderate|fast
+    std::string pov = "third_person_limited";   // first_person|third_person_limited|third_person_omniscient
+    std::string tense = "past";                 // past|present
+    std::string prose_style = "literary";       // literary|commercial|minimalist|descriptive
+    std::string dialogue_style = "naturalistic"; // naturalistic|stylized|minimal
+    std::string narrative_distance = "close";    // close|medium|distant
+    int chapter_length_target = 4000;           // 目标章节字数
+    std::string sentence_length = "varied";     // short|medium|long|varied
+    std::string vocabulary = "rich";            // simple|moderate|rich
+    std::string voice_reference;                // 叙事声音参考，例如 "类似村上春树"
+    std::string show_vs_tell_bias = "balanced"; // show|balanced|tell
+    std::string dialogue_density = "moderate";  // sparse|moderate|dense
+    std::string description_density = "moderate"; // sparse|moderate|dense
+    std::string introspection_density = "moderate"; // sparse|moderate|dense
+    std::string humor_level = "low";            // none|low|moderate|high
+    std::string sensory_focus;                  // 感官描写重点，例如 "visual, tactile"
+    std::vector<std::string> forbidden_phrases; // 禁止使用的词语列表，例如 "suddenly"
+    std::vector<std::string> forbidden_tropes;  // 禁止使用的套路列表
+    std::string chapter_opening_style;          // 章节开头风格
+    std::string chapter_ending_style;           // 章节结尾风格
+    std::string notes;                          // 自由补充备注
+    std::vector<std::string> tags;              // 轻量分类标签，如 "moody"
+    GenerationControl generation;               // 控制风格字段的提示词参与度
+    std::map<std::string, nlohmann::json> metadata; // 风格扩展信息
+};
+
+// Style 的 JSON 序列化。
 inline void to_json(nlohmann::json& j, const Style& s) {
     j = nlohmann::json{
         {"tone", s.tone},
@@ -758,6 +796,7 @@ inline void to_json(nlohmann::json& j, const Style& s) {
     };
 }
 
+// Style 的 JSON 反序列化，缺失字段回落默认值，未知字段进入 metadata。
 inline void from_json(const nlohmann::json& j, Style& s) {
     using namespace project::model_detail;
     static const std::set<std::string> kKnownKeys = {
@@ -797,6 +836,57 @@ inline void from_json(const nlohmann::json& j, Style& s) {
     s.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }
 
+// ──────────────────────────────────────────────
+//  Project — 小说项目顶层元数据
+// ──────────────────────────────────────────────
+
+struct Project {
+    // ── 元数据 ──
+    int format_version = 3;                     // 数据格式版本号，便于后续兼容升级
+    std::string title;                          // 小说标题
+    std::string author;                         // 作者名
+    std::string description;                    // 书籍简介
+    std::string logline;                        // 一句话卖点（pitch）
+    std::string theme;                          // 全书主题
+    std::string central_question;               // 全书要回答的核心问题
+    std::string target_audience;                // 目标读者群，例如 "Adult fantasy readers"
+    std::vector<std::string> genre;             // 类型标签，例如 ["fantasy", "mystery"]
+    std::vector<std::string> comps;             // 参考作品列表
+
+    // ── 内容约束 ──
+    std::string content_rating;                 // 内容评级，例如 "PG-13"
+    std::vector<std::string> must_have_elements;    // 必须包含的元素
+    std::vector<std::string> must_avoid_elements;   // 必须避免的元素
+    std::vector<std::string> narrative_promises;    // 对读者的体验承诺
+    std::string world_rules_summary;            // 世界规则总述
+    std::string ending_type;                    // tragic|bittersweet|happy|open|twist
+
+    // ── 进度 ──
+    int target_word_count = 0;                  // 目标总字数
+    int current_word_count = 0;                 // 当前已写字数
+    std::string status = "planning";            // planning|in_progress|completed|on_hold
+
+    // ── 时间戳 ──
+    std::string created;                        // 创建时间（ISO 8601 UTC）
+    std::string modified;                       // 最后修改时间（ISO 8601 UTC）
+
+    // ── 扩展与控制 ──
+    std::vector<std::string> tags;              // 项目级标签，如题材、优先级
+    GenerationControl generation;               // 项目级提示词控制
+    std::map<std::string, nlohmann::json> metadata; // 项目级扩展信息
+
+    // ── 运行期字段（不参与序列化） ──
+    std::string path;                           // 项目目录路径，由文件系统位置推导
+
+    // ── 子对象（分别独立 JSON 文件存储） ──
+    Outline outline;                            // 大纲
+    std::vector<Character> characters;          // 角色列表
+    std::vector<Setting> settings;              // 设定列表
+    std::vector<WorldRule> world_rules;         // 世界规则列表
+    Style style;                                // 写作风格配置
+};
+
+// Project 的 JSON 序列化（path 和子对象不写入 project.json）。
 inline void to_json(nlohmann::json& j, const Project& p) {
     j = nlohmann::json{
         {"format_version", p.format_version},
@@ -826,8 +916,10 @@ inline void to_json(nlohmann::json& j, const Project& p) {
     };
 }
 
+// Project 的 JSON 反序列化，缺失字段回落默认值，未知字段进入 metadata。
 inline void from_json(const nlohmann::json& j, Project& p) {
     using namespace project::model_detail;
+    // Project 只保留稳定的顶层元数据；其余扩展字段统一落入 metadata。
     static const std::set<std::string> kKnownKeys = {
         "format_version", "title", "author", "description", "logline",
         "theme", "central_question", "target_audience", "genre", "comps",

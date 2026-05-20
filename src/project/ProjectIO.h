@@ -3,6 +3,20 @@
 // ProjectIO 负责项目文件在磁盘上的读写。
 // 每个小说项目对应一个目录，里面包含多个 JSON 文件和 Markdown 章节文件。
 // 这个模块统一处理序列化、反序列化以及项目目录结构操作。
+//
+// 项目文件结构:
+//   <project>/
+//     novel.json          — 项目顶层元数据
+//     outline.json        — 大纲（含 PlotThread 和 Chapter）
+//     characters.json     — 角色列表（含 Relationship）
+//     settings.json       — 设定列表
+//     world_rules.json    — 世界规则列表
+//     style.json          — 写作风格配置
+//     chapters/           — 章节 Markdown 文件
+//     .novelagent/
+//       conversation.json — 对话历史
+//       summaries.json    — 章节摘要缓存
+//       state.json        — Agent 运行时状态
 
 #include "Models.h"
 #include <string>
@@ -11,61 +25,67 @@
 
 namespace ProjectIO {
 
-// 目录结构创建
+// ── 目录结构创建 ──
 
-// 在指定路径创建完整项目骨架，并补齐默认 JSON 文件。
-// 如果目录已经存在，则只创建缺失部分，不覆盖现有文件。
+// 在指定路径创建完整项目骨架，包括子目录和默认 JSON 文件。
+// 如果部分文件已存在则跳过，不会覆盖用户已有内容。
 void createProjectDir(const std::string& path, const std::string& title);
 
-// 项目加载与保存
+// ── 项目加载与保存 ──
 
-// 从项目目录加载完整项目，包括各类 JSON 数据和章节元数据。
-// 返回值中的 path 字段会被设置为传入路径。
+// 从目录加载完整 Project，包括所有 JSON 文件和章节元数据。
+// 加载末尾自动调用 migrateProject() 升级旧格式到当前版本。
+// 返回的 Project::path 会被设置为传入的项目路径。
 Project load(const std::string& path);
 
-// 将项目中的 JSON 数据写回磁盘。
-// 注意：不会保存运行期字段 path。
+// 将 Project 的 JSON 数据写回磁盘。
+// 保存前会刷新 modified 时间戳并确保格式版本为最新。
+// 注意：path 字段不会被写入 JSON。
 void save(const Project& project);
 
-// 单文件 JSON 读写
+// ── 单文件 JSON 读写 ──
 
-// 加载单个 JSON 文件并解析为 nlohmann::json。
-// 文件不存在、为空或解析失败时返回 nullopt。
+// 加载并解析单个 JSON 文件。
+// 文件不存在、为空或 JSON 格式错误时返回 nullopt。
 std::optional<nlohmann::json> loadJsonFile(const std::string& path);
 
-// 保存 nlohmann::json 到文件，必要时自动创建父目录。
+// 将 nlohmann::json 写入文件，自动创建不存在的父目录。
+// 输出格式为两空格缩进、末尾换行。
 void saveJsonFile(const std::string& path, const nlohmann::json& data);
 
-// 章节读写
+// ── 章节 Markdown 读写 ──
 
 // 读取章节 Markdown 文件并返回全文内容。
 // chapterFilePath 是相对于项目根目录的路径，例如 "chapters/001-intro.md"。
+// 文件不存在时返回空字符串并输出警告日志。
 std::string readChapter(const std::string& projectPath, const std::string& chapterFilePath);
 
 // 写入章节 Markdown 文件，必要时自动创建父目录。
 void writeChapter(const std::string& projectPath, const std::string& chapterFilePath, const std::string& content);
 
-// 对话历史
+// ── 对话历史 ──
 
-// 加载 .novelagent/conversation.json。
-// 返回 JSON 数组，每个元素包含 role 和 content。
+// 加载 .novelagent/conversation.json，返回 JSON 数组。
+// 每个数组元素包含 role 和 content 字段。
+// 文件不存在时返回空数组。
 nlohmann::json loadConversation(const std::string& projectPath);
 
-// 追加一条消息到对话历史。
+// 向对话历史末尾追加一条消息。
+// 先加载现有对话，追加后再写回。
 void appendConversation(const std::string& projectPath, const std::string& role, const std::string& content);
 
 // 覆盖保存完整对话历史。
 void saveConversation(const std::string& projectPath, const nlohmann::json& conversation);
 
-// 辅助函数
+// ── 路径辅助函数 ──
 
-// 计算章节文件在项目目录下的完整路径。
+// 计算章节 Markdown 文件在项目目录下的绝对路径。
 std::string chapterPath(const std::string& projectPath, const std::string& chapterFilePath);
 
-// 获取 .novelagent 子目录路径。
+// 返回项目内的 .novelagent 子目录路径。
 std::string agentDir(const std::string& projectPath);
 
-// 生成 ISO 8601 UTC 时间戳。
+// 生成当前 UTC 时间的 ISO 8601 格式时间戳字符串。
 std::string nowTimestamp();
 
 } // namespace ProjectIO
