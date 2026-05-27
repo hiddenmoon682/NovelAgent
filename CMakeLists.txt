@@ -30,6 +30,12 @@ set(SOURCES
     src/project/ProjectManager.h
     src/project/ProjectManager.cpp
 
+    src/llm/Message.h
+    src/llm/TokenCounter.h
+    src/llm/TokenCounter.cpp
+    src/llm/SSEParser.h
+    src/llm/SSEParser.cpp
+
     src/prompt/PromptContextBuilder.h
     src/prompt/PromptContextBuilder.cpp
 
@@ -43,6 +49,7 @@ target_link_libraries(novelagent PRIVATE
     nlohmann_json::nlohmann_json
     CLI11::CLI11
     spdlog::spdlog
+    httplib::httplib
 )
 
 enable_testing()

@@ -1,6 +1,6 @@
 # NovelAgent CLI -- 细化实现计划
 
-> 版本: 3.1 | 更新时间: 2026-05-27 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 待实施
+> 版本: 3.1 | 更新时间: 2026-05-27 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 进行中
 
 ## 背景
 
@@ -359,48 +359,48 @@ AppConfig (JSON 读写 + 环境变量), FileUtils, StringUtils, JsonUtils, smoke
 
 ### Phase 2: LLM 客户端
 
-> 状态: **待实施** | 预计: 8 个步骤 | 依赖: Phase 0 + Phase 1
+> 状态: **进行中** | 预计: 8 个步骤 | 依赖: Phase 0 + Phase 1
 
-#### Step 2.1: 加入 cpp-httplib 依赖
-**新建/修改**: `cmake/FetchDependencies.cmake`
+#### Step 2.1: 加入 cpp-httplib 依赖 ✓ 已完成
+**新建/修改**: `cmake/FetchDependencies.cmake`, `CMakeLists.txt`
 
-- 添加 FetchContent 拉取 cpp-httplib
-- 修改 CMakeLists.txt 链接 cpp-httplib
+- 添加 FetchContent 拉取 cpp-httplib v0.18.5（header-only，Windows 上封装 WinHTTP）
+- 修改 CMakeLists.txt 链接 `httplib::httplib`
 
-**验证**: 编译通过
+**验证**: 编译通过，4 个测试全部通过
 
-#### Step 2.2: 定义 Message 结构体
+#### Step 2.2: 定义 Message 结构体 ✓ 已完成
 **新建**: `src/llm/Message.h`
 
-- `enum class MessageRole { System, User, Assistant, Tool }`
-- `struct ToolCall { id, type, function_name, arguments }`
-- `struct Message { role, content, tool_calls[], tool_call_id, name }`
-- `struct ToolDefinition { name, description, parameters (json) }`
-- `struct LLMResponse { content, tool_calls[], model, prompt_tokens, completion_tokens }`
+- `enum class MessageRole { System, User, Assistant, Tool }` — OpenAI 标准四角色
+- `struct ToolCall { id, type, function_name, arguments }` — LLM 工具调用
+- `struct Message { role, content, tool_calls[], tool_call_id, name }` — 单条消息
+- `struct ToolDefinition { name, description, parameters (json) }` — 工具注册定义
+- `struct LLMResponse { content, tool_calls[], model, prompt_tokens, completion_tokens }` — API 返回
 
-**验证**: 编译通过
+**验证**: 编译通过，4/4 测试无回归
 
-#### Step 2.3: 实现 TokenCounter
+#### Step 2.3: 实现 TokenCounter ✓ 已完成
 **新建**: `src/llm/TokenCounter.h`, `src/llm/TokenCounter.cpp`
 
-- `countTokens(text)` — 中文字符 × 0.75 + 英文单词 × 1.3
-- `countMessages(messages)` — 累计所有消息的 token 数
-- `estimateChineseChars(text)` / `estimateEnglishWords(text)`
-- 结果标注为"估算"，实际以 API 返回为准
+- `countTokens(text)` — 中文 × 0.75 + 英文单词 × 1.3 启发式估算
+- `countMessages(messages)` — 累计消息 token（含角色标记 + 工具调用结构开销）
+- CJK 检测覆盖基本块 + Ext-A/B + 兼容区（U+4E00~9FFF, 3400~4DBF, F900~FAFF, 20000~2A6DF）
+- 结果标注为估算值，实际以 API `usage` 字段为准
 
-**验证**: 编译通过
+**验证**: 编译通过，4/4 测试无回归
 
-#### Step 2.4: 实现 SSEParser
+#### Step 2.4: 实现 SSEParser ✓ 已完成
 **新建**: `src/llm/SSEParser.h`, `src/llm/SSEParser.cpp`
 
-- `feed(data)` — 接收原始 SSE 数据块
-- 解析 `data: {...}\n\n` 格式的行
-- 提取 `choices[0].delta.content` → 输出 text token
-- 提取 `choices[0].delta.tool_calls` → 输出 tool call 增量
-- 处理 `[DONE]` 终止信号
-- 处理跨数据块的不完整行（buffer 机制）
+- `feed(data)` — 按双换行切分事件，buffer 机制处理跨数据块断行
+- 解析 `choices[0].delta.content` → `on_token` 回调
+- 解析 `choices[0].delta.tool_calls` → `on_tool_call` 回调
+- `[DONE]` 终止信号 → `on_done` 回调
+- JSON 解析异常 → `on_error` 回调
+- 回调通过 `std::function` 注入，SSEParser 不持有对话状态
 
-**验证**: 编译通过
+**验证**: 编译通过，5/5 测试无回归
 
 #### Step 2.5: 实现 LLMClient
 **新建**: `src/llm/LLMClient.h`, `src/llm/LLMClient.cpp`

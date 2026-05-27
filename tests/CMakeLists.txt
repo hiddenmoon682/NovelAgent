@@ -54,3 +54,15 @@ target_link_libraries(test_prompt_context PRIVATE
     spdlog::spdlog
 )
 add_test(NAME test_prompt_context COMMAND test_prompt_context)
+
+add_executable(test_token_counter
+    test_token_counter.cpp
+    "${CMAKE_SOURCE_DIR}/src/llm/TokenCounter.cpp"
+)
+target_include_directories(test_token_counter PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+)
+target_link_libraries(test_token_counter PRIVATE
+    nlohmann_json::nlohmann_json
+)
+add_test(NAME test_token_counter COMMAND test_token_counter)
