@@ -36,8 +36,8 @@
 
 namespace project::model_detail {
 
-using json = nlohmann::json;
-using JsonMap = std::map<std::string, json>;
+using json = nlohmann::json;                    // JSON 对象类型别名，简化代码书写。
+using JsonMap = std::map<std::string, json>;    // JSON 对象的别名，表示一组键值对。
 
 // 读取 metadata 字段，同时将 JSON 中的未知字段一并吸收到 metadata 中。
 // 这样旧数据里的临时字段、未来版本里的新增字段都不会在加载时丢失。

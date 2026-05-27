@@ -21,21 +21,21 @@ namespace {
 constexpr int kCurrentFormatVersion = 3;
 
 // 项目根目录下的 JSON 文件名称。
-constexpr const char* kNovelJson = "novel.json";
-constexpr const char* kOutlineJson = "outline.json";
-constexpr const char* kCharactersJson = "characters.json";
-constexpr const char* kSettingsJson = "settings.json";
-constexpr const char* kWorldRulesJson = "world_rules.json";
-constexpr const char* kStyleJson = "style.json";
+constexpr const char* kNovelJson = "novel.json";            // 小说元数据（标题、格式版本等）
+constexpr const char* kOutlineJson = "outline.json";        // 大纲（含 PlotThread 和 Chapter）
+constexpr const char* kCharactersJson = "characters.json";  // 角色列表
+constexpr const char* kSettingsJson = "settings.json";      // 设定列表
+constexpr const char* kWorldRulesJson = "world_rules.json"; // 世界规则列表
+constexpr const char* kStyleJson = "style.json";            // 写作风格
 
 // 项目子目录名称。
-constexpr const char* kChaptersDir = "chapters";
-constexpr const char* kAgentDir = ".novelagent";
+constexpr const char* kChaptersDir = "chapters";            // 章节 Markdown 文件存放目录
+constexpr const char* kAgentDir = ".novelagent";            // Agent 内部数据目录（隐藏）
 
 // .novelagent 子目录下的文件名称。
-constexpr const char* kConversationJson = "conversation.json";
-constexpr const char* kSummariesJson = "summaries.json";
-constexpr const char* kStateJson = "state.json";
+constexpr const char* kConversationJson = "conversation.json"; // Agent 对话历史
+constexpr const char* kSummariesJson = "summaries.json";       // 摘要/缓存数据
+constexpr const char* kStateJson = "state.json";               // Agent 运行状态
 
 // 生成默认 novel.json 内容。
 // 使用 Project struct 构造，确保字段与 Models.h 定义一致，

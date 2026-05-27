@@ -1,6 +1,6 @@
 # NovelAgent CLI -- 细化实现计划
 
-> 版本: 3.0 | 更新时间: 2026-05-18 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 待实施
+> 版本: 3.1 | 更新时间: 2026-05-27 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 待实施
 
 ## 背景
 
@@ -61,6 +61,11 @@ D:\C++Code\C++NovelAgent\
     prompt/                       # [Phase 1 提前落地]
       PromptContextBuilder.h/.cpp # 按章节筛选上下文 + 渲染 LLM prompt
 
+    retrieval/                    # [Phase 4 新增] 语义检索管线
+      VectorStore.h / .cpp        # sqlite-vec 封装：向量存储、ANN 搜索、CRUD
+      EmbeddingGenerator.h/.cpp   # 调用 LLM API embedding endpoint 生成向量
+      NovelChunker.h / .cpp       # 按场景/角色/设定边界智能切分小说文本
+
     project/
       Models.h                    # 10 个 struct：Project/Outline/PlotThread/Chapter/
                                   #   Scene/Character/Relationship/Setting/WorldRule/Style
@@ -98,6 +103,7 @@ D:\C++Code\C++NovelAgent\
     test_llm_client.cpp           # [Phase 2]
     test_tool_registry.cpp        # [Phase 3]
     test_context_manager.cpp      # [Phase 4]
+    test_retrieval.cpp            # [Phase 4]
 ```
 
 ---
@@ -110,6 +116,7 @@ D:\C++Code\C++NovelAgent\
 | **CLI11** | CLI 参数解析 | FetchContent (header-only) | 轻量，子命令支持 |
 | **spdlog** | 日志 | FetchContent (header-only) | 高性能，支持文件/控制台 |
 | **cpp-httplib** | HTTP 请求 | FetchContent (header-only) | Windows 上走 WinHTTP，无外部依赖 |
+| **sqlite-vec** | 向量存储与 ANN 搜索 | FetchContent (编译为静态库) | 零依赖 SQLite 扩展，单文件存储，万级向量毫秒检索 |
 
 > Phase 0 实际验证后，从 libcurl 切换到 cpp-httplib——header-only，无需系统安装 MSYS2 包。
 
@@ -192,6 +199,7 @@ my-novel/
     conversation.json       # 完整对话历史
     summaries.json          # 章节摘要缓存
     state.json              # Agent 状态
+    vectors.db              # [Phase 4] sqlite-vec 向量存储
 ```
 
 ---
@@ -218,7 +226,55 @@ my-novel/
 4. 截断对话到最近 5 轮
 5. 全文压缩为摘要
 
-**为什么不用 RAG/向量检索？** 小说的数据是结构化的（章节、角色、设定），通过确定性 key 索引比语义检索更精确。MVP 阶段不需要引入向量数据库。
+### 语义检索策略（Phase 4 新增）
+
+**为什么需要向量检索？** 在长篇网络小说场景（1000+ 章、数百万字），确定性 ID 遍历面临三个瓶颈：
+1. **关联爆炸**：一个贯穿全程的角色可能出现在数百章中，全部塞入 prompt 会超出 token 预算
+2. **相关性无法排序**：ID 遍历知道"哪些实体有关联"，但不知道"在当前场景下哪些最相关"
+3. **跨章节内容检索**：作者问"我之前写过某个角色用某种方式破解了阵法，是哪一章？"——这是全文语义搜索，不是实体查询
+
+**方案选型：sqlite-vec**
+- 编译为静态库链接进二进制，零运维负担——用户无需安装任何数据库
+- 向量数据存储在项目 `.novelagent/vectors.db` 中，随项目目录可打包分享
+- 对于 400 万字小说（约 2 万条向量），ANN 搜索延迟 < 1ms
+- 上限百万级向量，远超网文场景需求（《从零开始》2000 万字级别也只需 ~10 万条）
+- 相比完整向量数据库（Milvus/Qdrant/Weaviate），无需独立服务进程，无需用户配置
+
+**混合检索架构：**
+```
+用户查询 / 当前写作上下文
+        │
+        ├── 确定性关联（PromptContextBuilder）
+        │     └── 按 chapter_id 遍历 ID 关系图 → 精确召回关联实体
+        │
+        └── 语义检索（VectorStore）
+              └── 查询向量 → ANN 搜索 → Top-K 语义相似内容
+                    │
+                    └── 合并、去重、按相关性排序
+                          │
+                          └── 注入 ContextManager 的 token 预算分配
+```
+
+**三层相关性排序：**
+1. **确定性关联**（权重 0.5）：ID 关系图遍历——角色在哪些章节出现、情节线关联了哪些设定
+2. **启发式排序**（权重 0.2）：出现频率、最近活跃度、情节线优先级——不依赖向量
+3. **语义相似度**（权重 0.3）：嵌入向量余弦相似度——在前两层产生过多候选时做最终截断
+
+**嵌入内容策略：**
+
+| 嵌入对象 | 切分粒度 | 元数据 | 更新时机 |
+|---------|---------|--------|---------|
+| 章节正文 | 按场景边界切分（500-2000 字/块，相邻块 10% 重叠） | chapter_id, scene_index, pov_character | 章节写入后增量更新 |
+| 角色描述 | 每个角色一条（goal + motivation + traits + speaking_style + conflict） | character_id, role_type | 角色创建/更新后 |
+| 设定描述 | 每个设定一条（description + sensory_profile + story_function） | setting_id, category | 设定创建/更新后 |
+| 世界规则 | 每条规则一条（summary + limitations + costs + exceptions） | rule_id, known_by | 规则创建/更新后 |
+
+**嵌入生成：** 复用 LLM Provider 的 embeddings endpoint（如 DeepSeek `v1/embeddings`），与 Chat API 共用 API Key 和 base_url，无需额外配置。400 万字一次性嵌入约 ¥8（DeepSeek 当前价格），日常增量更新几乎无成本。
+
+**检索触发时机：**
+- 用户显式 `/search <query>` 斜杠命令
+- Agent 工具 `search_novel` 调用（VectorStore 作为其实现后端，替代原计划的全文遍历）
+- ContextManager 自动补全：当确定性关联的实体数超过 token 预算阈值时，用语义相关性排序截断
 
 ---
 
@@ -492,10 +548,10 @@ AppConfig (JSON 读写 + 环境变量), FileUtils, StringUtils, JsonUtils, smoke
 
 ---
 
-### Phase 4: 上下文管理
+### Phase 4: 上下文管理与语义检索
 
-> 状态: **待实施** | 预计: 5 个步骤 | 依赖: Phase 3
-> 注：PromptContextBuilder 已在 Phase 1 提前落地，Phase 4 专注在预算分配和降级策略
+> 状态: **待实施** | 预计: 9 个步骤 | 依赖: Phase 2 + Phase 3
+> 注：PromptContextBuilder 已在 Phase 1 提前落地，Phase 4 包含上下文预算/降级（Step 4.1-4.5）和语义检索管线（Step 4.6-4.9）
 
 #### Step 4.1: 实现对话历史摘要
 **修改**: `src/agent/ContextManager.cpp`
@@ -529,6 +585,71 @@ AppConfig (JSON 读写 + 环境变量), FileUtils, StringUtils, JsonUtils, smoke
 **新建**: `tests/test_context_manager.cpp`
 
 - 测试 token 预算计算、超预算截断、多级降级顺序、摘要读写
+
+#### Step 4.6: 引入 sqlite-vec 依赖 + 实现 VectorStore
+**新建**: `src/retrieval/VectorStore.h`, `src/retrieval/VectorStore.cpp`
+**修改**: `cmake/FetchDependencies.cmake`, `CMakeLists.txt`
+
+- FetchContent 拉取 sqlite-vec，编译为静态库链接
+- `VectorStore` 类封装：
+  - `init(db_path)` — 打开/创建 `.novelagent/vectors.db`，建表和向量索引
+  - `insert(id, embedding, metadata_json)` — 插入向量 + 元数据
+  - `search(embedding, top_k)` → `vector<SearchResult>` — ANN 搜索，返回 id + 相似度 + 元数据
+  - `delete(id)` / `update(id, embedding)` — 更新/删除
+  - `count()` → `int` — 向量总数
+- 向量维度从 EmbeddingGenerator 获取（通常 1024 或 1536）
+- 表结构：`vec_items(id TEXT PRIMARY KEY, embedding BLOB, metadata TEXT)` + virtual table for vector index
+- `SearchResult` 结构：`{ id, similarity, metadata_json }`
+
+**验证**: 编译通过，VectorStore 单元测试（插入/搜索/删除/更新）
+
+#### Step 4.7: 实现 EmbeddingGenerator
+**新建**: `src/retrieval/EmbeddingGenerator.h`, `src/retrieval/EmbeddingGenerator.cpp`
+
+- 构造函数接收 `ProviderConfig`（复用 LLM 配置的 base_url + api_key）
+- `generateEmbedding(text)` → `vector<float>` — 单条文本嵌入
+- `generateEmbeddings(texts)` → `vector<vector<float>>` — 批量嵌入（减少 API 调用次数）
+- 调用 `POST {base_url}/v1/embeddings`（OpenAI 兼容格式，DeepSeek/Kimi 均支持）
+- 请求体：`{ model: "text-embedding-3-small", input: text }`
+- 错误处理：API 错误、超时重试、返回维度校验
+- 可选方案（远期）：本地 ONNX Runtime + all-MiniLM-L6-v2，离线免费用，但集成复杂度较高
+
+**验证**: 编译通过，Mock 测试 embedding 生成和批量请求
+
+#### Step 4.8: 实现 NovelChunker
+**新建**: `src/retrieval/NovelChunker.h`, `src/retrieval/NovelChunker.cpp`
+
+- `chunkChapter(chapter, markdown_content)` → `vector<TextChunk>`
+  - 优先按 Scene 边界切分（复用 Models.h 中已定义的 Scene 结构）
+  - 若无 Scene 信息，按段落/空行边界切分
+  - 每个 chunk 500-2000 字，在段落边界处切断，避免截断对话或动作描写
+  - 相邻 chunk 保留 10-20% 重叠（维持语义连贯性，提高检索召回率）
+- `chunkCharacter(character)` → `string` — 角色核心信息拼接为单条可嵌入文本
+- `chunkSetting(setting)` → `string` — 设定信息拼接
+- `chunkWorldRule(rule)` → `string` — 世界规则拼接
+- `TextChunk` 结构：`{ id, text, metadata{type, source_id, chapter_id, chunk_index} }`
+
+**验证**: 编译通过，切分逻辑单元测试（中文文本边界、空章节、无 Scene 退化为段落切分）
+
+#### Step 4.9: 集成混合检索 + 测试 + 提交
+**修改**: `src/agent/ContextManager.cpp`, `src/agent/tools/ProjectTools.cpp`
+
+- `ContextManager::assemble()` 集成 VectorStore 语义搜索作为上下文补充来源
+- `search_novel` 工具改为调用 `VectorStore::search()` 实现（替代原计划的全文字符串遍历）
+- 实现三层相关性融合排序：确定性关联(0.5) + 启发式(0.2) + 语义相似度(0.3)
+- 添加 `/index` 斜杠命令：手动触发全量嵌入生成（遍历所有章节+角色+设定+规则）
+- 增量索引：章节写入后自动为新内容生成嵌入并插入 VectorStore
+
+**新建**: `tests/test_retrieval.cpp`
+
+- 测试 VectorStore 插入/搜索/删除/更新
+- 测试 NovelChunker 切分中文小说文本（Markdown 格式、含场景标记）
+- 测试 EmbeddingGenerator mock（请求体格式验证、批量拆分）
+- 测试混合检索融合排序（确定性 + 语义结果去重合并）
+
+**运行**: `ctest` 全部通过
+- 更新 CHANGELOG.md（增量）
+- `git commit` + `git push`
 
 ---
 
@@ -588,7 +709,7 @@ Phase 0 (骨架) ✓ 完成
     │     └── PromptContextBuilder（Phase 4 基础设施提前落地）
     │
     ├── Phase 2 (LLM 客户端) ──┐
-    │                           ├── Phase 3 (Agent + REPL) ── Phase 4 (上下文管理) ── Phase 5 (打磨)
+    │                           ├── Phase 3 (Agent + REPL) ── Phase 4 (上下文管理 + 语义检索) ── Phase 5 (打磨)
     └───────────────────────────┘
 ```
 
@@ -601,6 +722,7 @@ Phase 0 (骨架) ✓ 完成
 | Console 中文显示 | 启用 UTF-8 codepage，使用 ANSI 转义码 |
 | API Key 泄露到 git | config 文件已在 .gitignore 中 |
 | 模型字段持续膨胀 | GenerationControl + metadata 机制已就位，可吸收大部分扩展需求 |
+| sqlite-vec 在 MinGW 编译兼容性 | Phase 4 Step 4.6 先验证编译；失败则退回到暴力遍历 + JSON 文件存储向量 |
 
 ## 各 Phase 步骤总览
 
@@ -610,6 +732,6 @@ Phase 0 (骨架) ✓ 完成
 | Phase 1 | — | ✓ 完成（超规格） |
 | Phase 2 | 8 steps | ○ 待实施 |
 | Phase 3 | 12 steps | ○ 待实施 |
-| Phase 4 | 5 steps | ○ 待实施（PromptContextBuilder 已提前落地） |
+| Phase 4 | 9 steps | ○ 待实施（PromptContextBuilder 已提前落地） |
 | Phase 5 | 6 steps | ○ 待实施 |
-| **总计** | **31 steps** | Phase 0-1 done, 31 remaining |
+| **总计** | **35 steps** | Phase 0-1 done, 35 remaining |
