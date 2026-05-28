@@ -416,6 +416,208 @@ void test_generation_control() {
     PASS();
 }
 
+void test_volume_roundtrip() {
+    TEST("Volume roundtrip");
+
+    Volume vol;
+    vol.id = "vol-001";
+    vol.title = "第一卷: 学院篇";
+    vol.order = 1;
+    vol.summary = "主角进入学院，结识盟友，发现隐藏在学院地下的秘密。";
+    vol.theme = "成长与觉醒";
+    vol.goal = "建立主角的初始人际关系网，铺设主线伏笔。";
+    vol.start_chapter_id = "ch-001";
+    vol.end_chapter_id = "ch-030";
+    vol.key_events = {"入学考试", "图书馆发现", "密室初探"};
+    vol.focus_characters = {"elena", "marcus"};
+    vol.active_plot_threads = {"pt-main", "pt-academy"};
+    vol.tags = {"act-1", "introduction"};
+    vol.generation.prompt_hint = "重点描写学院氛围和角色间的初次互动";
+    vol.metadata["target_word_count"] = 120000;
+
+    json j = vol;
+    Volume v2 = j.get<Volume>();
+
+    CHECK(v2.id == "vol-001");
+    CHECK(v2.title == "第一卷: 学院篇");
+    CHECK(v2.order == 1);
+    CHECK(v2.summary == "主角进入学院，结识盟友，发现隐藏在学院地下的秘密。");
+    CHECK(v2.theme == "成长与觉醒");
+    CHECK(v2.goal == "建立主角的初始人际关系网，铺设主线伏笔。");
+    CHECK(v2.start_chapter_id == "ch-001");
+    CHECK(v2.end_chapter_id == "ch-030");
+    CHECK(v2.key_events.size() == 3);
+    CHECK(v2.key_events[1] == "图书馆发现");
+    CHECK(v2.focus_characters.size() == 2);
+    CHECK(v2.active_plot_threads[0] == "pt-main");
+    CHECK(v2.tags[1] == "introduction");
+    CHECK(v2.generation.prompt_hint == "重点描写学院氛围和角色间的初次互动");
+    CHECK(v2.metadata.at("target_word_count") == 120000);
+
+    PASS();
+}
+
+void test_volume_defaults() {
+    TEST("Volume defaults");
+
+    Volume vol;
+    vol.id = "vol-min";
+    vol.title = "Minimal Volume";
+
+    json j = vol;
+    Volume v2 = j.get<Volume>();
+
+    CHECK(v2.id == "vol-min");
+    CHECK(v2.order == 0);
+    CHECK(v2.summary.empty());
+    CHECK(v2.theme.empty());
+    CHECK(v2.key_events.empty());
+    CHECK(v2.focus_characters.empty());
+    CHECK(v2.active_plot_threads.empty());
+    CHECK(v2.tags.empty());
+    CHECK(v2.metadata.empty());
+
+    PASS();
+}
+
+void test_outline_with_volumes() {
+    TEST("Outline with volumes");
+
+    Outline outline;
+    outline.premise = "A young scholar discovers an impossible relic.";
+
+    Volume vol;
+    vol.id = "vol-001";
+    vol.title = "第一卷";
+    vol.order = 1;
+    outline.volumes.push_back(vol);
+
+    Chapter ch;
+    ch.id = "ch-001";
+    ch.title = "Opening";
+    ch.volume_id = "vol-001";
+    outline.chapters.push_back(ch);
+
+    json j = outline;
+    Outline o2 = j.get<Outline>();
+
+    CHECK(o2.volumes.size() == 1);
+    CHECK(o2.volumes[0].title == "第一卷");
+    CHECK(o2.chapters.size() == 1);
+    CHECK(o2.chapters[0].volume_id == "vol-001");
+
+    PASS();
+}
+
+void test_chapter_volume_id_serialization() {
+    TEST("Chapter volume_id serialization");
+
+    Chapter ch;
+    ch.id = "ch-005";
+    ch.title = "The Revelation";
+    ch.volume_id = "vol-002";
+
+    json j = ch;
+    Chapter ch2 = j.get<Chapter>();
+
+    CHECK(ch2.volume_id == "vol-002");
+
+    // volume_id 缺失时应为空字符串
+    json minimalChapter = {{"id", "ch-min"}, {"title", "Minimal"}};
+    Chapter ch3 = minimalChapter.get<Chapter>();
+    CHECK(ch3.volume_id.empty());
+
+    PASS();
+}
+
+void test_character_development_roundtrip() {
+    TEST("CharacterDevelopment roundtrip");
+
+    CharacterDevelopment dev;
+    dev.id = "dev-001";
+    dev.chapter_id = "ch-005";
+    dev.summary = "目睹导师背叛，性格从天真转向谨慎多疑。";
+    dev.category = "personality";
+    dev.affected_fields = {"personality", "goal"};
+    dev.tags = {"turning-point"};
+    dev.metadata["trigger"] = "mentor_betrayal";
+
+    json j = dev;
+    CharacterDevelopment d2 = j.get<CharacterDevelopment>();
+
+    CHECK(d2.id == "dev-001");
+    CHECK(d2.chapter_id == "ch-005");
+    CHECK(d2.summary == "目睹导师背叛，性格从天真转向谨慎多疑。");
+    CHECK(d2.category == "personality");
+    CHECK(d2.affected_fields.size() == 2);
+    CHECK(d2.affected_fields[1] == "goal");
+    CHECK(d2.tags[0] == "turning-point");
+    CHECK(d2.metadata.at("trigger") == "mentor_betrayal");
+
+    PASS();
+}
+
+void test_character_development_defaults() {
+    TEST("CharacterDevelopment defaults");
+
+    CharacterDevelopment dev;
+    dev.id = "dev-min";
+    dev.chapter_id = "ch-001";
+    dev.summary = "剪短了长发。";
+
+    json j = dev;
+    CharacterDevelopment d2 = j.get<CharacterDevelopment>();
+
+    CHECK(d2.id == "dev-min");
+    CHECK(d2.category == "other");
+    CHECK(d2.affected_fields.empty());
+    CHECK(d2.tags.empty());
+    CHECK(d2.metadata.empty());
+
+    PASS();
+}
+
+void test_character_with_development() {
+    TEST("Character with development");
+
+    Character c;
+    c.id = "elena";
+    c.name = "Elena";
+    c.personality = "cynical, guarded";
+    c.goal = "revenge";
+
+    CharacterDevelopment dev1;
+    dev1.id = "dev-001";
+    dev1.chapter_id = "ch-003";
+    dev1.summary = "剪短了长发，象征与过去决裂。";
+    dev1.category = "appearance";
+    dev1.affected_fields = {"appearance"};
+
+    CharacterDevelopment dev2;
+    dev2.id = "dev-002";
+    dev2.chapter_id = "ch-005";
+    dev2.summary = "目睹导师背叛，性格从天真转向谨慎。";
+    dev2.category = "personality";
+    dev2.affected_fields = {"personality", "goal"};
+
+    c.development = {dev1, dev2};
+
+    json j = c;
+    Character c2 = j.get<Character>();
+
+    CHECK(c2.personality == "cynical, guarded");
+    CHECK(c2.development.size() == 2);
+    CHECK(c2.development[0].category == "appearance");
+    CHECK(c2.development[1].affected_fields[0] == "personality");
+
+    // development 缺失时应为空
+    json minimalChar = {{"id", "min"}, {"name", "Min"}};
+    Character c3 = minimalChar.get<Character>();
+    CHECK(c3.development.empty());
+
+    PASS();
+}
+
 int main() {
     std::cout << "=== test_models ===\n\n";
 
@@ -429,6 +631,13 @@ int main() {
     test_project_subobjects();
     test_legacy_metadata_capture();
     test_generation_control();
+    test_volume_roundtrip();
+    test_volume_defaults();
+    test_outline_with_volumes();
+    test_chapter_volume_id_serialization();
+    test_character_development_roundtrip();
+    test_character_development_defaults();
+    test_character_with_development();
 
     std::cout << "\nResult: " << tests_passed << '/' << tests_run << " passed\n";
     if (tests_passed == tests_run) {

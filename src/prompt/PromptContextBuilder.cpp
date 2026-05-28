@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <set>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace prompt {
@@ -279,6 +280,26 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     context.chapter_id = chapter->id;
     context.scene_id = options.scene_id;
 
+    // 构建章节 ID → order 映射，用于过滤和排序角色发展记录。
+    // 例如写 ch-005 时，只展示 ch-001 到 ch-005 期间发生的变化。
+    std::unordered_map<std::string, int> chapterOrder;
+    for (const auto& ch : project.outline.chapters) {
+        chapterOrder[ch.id] = ch.order;
+    }
+
+    // order 为 0 表示未设置章节顺序（例如新项目刚创建）。此时不过滤，包含全部记录。
+    const int currentOrder = chapter->order;
+    const bool filterByOrder = (currentOrder > 0);
+
+    // 查找章节所属的卷纲
+    const Volume* volume = nullptr;
+    if (!chapter->volume_id.empty()) {
+        volume = findById(project.outline.volumes, chapter->volume_id);
+        if (!volume) {
+            context.notes.push_back("Chapter references volume_id '" + chapter->volume_id + "' but no matching Volume found.");
+        }
+    }
+
     json payload = json::object();
     payload["task"] = options.task;
     payload["chapter_id"] = chapter->id;
@@ -306,6 +327,15 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
             project.outline.generation,
             project.outline.tags,
             options.include_metadata);
+    }
+
+    if (volume) {
+        payload["volume"] = filterObject(
+            *volume,
+            volume->generation,
+            volume->tags,
+            options.include_metadata,
+            {"id", "title"});
     }
 
     payload["chapter"] = filterObject(
@@ -350,12 +380,51 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     const auto characters = selectCharacters(project, *chapter, plotThreads, options.max_characters);
     json characterArray = json::array();
     for (const auto* character : characters) {
-        characterArray.push_back(filterObject(
+        json charJson = filterObject(
             *character,
             character->generation,
             character->tags,
             options.include_metadata,
-            {"id", "name"}));
+            {"id", "name"});
+
+        // 筛选角色发展记录：仅保留当前章节及之前发生的变化，
+        // 按引用章节的顺序排列，并遵守 GenerationControl 设置。
+        charJson.erase("development");
+        if (!character->development.empty() &&
+            shouldUseField(character->generation, "development", character->tags)) {
+            json devArray = json::array();
+            for (const auto& dev : character->development) {
+                if (!filterByOrder) {
+                    // order 未设置时不过滤，全部包含
+                    devArray.push_back(dev);
+                    continue;
+                }
+                auto it = chapterOrder.find(dev.chapter_id);
+                if (it == chapterOrder.end()) {
+                    // 引用的章节在 outline 中不存在（被删除或打错 ID）
+                    context.notes.push_back(
+                        "Character '" + character->name + "' has a development record ('" +
+                        dev.id + "') referencing chapter_id '" + dev.chapter_id +
+                        "' which does not exist in the outline.");
+                    continue;
+                }
+                if (it->second <= currentOrder) {
+                    devArray.push_back(dev);
+                }
+                // 未来章节的记录正常过滤掉，不产生警告
+            }
+            if (!devArray.empty()) {
+                // 按引用章节的 order 排序，确保时间线从前到后。
+                std::sort(devArray.begin(), devArray.end(),
+                    [&](const json& a, const json& b) {
+                        return chapterOrder[a.value("chapter_id", "")] <
+                               chapterOrder[b.value("chapter_id", "")];
+                    });
+                charJson["development"] = devArray;
+            }
+        }
+
+        characterArray.push_back(charJson);
     }
     payload["characters"] = characterArray;
 
@@ -471,6 +540,22 @@ std::string PromptContextBuilder::renderPrompt(const PromptContext& context) {
         oss << "\n";
     }
 
+    if (payload.contains("volume") && !payload["volume"].empty()) {
+        oss << "## Volume\n";
+        for (auto it = payload["volume"].begin(); it != payload["volume"].end(); ++it) {
+            if (it.value().is_string()) {
+                oss << it.key() << ": " << it.value().get<std::string>() << "\n";
+            } else if (it.value().is_array()) {
+                std::vector<std::string> values;
+                for (const auto& entry : it.value()) {
+                    values.push_back(entry.is_string() ? entry.get<std::string>() : entry.dump());
+                }
+                oss << it.key() << ": " << utils::string::join(values, ", ") << "\n";
+            }
+        }
+        oss << "\n";
+    }
+
     if (payload.contains("chapter") && !payload["chapter"].empty()) {
         oss << "## Target Chapter\n";
         for (auto it = payload["chapter"].begin(); it != payload["chapter"].end(); ++it) {
@@ -514,7 +599,52 @@ std::string PromptContextBuilder::renderPrompt(const PromptContext& context) {
     }
 
     oss << renderSectionList(payload.value("plot_threads", json::array()), "Plot Threads");
-    oss << renderSectionList(payload.value("characters", json::array()), "Characters");
+    // 角色渲染：除基本字段外，追加过滤后的发展记录。
+    const json& charList = payload.value("characters", json::array());
+    if (!charList.empty()) {
+        oss << "## Characters\n";
+        for (const auto& character : charList) {
+            const std::string title = character.value("name", character.value("id", "Unnamed"));
+            oss << "- " << title << "\n";
+            for (auto it = character.begin(); it != character.end(); ++it) {
+                if (it.key() == "id" || it.key() == "name" || it.key() == "development") {
+                    continue;
+                }
+                if (!isMeaningfulValue(it.value())) {
+                    continue;
+                }
+                if (it.value().is_string()) {
+                    oss << "  " << it.key() << ": " << it.value().get<std::string>() << "\n";
+                } else if (it.value().is_array()) {
+                    std::vector<std::string> values;
+                    for (const auto& entry : it.value()) {
+                        values.push_back(entry.is_string() ? entry.get<std::string>() : entry.dump());
+                    }
+                    oss << "  " << it.key() << ": " << utils::string::join(values, ", ") << "\n";
+                } else {
+                    oss << "  " << it.key() << ": " << it.value().dump() << "\n";
+                }
+            }
+            // 渲染发展记录
+            if (character.contains("development") && character["development"].is_array() &&
+                !character["development"].empty()) {
+                oss << "  发展记录:\n";
+                for (const auto& dev : character["development"]) {
+                    std::string devLine = "    - " + dev.value("chapter_id", "?");
+                    devLine += ": " + dev.value("summary", "");
+                    if (dev.contains("affected_fields") && !dev["affected_fields"].empty()) {
+                        std::vector<std::string> fields;
+                        for (const auto& f : dev["affected_fields"]) {
+                            fields.push_back(f.get<std::string>());
+                        }
+                        devLine += " [" + utils::string::join(fields, ", ") + "]";
+                    }
+                    oss << devLine << "\n";
+                }
+            }
+        }
+        oss << "\n";
+    }
     oss << renderSectionList(payload.value("settings", json::array()), "Settings");
     oss << renderSectionList(payload.value("world_rules", json::array()), "World Rules");
 

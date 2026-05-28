@@ -1,6 +1,6 @@
 # NovelAgent CLI -- 细化实现计划
 
-> 版本: 3.1 | 更新时间: 2026-05-27 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 进行中
+> 版本: 3.2 | 更新时间: 2026-05-29 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 进行中
 
 ## 背景
 
@@ -152,13 +152,15 @@ API Key 优先级：环境变量 (`DEEPSEEK_API_KEY` 等) > `~/.novelagent/confi
 
 ### 结构层次
 ```
-Project (format_version=3)
+Project (format_version=4)
 ├── Outline
+│   ├── Volume[]
 │   ├── PlotThread[]
 │   └── Chapter[]
 │       └── Scene[]
 ├── Character[]
-│   └── Relationship[]
+│   ├── Relationship[]
+│   └── CharacterDevelopment[]
 ├── Setting[]
 ├── WorldRule[]
 └── Style
@@ -175,6 +177,8 @@ Project (format_version=3)
 | `Character` | goal, motivation, internal/external_conflict, secret, fear, misbelief, speaking_style, core_values, taboos, relationships[] | 深度角色建模 |
 | `Setting` | story_function, sensory_profile, related_characters/plot_threads/rule_ids | 叙事功能导向 |
 | `WorldRule` | summary, limitations, costs, exceptions, known_by, related_settings | 世界规则一致性 |
+| `Volume` | title, order, summary, theme, goal, start/end_chapter_id, key_events, focus_characters, active_plot_threads | 卷级叙事弧线（2026-05-29 新增） |
+| `CharacterDevelopment` | chapter_id, summary, category, affected_fields | 角色变化追踪，按章节过滤排序（2026-05-29 新增） |
 | `PlotThread` | type, status, priority, stakes, central_question, resolution, start/end_chapter_id | 剧情线管理 |
 | `Outline` | premise, story_structure, act_summaries | 大纲层次 |
 | `Style` | voice_reference, show_vs_tell_bias, *_density, humor_level, sensory_focus, forbidden_phrases/tropes, chapter_opening/ending_style | 细粒度风格控制 |
@@ -187,7 +191,7 @@ Project (format_version=3)
 ```
 my-novel/
   novel.json                # 项目顶层元数据
-  outline.json              # 分层大纲 + PlotThread + Chapter
+  outline.json              # 分层大纲 + Volume + PlotThread + Chapter
   characters.json           # 角色档案（含 Relationship）
   settings.json             # 世界观设定
   world_rules.json          # [v3 新增] 世界规则

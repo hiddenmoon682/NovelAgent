@@ -11,11 +11,13 @@
 // 结构层次:
 //   Project
 //   ├── Outline
+//   │   ├── Volume[]
 //   │   ├── PlotThread[]
 //   │   └── Chapter[]
 //   │       └── Scene[]
 //   ├── Character[]
-//   │   └── Relationship[]
+//   │   ├── Relationship[]
+//   │   └── CharacterDevelopment[]
 //   ├── Setting[]
 //   ├── WorldRule[]
 //   └── Style
@@ -358,6 +360,9 @@ struct Chapter {
     std::vector<std::string> active_plot_threads; // 本章推动的剧情线 ID
     std::vector<std::string> focus_characters;    // 本章重点角色 ID
     std::vector<std::string> focus_settings;      // 本章重点设定/地点/组织 ID
+    // 所属卷 ID。用独立字段而非 tags，因为 Volume 是一个结构化层次，
+    // 需要在 PromptContextBuilder 中按 ID 精确查找并注入卷纲上下文。
+    std::string volume_id;
     std::string status = "outlined";            // outlined|drafting|drafted|revised|final
     int word_count = 0;                         // 当前字数统计
     std::string file_path;                      // 章节 Markdown 文件路径，例如 chapters/001-title.md
@@ -391,6 +396,7 @@ inline void to_json(nlohmann::json& j, const Chapter& c) {
         {"active_plot_threads", c.active_plot_threads},
         {"focus_characters", c.focus_characters},
         {"focus_settings", c.focus_settings},
+        {"volume_id", c.volume_id},
         {"status", c.status},
         {"word_count", c.word_count},
         {"file_path", c.file_path},
@@ -410,7 +416,7 @@ inline void from_json(const nlohmann::json& j, Chapter& c) {
         "turning_point", "hook", "reveal", "foreshadowing", "payoff",
         "emotional_beat", "location_id", "time_marker", "scenes",
         "pov_characters", "key_events", "themes", "active_plot_threads",
-        "focus_characters", "focus_settings", "status", "word_count",
+        "focus_characters", "focus_settings", "volume_id", "status", "word_count",
         "file_path", "tags", "generation", "metadata"
     };
 
@@ -438,12 +444,62 @@ inline void from_json(const nlohmann::json& j, Chapter& c) {
     c.active_plot_threads = utils::json::getOrDefault(j, "active_plot_threads", std::vector<std::string>{});
     c.focus_characters = utils::json::getOrDefault(j, "focus_characters", std::vector<std::string>{});
     c.focus_settings = utils::json::getOrDefault(j, "focus_settings", std::vector<std::string>{});
+    c.volume_id = utils::json::getOrDefault(j, "volume_id", std::string{});
     c.status = utils::json::getOrDefault(j, "status", std::string{"outlined"});
     c.word_count = utils::json::getOrDefault(j, "word_count", 0);
     c.file_path = utils::json::getOrDefault(j, "file_path", std::string{});
     c.tags = utils::json::getOrDefault(j, "tags", std::vector<std::string>{});
     c.generation = utils::json::getOrDefault(j, "generation", GenerationControl{});
     c.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
+}
+
+// ──────────────────────────────────────────────
+//  CharacterDevelopment — 角色发展记录
+// ──────────────────────────────────────────────
+
+// 记录角色在剧情中发生的变化，无论大小。不是"里程碑"——剪头发、
+// 改口癖、态度转变，只要作者觉得值得记就可以。
+// 没有独立的 GenerationControl——每条记录本身就很轻量，不需要字段级过滤。
+// 可在 Character.generation.exclude_fields 中整体排除 "development"。
+// 存在 characters.json 内，跟着角色走。
+struct CharacterDevelopment {
+    std::string id;                             // 记录唯一标识
+    std::string chapter_id;                     // 发生在哪一章
+    std::string summary;                        // 变化描述，例如 "剪短了长发，象征与过去决裂"
+    std::string category = "other";             // appearance|personality|belief|ability|relationship|status|goal|other
+    std::vector<std::string> affected_fields;   // 受影响的 Character 字段，例如 ["appearance", "goal"]
+    std::vector<std::string> tags;              // 轻量分类标签
+    std::map<std::string, nlohmann::json> metadata; // 扩展信息
+};
+
+// CharacterDevelopment 的 JSON 序列化。
+inline void to_json(nlohmann::json& j, const CharacterDevelopment& d) {
+    j = nlohmann::json{
+        {"id", d.id},
+        {"chapter_id", d.chapter_id},
+        {"summary", d.summary},
+        {"category", d.category},
+        {"affected_fields", d.affected_fields},
+        {"tags", d.tags},
+        {"metadata", d.metadata}
+    };
+}
+
+// CharacterDevelopment 的 JSON 反序列化，缺失字段回落默认值，未知字段进入 metadata。
+inline void from_json(const nlohmann::json& j, CharacterDevelopment& d) {
+    using namespace project::model_detail;
+    static const std::set<std::string> kKnownKeys = {
+        "id", "chapter_id", "summary", "category",
+        "affected_fields", "tags", "metadata"
+    };
+
+    d.id = utils::json::getOrDefault(j, "id", std::string{});
+    d.chapter_id = utils::json::getOrDefault(j, "chapter_id", std::string{});
+    d.summary = utils::json::getOrDefault(j, "summary", std::string{});
+    d.category = utils::json::getOrDefault(j, "category", std::string{"other"});
+    d.affected_fields = utils::json::getOrDefault(j, "affected_fields", std::vector<std::string>{});
+    d.tags = utils::json::getOrDefault(j, "tags", std::vector<std::string>{});
+    d.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }
 
 // ──────────────────────────────────────────────
@@ -473,6 +529,10 @@ struct Character {
     std::vector<std::string> chapter_appearances; // 角色出场过的章节 ID
     std::string arc;                            // 角色弧光与成长轨迹摘要
     std::string notes;                          // 自由补充备注
+    // 角色发展记录，按故事时间排列。PromptContextBuilder 构建上下文
+    // 时会按引用章节的 order 排序后展示，确保 AI 看到的时间线是连贯的。
+    // 可通过 generation.exclude_fields = ["development"] 整体关闭。
+    std::vector<CharacterDevelopment> development;
     std::vector<std::string> tags;              // 轻量分类标签，如 "core-cast"
     GenerationControl generation;               // 控制角色字段的提示词参与度
     std::map<std::string, nlohmann::json> metadata; // 角色扩展信息
@@ -503,6 +563,7 @@ inline void to_json(nlohmann::json& j, const Character& c) {
         {"chapter_appearances", c.chapter_appearances},
         {"arc", c.arc},
         {"notes", c.notes},
+        {"development", c.development},
         {"tags", c.tags},
         {"generation", c.generation},
         {"metadata", c.metadata}
@@ -518,7 +579,7 @@ inline void from_json(const nlohmann::json& j, Character& c) {
         "external_conflict", "secret", "fear", "misbelief",
         "speaking_style", "traits", "core_values", "taboos",
         "relationships", "chapter_appearances", "arc", "notes",
-        "tags", "generation", "metadata"
+        "development", "tags", "generation", "metadata"
     };
 
     c.id = utils::json::getOrDefault(j, "id", std::string{});
@@ -545,6 +606,7 @@ inline void from_json(const nlohmann::json& j, Character& c) {
     c.chapter_appearances = utils::json::getOrDefault(j, "chapter_appearances", std::vector<std::string>{});
     c.arc = utils::json::getOrDefault(j, "arc", std::string{});
     c.notes = utils::json::getOrDefault(j, "notes", std::string{});
+    c.development = utils::json::getOrDefault(j, "development", std::vector<CharacterDevelopment>{});
     c.tags = utils::json::getOrDefault(j, "tags", std::vector<std::string>{});
     c.generation = utils::json::getOrDefault(j, "generation", GenerationControl{});
     c.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
@@ -687,6 +749,77 @@ inline void from_json(const nlohmann::json& j, PlotThread& p) {
 }
 
 // ──────────────────────────────────────────────
+//  Volume — 卷纲
+// ──────────────────────────────────────────────
+
+// 在 Outline 和 Chapter 之间增加卷的层次。
+// WHY: 长篇网文（数百上千章）需要卷级组织——扁平章节列表无法表达卷级
+// 叙事弧线、主题转折和角色重点切换。Volume 存在 outline.json 内，
+// 不新增文件，旧项目加载后 volumes 默认为空数组，完全向下兼容。
+struct Volume {
+    std::string id;                             // 卷唯一标识，例如 "vol-001"
+    std::string title;                          // 卷标题，例如 "第一卷: 学院篇"
+    int order = 0;                              // 卷的顺序编号
+    std::string summary;                        // 本卷弧线摘要
+    std::string theme;                          // 本卷主题
+    std::string goal;                           // 本卷叙事目标
+    std::string start_chapter_id;               // 起始章节 ID
+    std::string end_chapter_id;                 // 结束章节 ID
+    std::vector<std::string> key_events;        // 本卷关键事件
+    std::vector<std::string> focus_characters;  // 本卷重点角色 ID
+    std::vector<std::string> active_plot_threads; // 本卷推进的剧情线 ID
+    std::vector<std::string> tags;              // 轻量分类标签
+    GenerationControl generation;               // 控制卷纲字段的提示词参与度
+    std::map<std::string, nlohmann::json> metadata; // 卷纲扩展信息
+};
+
+// Volume 的 JSON 序列化。
+inline void to_json(nlohmann::json& j, const Volume& v) {
+    j = nlohmann::json{
+        {"id", v.id},
+        {"title", v.title},
+        {"order", v.order},
+        {"summary", v.summary},
+        {"theme", v.theme},
+        {"goal", v.goal},
+        {"start_chapter_id", v.start_chapter_id},
+        {"end_chapter_id", v.end_chapter_id},
+        {"key_events", v.key_events},
+        {"focus_characters", v.focus_characters},
+        {"active_plot_threads", v.active_plot_threads},
+        {"tags", v.tags},
+        {"generation", v.generation},
+        {"metadata", v.metadata}
+    };
+}
+
+// Volume 的 JSON 反序列化，缺失字段回落默认值，未知字段进入 metadata。
+inline void from_json(const nlohmann::json& j, Volume& v) {
+    using namespace project::model_detail;
+    static const std::set<std::string> kKnownKeys = {
+        "id", "title", "order", "summary", "theme", "goal",
+        "start_chapter_id", "end_chapter_id", "key_events",
+        "focus_characters", "active_plot_threads", "tags",
+        "generation", "metadata"
+    };
+
+    v.id = utils::json::getOrDefault(j, "id", std::string{});
+    v.title = utils::json::getOrDefault(j, "title", std::string{});
+    v.order = utils::json::getOrDefault(j, "order", 0);
+    v.summary = utils::json::getOrDefault(j, "summary", std::string{});
+    v.theme = utils::json::getOrDefault(j, "theme", std::string{});
+    v.goal = utils::json::getOrDefault(j, "goal", std::string{});
+    v.start_chapter_id = utils::json::getOrDefault(j, "start_chapter_id", std::string{});
+    v.end_chapter_id = utils::json::getOrDefault(j, "end_chapter_id", std::string{});
+    v.key_events = utils::json::getOrDefault(j, "key_events", std::vector<std::string>{});
+    v.focus_characters = utils::json::getOrDefault(j, "focus_characters", std::vector<std::string>{});
+    v.active_plot_threads = utils::json::getOrDefault(j, "active_plot_threads", std::vector<std::string>{});
+    v.tags = utils::json::getOrDefault(j, "tags", std::vector<std::string>{});
+    v.generation = utils::json::getOrDefault(j, "generation", GenerationControl{});
+    v.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
+}
+
+// ──────────────────────────────────────────────
 //  Outline — 大纲
 // ──────────────────────────────────────────────
 
@@ -694,6 +827,7 @@ struct Outline {
     std::string premise;                        // 一句话故事前提
     std::string story_structure;                // 故事结构，例如 "three-act"、"hero-journey"
     std::vector<std::string> act_summaries;     // 各幕（三段/四段）的情节摘要
+    std::vector<Volume> volumes;                // 卷纲列表
     std::vector<PlotThread> plot_threads;       // 剧情线列表
     std::vector<Chapter> chapters;              // 章节列表
     std::vector<std::string> tags;              // 轻量分类标签
@@ -707,6 +841,7 @@ inline void to_json(nlohmann::json& j, const Outline& o) {
         {"premise", o.premise},
         {"story_structure", o.story_structure},
         {"act_summaries", o.act_summaries},
+        {"volumes", o.volumes},
         {"plot_threads", o.plot_threads},
         {"chapters", o.chapters},
         {"tags", o.tags},
@@ -719,13 +854,14 @@ inline void to_json(nlohmann::json& j, const Outline& o) {
 inline void from_json(const nlohmann::json& j, Outline& o) {
     using namespace project::model_detail;
     static const std::set<std::string> kKnownKeys = {
-        "premise", "story_structure", "act_summaries", "plot_threads",
+        "premise", "story_structure", "act_summaries", "volumes", "plot_threads",
         "chapters", "tags", "generation", "metadata"
     };
 
     o.premise = utils::json::getOrDefault(j, "premise", std::string{});
     o.story_structure = utils::json::getOrDefault(j, "story_structure", std::string{});
     o.act_summaries = utils::json::getOrDefault(j, "act_summaries", std::vector<std::string>{});
+    o.volumes = utils::json::getOrDefault(j, "volumes", std::vector<Volume>{});
     o.plot_threads = utils::json::getOrDefault(j, "plot_threads", std::vector<PlotThread>{});
     o.chapters = utils::json::getOrDefault(j, "chapters", std::vector<Chapter>{});
     o.tags = utils::json::getOrDefault(j, "tags", std::vector<std::string>{});
@@ -842,7 +978,7 @@ inline void from_json(const nlohmann::json& j, Style& s) {
 
 struct Project {
     // ── 元数据 ──
-    int format_version = 3;                     // 数据格式版本号，便于后续兼容升级
+    int format_version = 4;                     // 数据格式版本号，便于后续兼容升级
     std::string title;                          // 小说标题
     std::string author;                         // 作者名
     std::string description;                    // 书籍简介

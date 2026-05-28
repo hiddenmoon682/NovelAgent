@@ -7,7 +7,7 @@
 // 项目文件结构:
 //   <project>/
 //     novel.json          — 项目顶层元数据
-//     outline.json        — 大纲（含 PlotThread 和 Chapter）
+//     outline.json        — 大纲（含 Volume、PlotThread 和 Chapter）
 //     characters.json     — 角色列表（含 Relationship）
 //     settings.json       — 设定列表
 //     world_rules.json    — 世界规则列表

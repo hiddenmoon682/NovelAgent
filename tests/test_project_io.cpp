@@ -62,7 +62,7 @@ void test_createProjectDir() {
 
     auto novelJson = ProjectIO::loadJsonFile(utils::file::joinPath(kTestDir, "novel.json"));
     CHECK(novelJson.has_value());
-    CHECK((*novelJson)["format_version"] == 3);
+    CHECK((*novelJson)["format_version"] == 4);
     CHECK((*novelJson)["tags"].is_array());
     CHECK((*novelJson)["metadata"].is_object());
 
@@ -164,7 +164,7 @@ void test_save_load_roundtrip() {
 
     Project loaded = ProjectIO::load(kTestDir);
 
-    CHECK(loaded.format_version == 3);
+    CHECK(loaded.format_version == 4);
     CHECK(loaded.title == "Shadow of the Ancients");
     CHECK(loaded.logline == "A scholar steals a relic that wants to be found.");
     CHECK(loaded.metadata.at("workflow") == "drafting");
@@ -180,7 +180,7 @@ void test_save_load_roundtrip() {
 
     auto savedNovelJson = ProjectIO::loadJsonFile(utils::file::joinPath(kTestDir, "novel.json"));
     CHECK(savedNovelJson.has_value());
-    CHECK((*savedNovelJson)["format_version"] == 3);
+    CHECK((*savedNovelJson)["format_version"] == 4);
 
     PASS();
 }
@@ -216,7 +216,7 @@ void test_legacy_load_migration() {
 
     Project loaded = ProjectIO::load(kTestDir);
 
-    CHECK(loaded.format_version == 3);
+    CHECK(loaded.format_version == 4);
     CHECK(loaded.metadata.at("custom_flag") == true);
     CHECK(loaded.outline.chapters[0].metadata.at("emotion_curve").is_array());
     CHECK(loaded.settings[0].metadata.at("temperature") == "cold");

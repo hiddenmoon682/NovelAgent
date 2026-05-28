@@ -7,6 +7,9 @@ if(MSVC)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
+    # 静态链接 libgcc/libstdc++/libwinpthread，让 exe 自包含。
+    # 避免编译环境（Qt MinGW）和运行环境（Git MinGW）版本不一致导致 DLL 找不到。
+    add_link_options(-static-libgcc -static-libstdc++ -static)
 endif()
 
 # Debug: no optimization, full debug symbols.

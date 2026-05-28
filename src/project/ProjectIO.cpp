@@ -18,7 +18,7 @@ namespace fu = utils::file;
 namespace {
 
 // 当前数据格式版本。新建项目和加载迁移均以此为准。
-constexpr int kCurrentFormatVersion = 3;
+constexpr int kCurrentFormatVersion = 4;
 
 // 项目根目录下的 JSON 文件名称。
 constexpr const char* kNovelJson = "novel.json";            // 小说元数据（标题、格式版本等）
@@ -56,7 +56,9 @@ json defaultOutlineJson() {
 }
 
 // 轻量项目升级入口。
-// 当前仅将旧 format_version 提升到最新，升级逻辑可随着版本变化继续扩展。
+// v1→v2: 预留
+// v2→v3: 预留
+// v3→v4: 新增 Volume（卷纲），旧项目的 volumes 默认为空数组，无需显式迁移。
 void migrateProject(Project& project) {
     if (project.format_version < kCurrentFormatVersion) {
         project.format_version = kCurrentFormatVersion;

@@ -1,6 +1,6 @@
 # NovelAgent 模块介绍
 
-> 更新时间: 2026-05-17 | 当前版本: v0.1.0 (Phase 0)
+> 更新时间: 2026-05-29 | 当前版本: v0.3.0 (Phase 1 完成, Phase 2 进行中, 数据模型持续完善)
 
 ---
 
@@ -109,7 +109,7 @@ ProviderConfig              AppConfig
 
 | 属性 | 说明 |
 |------|------|
-| 当前状态 | ○ Phase 1 待实现 (仅 stub) |
+| 当前状态 | ✓ Phase 1 完成 (12 个 struct: Volume/CharacterDevelopment 新增, ProjectIO, PromptContextBuilder) |
 | 规划文件 | `Models.h`, `ProjectIO.h/.cpp`, `ProjectManager.h/.cpp` |
 | 依赖 | utils/, nlohmann/json |
 
@@ -119,10 +119,15 @@ ProviderConfig              AppConfig
 
 ```
 Project                   — 项目元数据 (标题、作者、字数、风格)
-  ├── Outline             — 层级大纲 (前提 → 情节线 → 章节 → 场景)
+  ├── Outline             — 层级大纲
+  │    ├── Volume[]       — 卷纲 (卷级弧线摘要、主题、关键事件)
+  │    ├── PlotThread[]   — 剧情线 (类型、优先级、核心问题)
   │    └── Chapter[]      — 单章大纲 (标题、摘要、场景列表、POV角色)
-  ├── Character[]         — 角色档案 (姓名、外貌、性格、关系、弧线)
+  ├── Character[]         — 角色档案 (姓名、外貌、性格、弧线)
+  │    ├── Relationship[] — 角色关系 (类型、公开/私下态度、戏剧张力)
+  │    └── CharacterDevelopment[] — 角色发展记录 (按章节追踪变化)
   ├── Setting[]           — 世界观设定 (位置、建筑、规则)
+  ├── WorldRule[]         — 世界规则 (限制、代价、例外、知晓范围)
   └── Style               — 写作风格 (语气、节奏、文风、对话风格)
 ```
 
@@ -157,7 +162,7 @@ my-novel/
 
 | 属性 | 说明 |
 |------|------|
-| 当前状态 | ○ Phase 2 待实现 |
+| 当前状态 | ○ Phase 2 进行中 (Message/SSEParser/TokenCounter 完成, LLMClient 待实现) |
 | 规划文件 | `Message.h`, `LLMClient.h/.cpp`, `SSEParser.h/.cpp`, `TokenCounter.h/.cpp` |
 | 依赖 | cpp-httplib (HTTP), nlohmann/json |
 
@@ -348,8 +353,8 @@ LLM 回复是逐 token 流式返回的，本模块负责:
 | main.cpp | 0 | ✓ | CLI参数解析、配置加载、环境变量注入 |
 | config/ | 0 | ✓ | ProviderConfig、AppConfig、JSON 持久化 |
 | utils/ | 0 | ✓ | FileUtils、StringUtils、JsonUtils |
-| project/ | 1 | ○ | 仅 Project stub，待实现完整数据模型 |
-| llm/ | 2 | ○ | 待实现 HTTP、SSE、Token 计数 |
+| project/ | 1 | ✓ | 12 个 struct (Volume/CharacterDevelopment 新增), GenerationControl, ProjectIO load/save |
+| llm/ | 2 | ○ | Message/SSEParser/TokenCounter 完成, LLMClient 待实现 |
 | agent/ | 3 | ○ | 待实现 Agent 循环、工具注册 |
 | agent/tools/ | 3 | ○ | 待实现 18 个工具 |
 | cli/ | 3 | ○ | 仅 ReplHandler stub，待实现完整 REPL |
