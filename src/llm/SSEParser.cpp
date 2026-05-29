@@ -73,13 +73,17 @@ void SSEParser::processEvent(const std::string& eventText)
 
     if (dataLines.empty()) return;
 
-    // [DONE] 终止信号（非 JSON）
+    // [DONE] 终止信号 — 发出 is_end 标记的 StreamChunk
     if (dataLines == "[DONE]") {
-        if (on_done_) on_done_();
+        if (on_chunk_) {
+            StreamChunk endChunk;
+            endChunk.is_end = true;
+            on_chunk_(endChunk);
+        }
         return;
     }
 
-    // 解析 JSON chunk
+    // 解析 JSON chunk → StreamChunk
     try {
         auto j = nlohmann::json::parse(dataLines);
         processChunk(j);
@@ -89,94 +93,79 @@ void SSEParser::processEvent(const std::string& eventText)
 }
 
 // ===========================================================================
-// processChunk — 从单个 chunk JSON 中提取 content / tool_calls
+// processChunk — 从 JSON chunk 构建 StreamChunk 并发出
 //
-// 流式 tool_calls 按 index 分片返回，需要累积合并：
-//   chunk 1: tool_calls[0] = { index: 0, id: "call_xxx", function: { name: "f", arguments: "" } }
-//   chunk 2: tool_calls[0] = { index: 0, function: { arguments: "{\"ch" } }
-//   chunk 3: tool_calls[0] = { index: 0, function: { arguments: "ap\": 1}" } }
-// 只有遇到 finish_reason 时才触发完整回调。
+// 纯协议解析：只提取字段填充 StreamChunk，不累积、不合并。
+// 跨 chunk 的状态管理由 StreamAccumulator 负责。
 // ===========================================================================
 
 void SSEParser::processChunk(const nlohmann::json& j)
 {
+    if (!on_chunk_) return;
     if (!j.contains("choices") || !j["choices"].is_array() || j["choices"].empty()) {
         return;
     }
 
+    StreamChunk chunk;
+
+    // 顶层元数据（仅首个 chunk 携带，后续 chunk 为空字符串/0）
+    chunk.id = j.value("id", "");
+    chunk.model = j.value("model", "");
+    chunk.created = j.value("created", 0);
+
     const auto& choice = j["choices"][0];
 
-    // finish_reason 非空表示流式输出结束（即使没有 [DONE] 也能正确收尾）
-    bool hasFinish = choice.contains("finish_reason") &&
-                     choice["finish_reason"].is_string() &&
-                     !choice["finish_reason"].get<std::string>().empty();
-
-    // 有些 chunk 只有 finish_reason 没有 delta（如 tool_calls 流末帧）
-    if (!choice.contains("delta") || !choice["delta"].is_object()) {
-        if (hasFinish) {
-            flushToolCalls();
-            if (on_done_) on_done_();
-        }
-        return;
+    // finish_reason（仅末个 chunk 携带）
+    if (choice.contains("finish_reason") && choice["finish_reason"].is_string()) {
+        chunk.finish_reason = choice["finish_reason"].get<std::string>();
     }
 
-    const auto& delta = choice["delta"];
+    // delta — 文本和工具调用增量
+    if (choice.contains("delta") && choice["delta"].is_object()) {
+        const auto& delta = choice["delta"];
 
-    // 文本增量
-    if (delta.contains("content") && delta["content"].is_string()) {
-        std::string token = delta["content"].get<std::string>();
-        if (!token.empty() && on_token_) {
-            on_token_(token);
+        // 文本增量
+        if (delta.contains("content") && delta["content"].is_string()) {
+            chunk.content_delta = delta["content"].get<std::string>();
         }
-    }
 
-    // 工具调用增量 — 按 index 累积，参数增量拼接而非覆盖
-    if (delta.contains("tool_calls") && delta["tool_calls"].is_array()) {
-        for (const auto& tc : delta["tool_calls"]) {
-            // OpenAI 流式协议中 index 一定存在，但防御性默认 0
-            int index = tc.value("index", 0);
-            auto& pending = pending_tool_calls_[index];
+        // 思维链增量（DeepSeek thinking 模式）
+        if (delta.contains("reasoning_content") && delta["reasoning_content"].is_string()) {
+            chunk.reasoning_delta = delta["reasoning_content"].get<std::string>();
+        }
 
-            // id / type / function.name 只在第一个 chunk 携带
-            if (tc.contains("id") && tc["id"].is_string()) {
-                pending.id = tc["id"].get<std::string>();
-            }
-            if (tc.contains("type") && tc["type"].is_string()) {
-                pending.type = tc["type"].get<std::string>();
-            }
-            if (tc.contains("function") && tc["function"].is_object()) {
-                const auto& func = tc["function"];
-                if (func.contains("name") && func["name"].is_string()) {
-                    pending.function_name = func["name"].get<std::string>();
+        // 工具调用增量
+        if (delta.contains("tool_calls") && delta["tool_calls"].is_array()) {
+            for (const auto& tc : delta["tool_calls"]) {
+                ToolCallDelta tcd;
+                tcd.index = tc.value("index", 0);
+                tcd.id = tc.value("id", "");
+                tcd.type = tc.value("type", "function");
+                if (tc.contains("function") && tc["function"].is_object()) {
+                    const auto& func = tc["function"];
+                    tcd.function_name = func.value("name", "");
+                    tcd.arguments = func.value("arguments", "");
                 }
-                // arguments 跨 chunk 增量返回，必须拼接
-                if (func.contains("arguments") && func["arguments"].is_string()) {
-                    pending.arguments += func["arguments"].get<std::string>();
-                }
+                chunk.tool_call_deltas.push_back(std::move(tcd));
             }
         }
     }
 
-    // finish_reason 出现 → 累积完成，触发合并后的 tool_calls
-    if (hasFinish) {
-        flushToolCalls();
-        if (on_done_) on_done_();
-    }
-}
-
-// ===========================================================================
-// flushToolCalls — 按 index 顺序触发已累积的 tool_calls，然后清空
-// ===========================================================================
-
-void SSEParser::flushToolCalls()
-{
-    if (on_tool_call_ && !pending_tool_calls_.empty()) {
-        // std::map 按 key 排序，因此按 index 升序触发
-        for (auto& [idx, tc] : pending_tool_calls_) {
-            on_tool_call_(tc);
+    // usage（仅末个 chunk 携带）
+    if (j.contains("usage") && j["usage"].is_object()) {
+        const auto& usage = j["usage"];
+        chunk.usage.prompt_tokens = usage.value("prompt_tokens", 0);
+        chunk.usage.completion_tokens = usage.value("completion_tokens", 0);
+        chunk.usage.total_tokens = usage.value("total_tokens", 0);
+        if (usage.contains("prompt_tokens_details") && usage["prompt_tokens_details"].is_object()) {
+            chunk.usage.cached_tokens = usage["prompt_tokens_details"].value("cached_tokens", 0);
+        }
+        if (usage.contains("completion_tokens_details") && usage["completion_tokens_details"].is_object()) {
+            chunk.usage.reasoning_tokens = usage["completion_tokens_details"].value("reasoning_tokens", 0);
         }
     }
-    pending_tool_calls_.clear();
+
+    on_chunk_(chunk);
 }
 
 // ===========================================================================
@@ -186,7 +175,6 @@ void SSEParser::flushToolCalls()
 void SSEParser::reset()
 {
     buffer_.clear();
-    pending_tool_calls_.clear();
 }
 
 } // namespace llm

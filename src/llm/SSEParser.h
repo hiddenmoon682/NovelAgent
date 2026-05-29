@@ -1,50 +1,39 @@
 #pragma once
 
 #include <functional>
-#include <map>
 #include <string>
 #include "llm/Message.h"
 
 namespace llm {
 
 /// SSE (Server-Sent Events) 流式解析器。
-/// 解析 OpenAI 兼容 API 的流式响应，提取文本增量和工具调用增量。
-/// 通过回调将解析结果传递给 LLMClient，不持有对话状态。
+/// 纯协议解析：将 SSE 文本流转换为 `StreamChunk` 对象，通过单回调输出。
+/// 不持有跨 chunk 状态，不负责 tool_calls 合并——这些由 `StreamAccumulator` 处理。
 class SSEParser {
 public:
-    using TokenCallback    = std::function<void(const std::string& token)>;
-    using ToolCallCallback = std::function<void(const ToolCall& tc)>;
-    using DoneCallback     = std::function<void()>;
-    using ErrorCallback    = std::function<void(const std::string& error)>;
+    using ChunkCallback = std::function<void(const StreamChunk& chunk)>;
+    using ErrorCallback = std::function<void(const std::string& error)>;
 
-    void setOnToken(TokenCallback cb)    { on_token_ = std::move(cb); }
-    void setOnToolCall(ToolCallCallback cb) { on_tool_call_ = std::move(cb); }
-    void setOnDone(DoneCallback cb)      { on_done_ = std::move(cb); }
-    void setOnError(ErrorCallback cb)    { on_error_ = std::move(cb); }
+    void setOnChunk(ChunkCallback cb) { on_chunk_ = std::move(cb); }
+    void setOnError(ErrorCallback cb) { on_error_ = std::move(cb); }
 
     /// 喂入原始 SSE 数据块。数据可能包含多个完整事件、不完整事件或两者混合。
     void feed(const std::string& data);
 
-    /// 重置所有内部状态，准备解析新的流。
+    /// 重置内部缓冲，准备解析新的流。
     void reset();
 
 private:
     std::string buffer_; // 跨 feed() 调用的不完整数据缓冲
-    std::map<int, ToolCall> pending_tool_calls_; // 按 index 累积中的 tool_call（流式分片合并）
 
-    TokenCallback    on_token_;
-    ToolCallCallback on_tool_call_;
-    DoneCallback     on_done_;
-    ErrorCallback    on_error_;
+    ChunkCallback on_chunk_;
+    ErrorCallback on_error_;
 
     /// 解析一个完整的 SSE 事件（不含分隔符）
     void processEvent(const std::string& eventText);
 
-    /// 解析 JSON chunk，提取 delta 中的 content 和 tool_calls（按 index 累积）
+    /// 解析 JSON chunk，构建 StreamChunk 对象并通过 on_chunk_ 发出
     void processChunk(const nlohmann::json& j);
-
-    /// 将所有已累积的 tool_calls 按 index 顺序触发回调，然后清空映射
-    void flushToolCalls();
 };
 
 } // namespace llm

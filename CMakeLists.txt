@@ -35,6 +35,8 @@ set(SOURCES
     src/llm/TokenCounter.cpp
     src/llm/SSEParser.h
     src/llm/SSEParser.cpp
+    src/llm/StreamAccumulator.h
+    src/llm/StreamAccumulator.cpp
 
     src/prompt/PromptContextBuilder.h
     src/prompt/PromptContextBuilder.cpp

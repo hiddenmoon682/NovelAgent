@@ -7,6 +7,27 @@
 
 ---
 
+## 第二轮审查（2026-05-29） — 流式架构重构
+
+---
+
+## 1. LLMResponse 无法覆盖流式响应 ✅
+
+**文件**: `src/llm/Message.h`, `src/llm/SSEParser.h`, `src/llm/SSEParser.cpp`, `src/llm/StreamAccumulator.h`, `src/llm/StreamAccumulator.cpp`
+
+**问题**: `SSEParser` 混入了"协议解析"和"跨 chunk 状态管理"两种职责，`LLMResponse` 无法表示流式中间状态。
+
+**修复**: 引入三层职责分离架构——
+
+1. **`Message.h`** 新增 `ToolCallDelta`、`UsageInfo`、`StreamChunk` 三个流式中间类型
+2. **`SSEParser`** 简化为纯协议解析——单个 `onChunk(StreamChunk)` 回调替代原有的 `onToken`/`onToolCall`/`onDone` 三回调，移除 `pending_tool_calls_` 和 `flushToolCalls()`
+3. **`StreamAccumulator`**（新建）负责跨 chunk 合并——文本拼接、tool_calls 按 index 累积、流结束时产出完整 `LLMResponse`
+4. **`LLMResponse` 不变** — `to_json`/`from_json` 保持不变
+
+数据流：`SSE 文本 → SSEParser → StreamChunk → StreamAccumulator → LLMResponse`
+
+---
+
 ## 第一轮审查（2026-05-28） — 全部已排查/已修复
 
 ---

@@ -8,7 +8,7 @@
     }
   },
   "env": {
-    "PATH": "D:/QT/QT/Tools/QtCreator/bin/clang/bin;${PATH}"
+    "PATH": "D:/QT/QT/Tools/QtCreator/bin/clang/bin;D:/MingW/mingw64/bin;D:/SoftWare/cmake/cmake-4.3.0-windows-x86_64/bin"
   },
   "permissions": {
     "allow": [
