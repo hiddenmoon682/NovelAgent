@@ -66,3 +66,31 @@ target_link_libraries(test_token_counter PRIVATE
     nlohmann_json::nlohmann_json
 )
 add_test(NAME test_token_counter COMMAND test_token_counter)
+
+add_executable(test_sse_parser
+    test_sse_parser.cpp
+    "${CMAKE_SOURCE_DIR}/src/llm/SSEParser.cpp"
+)
+target_include_directories(test_sse_parser PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+)
+target_link_libraries(test_sse_parser PRIVATE
+    nlohmann_json::nlohmann_json
+)
+add_test(NAME test_sse_parser COMMAND test_sse_parser)
+
+add_executable(test_llm_client
+    test_llm_client.cpp
+    "${CMAKE_SOURCE_DIR}/src/llm/LLMClient.cpp"
+    "${CMAKE_SOURCE_DIR}/src/llm/SSEParser.cpp"
+    "${CMAKE_SOURCE_DIR}/src/llm/StreamAccumulator.cpp"
+)
+target_include_directories(test_llm_client PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+)
+target_link_libraries(test_llm_client PRIVATE
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    httplib::httplib
+)
+add_test(NAME test_llm_client COMMAND test_llm_client)

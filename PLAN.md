@@ -1,6 +1,6 @@
 # NovelAgent CLI -- 细化实现计划
 
-> 版本: 3.2 | 更新时间: 2026-05-29 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 进行中
+> 版本: 3.3 | 更新时间: 2026-05-30 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 ✓ | Phase 3 待实施
 
 ## 背景
 
@@ -363,7 +363,7 @@ AppConfig (JSON 读写 + 环境变量), FileUtils, StringUtils, JsonUtils, smoke
 
 ### Phase 2: LLM 客户端
 
-> 状态: **进行中** | 预计: 8 个步骤 | 依赖: Phase 0 + Phase 1
+> 状态: **已完成** | 预计: 8 个步骤 | 依赖: Phase 0 + Phase 1
 
 #### Step 2.1: 加入 cpp-httplib 依赖 ✓ 已完成
 **新建/修改**: `cmake/FetchDependencies.cmake`, `CMakeLists.txt`
@@ -406,7 +406,7 @@ AppConfig (JSON 读写 + 环境变量), FileUtils, StringUtils, JsonUtils, smoke
 
 **验证**: 编译通过，5/5 测试无回归
 
-#### Step 2.5: 实现 LLMClient
+#### Step 2.5: 实现 LLMClient ✓ 已完成
 **新建**: `src/llm/LLMClient.h`, `src/llm/LLMClient.cpp`
 
 - 构造函数接收 `ProviderConfig`
@@ -419,7 +419,7 @@ AppConfig (JSON 读写 + 环境变量), FileUtils, StringUtils, JsonUtils, smoke
 
 **验证**: 编译通过
 
-#### Step 2.6: 写 SSE 解析测试
+#### Step 2.6: 写 SSE 解析测试 ✓ 已完成
 **新建**: `tests/test_sse_parser.cpp`, 更新 `tests/CMakeLists.txt`
 
 - 测试单个 token delta 解析
@@ -431,7 +431,7 @@ AppConfig (JSON 读写 + 环境变量), FileUtils, StringUtils, JsonUtils, smoke
 
 **运行**: `ctest` 通过
 
-#### Step 2.7: 写 LLMClient Mock 测试
+#### Step 2.7: 写 LLMClient Mock 测试 ✓ 已完成
 **新建**: `tests/test_llm_client.cpp`
 
 - 启动本地 HTTP mock 服务器，返回预设 SSE 响应
@@ -442,7 +442,7 @@ AppConfig (JSON 读写 + 环境变量), FileUtils, StringUtils, JsonUtils, smoke
 
 **运行**: 全部测试通过
 
-#### Step 2.8: 提交 Phase 2
+#### Step 2.8: 提交 Phase 2 ✓ 已完成
 - 更新 CHANGELOG.md（增量）
 - `git commit` + `git push`
 
@@ -734,7 +734,7 @@ Phase 0 (骨架) ✓ 完成
 |-------|--------|------|
 | Phase 0 | — | ✓ 完成 |
 | Phase 1 | — | ✓ 完成（超规格） |
-| Phase 2 | 8 steps | ○ 待实施 |
+| Phase 2 | 8 steps | ✓ 已完成 |
 | Phase 3 | 12 steps | ○ 待实施 |
 | Phase 4 | 9 steps | ○ 待实施（PromptContextBuilder 已提前落地） |
 | Phase 5 | 6 steps | ○ 待实施 |

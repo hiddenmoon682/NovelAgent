@@ -1,5 +1,17 @@
 # Changelog
 
+## [2026-05-30] Phase 2 完成 — LLMClient + 测试全覆盖
+
+- **新增** — `LLMClient` 类实现（Step 2.5），支持流式 `chat()` 和非流式 `chatNonStreaming()`
+- **新增** — `StreamCallbacks` 回调结构体：on_content/on_reasoning/on_tool_call_start/on_complete/on_error
+- **修改** — `Message::to_json` 修复：content 空 + tool_calls 非空 → null（OpenAI API 要求）
+- **修改** — `StreamAccumulator` 新增 `completed_` 标志防止 [DONE] 二次触发覆盖 finish_reason
+- **新增** — `test_sse_parser.cpp`（Step 2.6）：10 个 SSE 解析测试（token/tool_call/buffer/[DONE]/error）
+- **新增** — `test_llm_client.cpp`（Step 2.7）：5 个 Mock HTTP 服务器测试（流式/非流式/401/缺 Key）
+- **修改** — `PLAN.md` 更新至 v3.3，Phase 2 标记为已完成
+- 测试统计：7 个可执行文件，36+ 测试点，ctest 100% 通过
+- 影响范围：`src/llm/`、`tests/`、`CMakeLists.txt`、`PLAN.md`
+
 ## [2026-05-29] 流式架构重构 — StreamChunk + StreamAccumulator 职责分离
 
 - **新增** — `Message.h` 中新增 `ToolCallDelta`、`UsageInfo`、`StreamChunk` 三个流式中间类型

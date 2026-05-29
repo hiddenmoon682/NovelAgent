@@ -64,10 +64,15 @@ void StreamAccumulator::feed(const StreamChunk& chunk)
 
 void StreamAccumulator::checkComplete(const StreamChunk& chunk)
 {
+    // 已完成则忽略后续事件（防止 [DONE] 覆盖 finish_reason）
+    if (completed_) return;
+
     // finish_reason 为空 且 is_end 为 false → 继续等待
     if (chunk.finish_reason.empty() && !chunk.is_end) {
         return;
     }
+
+    completed_ = true;
 
     // finish_reason 取其值；is_end 但无 finish_reason 时默认 "stop"
     response_.finish_reason = chunk.finish_reason.empty() ? "stop" : chunk.finish_reason;
@@ -92,6 +97,7 @@ void StreamAccumulator::reset()
     response_ = LLMResponse{};
     pending_tool_calls_.clear();
     id_captured_ = false;
+    completed_ = false;
 }
 
 } // namespace llm

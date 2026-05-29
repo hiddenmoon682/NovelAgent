@@ -37,6 +37,7 @@ private:
     LLMResponse response_;                          // 累积中的响应
     std::map<int, ToolCall> pending_tool_calls_;    // 按 index 累积中的 tool_call
     bool id_captured_ = false;                      // 首个 chunk 的元数据是否已捕获
+    bool completed_ = false;                        // 是否已完成（防止 [DONE] 二次触发覆盖 finish_reason）
 
     DoneCallback on_done_;
 
