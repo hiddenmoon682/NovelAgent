@@ -90,6 +90,12 @@ void SSEParser::processEvent(const std::string& eventText)
 
 // ===========================================================================
 // processChunk — 从单个 chunk JSON 中提取 content / tool_calls
+//
+// 流式 tool_calls 按 index 分片返回，需要累积合并：
+//   chunk 1: tool_calls[0] = { index: 0, id: "call_xxx", function: { name: "f", arguments: "" } }
+//   chunk 2: tool_calls[0] = { index: 0, function: { arguments: "{\"ch" } }
+//   chunk 3: tool_calls[0] = { index: 0, function: { arguments: "ap\": 1}" } }
+// 只有遇到 finish_reason 时才触发完整回调。
 // ===========================================================================
 
 void SSEParser::processChunk(const nlohmann::json& j)
@@ -99,7 +105,18 @@ void SSEParser::processChunk(const nlohmann::json& j)
     }
 
     const auto& choice = j["choices"][0];
+
+    // finish_reason 非空表示流式输出结束（即使没有 [DONE] 也能正确收尾）
+    bool hasFinish = choice.contains("finish_reason") &&
+                     choice["finish_reason"].is_string() &&
+                     !choice["finish_reason"].get<std::string>().empty();
+
+    // 有些 chunk 只有 finish_reason 没有 delta（如 tool_calls 流末帧）
     if (!choice.contains("delta") || !choice["delta"].is_object()) {
+        if (hasFinish) {
+            flushToolCalls();
+            if (on_done_) on_done_();
+        }
         return;
     }
 
@@ -113,28 +130,53 @@ void SSEParser::processChunk(const nlohmann::json& j)
         }
     }
 
-    // 工具调用增量
+    // 工具调用增量 — 按 index 累积，参数增量拼接而非覆盖
     if (delta.contains("tool_calls") && delta["tool_calls"].is_array()) {
         for (const auto& tc : delta["tool_calls"]) {
-            ToolCall call;
+            // OpenAI 流式协议中 index 一定存在，但防御性默认 0
+            int index = tc.value("index", 0);
+            auto& pending = pending_tool_calls_[index];
+
+            // id / type / function.name 只在第一个 chunk 携带
             if (tc.contains("id") && tc["id"].is_string()) {
-                call.id = tc["id"].get<std::string>();
+                pending.id = tc["id"].get<std::string>();
             }
             if (tc.contains("type") && tc["type"].is_string()) {
-                call.type = tc["type"].get<std::string>();
+                pending.type = tc["type"].get<std::string>();
             }
             if (tc.contains("function") && tc["function"].is_object()) {
                 const auto& func = tc["function"];
                 if (func.contains("name") && func["name"].is_string()) {
-                    call.function_name = func["name"].get<std::string>();
+                    pending.function_name = func["name"].get<std::string>();
                 }
+                // arguments 跨 chunk 增量返回，必须拼接
                 if (func.contains("arguments") && func["arguments"].is_string()) {
-                    call.arguments = func["arguments"].get<std::string>();
+                    pending.arguments += func["arguments"].get<std::string>();
                 }
             }
-            if (on_tool_call_) on_tool_call_(call);
         }
     }
+
+    // finish_reason 出现 → 累积完成，触发合并后的 tool_calls
+    if (hasFinish) {
+        flushToolCalls();
+        if (on_done_) on_done_();
+    }
+}
+
+// ===========================================================================
+// flushToolCalls — 按 index 顺序触发已累积的 tool_calls，然后清空
+// ===========================================================================
+
+void SSEParser::flushToolCalls()
+{
+    if (on_tool_call_ && !pending_tool_calls_.empty()) {
+        // std::map 按 key 排序，因此按 index 升序触发
+        for (auto& [idx, tc] : pending_tool_calls_) {
+            on_tool_call_(tc);
+        }
+    }
+    pending_tool_calls_.clear();
 }
 
 // ===========================================================================
@@ -144,6 +186,7 @@ void SSEParser::processChunk(const nlohmann::json& j)
 void SSEParser::reset()
 {
     buffer_.clear();
+    pending_tool_calls_.clear();
 }
 
 } // namespace llm

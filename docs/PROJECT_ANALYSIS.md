@@ -1,6 +1,6 @@
 # NovelAgent 项目分析报告
 
-> 生成日期: 2026-05-17 | 当前阶段: Phase 0 完成
+> 生成日期: 2026-05-28 | 当前阶段: Phase 1 完成, Phase 2 进行中
 
 ---
 
@@ -47,16 +47,16 @@ NovelAgent/
 │   │   ├── StringUtils.h           # trim/split/join/大小写
 │   │   └── JsonUtils.h             # nlohmann::json 安全取值
 │   │
-│   ├── project/                    # [Phase 1 待] 数据模型 + I/O
-│   │   ├── Models.h                # 当前: Project stub
+│   ├── project/                    # [Phase 1 ✓] 数据模型 + I/O
+│   │   ├── Models.h                # 10 个 struct, GenerationControl, to_json/from_json
 │   │   ├── ProjectManager.h/.cpp   # 当前: openOrCreate stub
-│   │   └── ProjectIO.h/.cpp        # 待实现 (Phase 1)
+│   │   └── ProjectIO.h/.cpp        # 项目 JSON 文件读写, load/save, 对话历史
 │   │
-│   ├── llm/                        # [Phase 2 待] LLM 客户端
-│   │   ├── Message.h               # 待实现
+│   ├── llm/                        # [Phase 2 ○] LLM 客户端
+│   │   ├── Message.h               # Message/ToolCall/ToolDefinition/LLMResponse 数据结构
 │   │   ├── LLMClient.h/.cpp        # 待实现
-│   │   ├── SSEParser.h/.cpp        # 待实现
-│   │   └── TokenCounter.h/.cpp     # 待实现
+│   │   ├── SSEParser.h/.cpp        # SSE 流式解析, tool_calls 按 index 合并
+│   │   └── TokenCounter.h/.cpp     # 启发式 token 计数（中英文混合）
 │   │
 │   ├── agent/                      # [Phase 3 待] Agent 核心
 │   │   ├── Agent.h/.cpp            # 待实现
@@ -92,9 +92,9 @@ NovelAgent/
 | 配置管理 | 0 | ✓ 完成 | AppConfig, ProviderConfig, JSON 持久化 |
 | 文件工具 | 0 | ✓ 完成 | FileUtils, StringUtils, JsonUtils |
 | CLI 入口 | 0 | ✓ 完成 | CLI11 参数解析, --help 自动生成 |
-| 数据模型 | 1 | ○ 待实施 | Models.h 仅含 Project stub |
-| 项目 I/O | 1 | ○ 待实施 | ProjectIO 未实现 |
-| LLM 客户端 | 2 | ○ 待实施 | HTTP, SSE, Token 计数 |
+| 数据模型 | 1 | ✓ 完成 | 10 个 struct, GenerationControl, PromptContextBuilder |
+| 项目 I/O | 1 | ✓ 完成 | ProjectIO load/save, 对话历史, 章节读写 |
+| LLM 客户端 | 2 | ○ 进行中 | Message/ToolCall/LLMResponse 数据结构 + SSEParser + TokenCounter |
 | Agent 核心 | 3 | ○ 待实施 | Agent 循环, 工具注册 |
 | 上下文管理 | 4 | ○ 待实施 | 摘要, 压缩, 降级 |
 | CLI 交互 | 3 | ○ 待实施 | REPL 循环, 斜杠命令, 流式显示 |

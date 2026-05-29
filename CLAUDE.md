@@ -15,3 +15,4 @@
 
 ### 工作流
 - 每 Phase 结束后：更新 CHANGELOG → git commit → git push。
+- 变更记录以增量添加方式写入根目录 `CHANGELOG.md`（按日期倒序，最新在最上），不创建额外的 changelog 文件。

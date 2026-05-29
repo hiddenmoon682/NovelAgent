@@ -84,7 +84,7 @@ if (project.format_version < kCurrentFormatVersion) {
 - **v1 → v2**: 引入 `tags` + `metadata`，Setting 移除 `attributes`
 - **v2 → v3**: 引入 `Scene`、`Relationship`、`WorldRule`，Character 关系从 `map` 升级到 `vector<Relationship>`
 
-当前 `from_json` 通过 `getMetadataWithUnknownKeys` 被动吸收了未知字段，但如果旧项目用 `v1` 格式，`attributes` 字段不会自动迁移到 `metadata`。
+当前 `from_json` 通过 `getMetadataWithUnknownKeys` 被动吸收未知字段——`attributes` 不在 Setting 的 `kKnownKeys` 中，因此旧数据中的 `attributes` **会被自动吸收到 `metadata`**，数据不会丢失。但迁移仅靠被动吸收，缺乏显式的字段级升级逻辑（如 `attributes` → 已知字段的语义迁移）。
 
 ---
 
@@ -126,15 +126,15 @@ if (project.format_version < kCurrentFormatVersion) {
 
 **文件**: `src/utils/` vs `src/project/Models.h`
 
-**问题**: `utils::file`、`utils::string`、`utils::json` 使用嵌套命名空间，但 `Models.h` 中使用 `project::model_detail` 命名空间。`StringUtils.h` 中的函数是自由函数（无命名空间封装），而 `FileUtils.h` 中的函数封装在 `utils::file` 下。存在一致性差异。
+**问题**: `utils::file`、`utils::string`、`utils::json` 使用嵌套命名空间封装，`StringUtils.h` 中的函数实际上也在 `utils::string` 命名空间内（之前审查时误判为自由函数，已更正）。`Models.h` 中使用 `project::model_detail` 命名空间存放内部辅助函数，与 `utils::*` 属于不同模块的独立命名空间，设计合理。
 
-**影响**: 极小，不影响功能，但长期维护可能造成困惑。
+**结论**: 此条目原描述有误，三个 utils 模块均封装在对应命名空间内，不存在一致性缺陷。可关闭。
 
 ---
 
 ## 10. 测试覆盖率缺口
 
-**问题**: 当前测试（`test_main.cpp`, `test_models.cpp`, `test_project_io.cpp`, `test_prompt_context.cpp`, `test_sse_parser.cpp`, `test_token_counter.cpp`）覆盖了 Phase 0-2 核心逻辑，但缺少：
+**问题**: 当前测试（`test_main.cpp`, `test_models.cpp`, `test_project_io.cpp`, `test_prompt_context.cpp`, `test_token_counter.cpp`）覆盖了 Phase 0-2 核心逻辑，但缺少：
 
 | 缺少的测试 | 原因 |
 |-----------|------|

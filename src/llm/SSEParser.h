@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <string>
 #include "llm/Message.h"
 
@@ -29,6 +30,7 @@ public:
 
 private:
     std::string buffer_; // 跨 feed() 调用的不完整数据缓冲
+    std::map<int, ToolCall> pending_tool_calls_; // 按 index 累积中的 tool_call（流式分片合并）
 
     TokenCallback    on_token_;
     ToolCallCallback on_tool_call_;
@@ -38,8 +40,11 @@ private:
     /// 解析一个完整的 SSE 事件（不含分隔符）
     void processEvent(const std::string& eventText);
 
-    /// 解析 JSON chunk，提取 delta 中的 content 和 tool_calls
+    /// 解析 JSON chunk，提取 delta 中的 content 和 tool_calls（按 index 累积）
     void processChunk(const nlohmann::json& j);
+
+    /// 将所有已累积的 tool_calls 按 index 顺序触发回调，然后清空映射
+    void flushToolCalls();
 };
 
 } // namespace llm
