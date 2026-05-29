@@ -337,20 +337,25 @@ inline void from_json(const nlohmann::json& j, WorldRule& r) {
 //  Chapter — 章节
 // ──────────────────────────────────────────────
 
+// Chapter 是写给 AI 的"章级创作简报"——汇总 Scene 的叙事信息后，
+// 以更高层次描述这一章的整体目标、冲突、情绪弧线和叙事要点。
+// 与 Scene 同名的字段（如 goal/conflict/emotional_beat）是章级汇总，
+// 通常由 AI 在写完所有 Scene 后自动归纳填充，而非手动维护。
 struct Chapter {
     std::string id;                             // 章节唯一标识，例如 "ch-001"
     std::string title;                          // 章节标题，例如 "发现"
     int order = 0;                              // 在整部小说中的顺序编号
     std::string synopsis;                       // 1 到 2 句章节摘要
-    std::string goal;                           // 本章主目标
-    std::string conflict;                       // 本章核心冲突
+    // ── 以下为章级创作指导（由 AI 归纳，非 Scene 重复） ──
+    std::string goal;                           // 本章叙事目标（非单场景目的）
+    std::string conflict;                       // 本章核心矛盾（跨场景的张力主线）
     std::string outcome;                        // 本章结果：成功/失败/部分成功
     std::string turning_point;                  // 本章关键转折
     std::string hook;                           // 章末钩子，吸引读者继续阅读
     std::string reveal;                         // 本章向读者揭示的新信息
     std::string foreshadowing;                  // 本章埋下的伏笔
     std::string payoff;                         // 本章回收的伏笔（来自前文）
-    std::string emotional_beat;                 // 本章情绪变化摘要
+    std::string emotional_beat;                 // 本章情绪变化摘要（跨场景情绪弧线）
     std::string location_id;                    // 本章主要发生地点的 ID
     std::string time_marker;                    // 时间标记，例如 "第三夜"
     std::vector<Scene> scenes;                  // 章节内的场景列表
@@ -752,22 +757,24 @@ inline void from_json(const nlohmann::json& j, PlotThread& p) {
 //  Volume — 卷纲
 // ──────────────────────────────────────────────
 
-// 在 Outline 和 Chapter 之间增加卷的层次。
-// WHY: 长篇网文（数百上千章）需要卷级组织——扁平章节列表无法表达卷级
-// 叙事弧线、主题转折和角色重点切换。Volume 存在 outline.json 内，
-// 不新增文件，旧项目加载后 volumes 默认为空数组，完全向下兼容。
+// Volume 是写给 AI 的"卷级创作简报"——汇总下属章节的叙事信息后，
+// 以更高层次描述整卷的故事弧线、主题和角色重点。
+// 与 Chapter 同名的字段（如 focus_characters/active_plot_threads/key_events）是卷级汇总，
+// 通常由 AI 在写完所有章节后自动归纳填充，而非手动维护。
+// 存在 outline.json 内，不新增文件，旧项目加载后 volumes 默认为空数组，完全向下兼容。
 struct Volume {
     std::string id;                             // 卷唯一标识，例如 "vol-001"
     std::string title;                          // 卷标题，例如 "第一卷: 学院篇"
     int order = 0;                              // 卷的顺序编号
     std::string summary;                        // 本卷弧线摘要
     std::string theme;                          // 本卷主题
-    std::string goal;                           // 本卷叙事目标
+    std::string goal;                           // 本卷叙事目标（非单章目的，跨章大目标）
     std::string start_chapter_id;               // 起始章节 ID
     std::string end_chapter_id;                 // 结束章节 ID
-    std::vector<std::string> key_events;        // 本卷关键事件
-    std::vector<std::string> focus_characters;  // 本卷重点角色 ID
-    std::vector<std::string> active_plot_threads; // 本卷推进的剧情线 ID
+    // ── 以下为卷级汇总（由 AI 归纳，非 Chapter 重复） ──
+    std::vector<std::string> key_events;        // 本卷关键事件（跨章里程碑）
+    std::vector<std::string> focus_characters;  // 本卷重点角色 ID（跨章视角归纳）
+    std::vector<std::string> active_plot_threads; // 本卷推进的剧情线 ID（跨章汇总）
     std::vector<std::string> tags;              // 轻量分类标签
     GenerationControl generation;               // 控制卷纲字段的提示词参与度
     std::map<std::string, nlohmann::json> metadata; // 卷纲扩展信息
@@ -874,22 +881,22 @@ inline void from_json(const nlohmann::json& j, Outline& o) {
 // ──────────────────────────────────────────────
 
 struct Style {
-    std::string tone = "neutral";               // atmospheric|dark|light|neutral|...
-    std::string pacing = "moderate";            // slow|moderate|fast
-    std::string pov = "third_person_limited";   // first_person|third_person_limited|third_person_omniscient
-    std::string tense = "past";                 // past|present
-    std::string prose_style = "literary";       // literary|commercial|minimalist|descriptive
-    std::string dialogue_style = "naturalistic"; // naturalistic|stylized|minimal
-    std::string narrative_distance = "close";    // close|medium|distant
+    std::string tone = "neutral";               // 氛围基调：atmospheric|dark|light|neutral|...
+    std::string pacing = "moderate";            // 叙事节奏：slow|moderate|fast
+    std::string pov = "third_person_limited";   // 视角：first_person|third_person_limited|third_person_omniscient
+    std::string tense = "past";                 // 时态：past|present
+    std::string prose_style = "literary";       // 行文风格：literary|commercial|minimalist|descriptive
+    std::string dialogue_style = "naturalistic"; // 对话风格：naturalistic|stylized|minimal
+    std::string narrative_distance = "close";    // 叙事距离：close|medium|distant
     int chapter_length_target = 4000;           // 目标章节字数
-    std::string sentence_length = "varied";     // short|medium|long|varied
-    std::string vocabulary = "rich";            // simple|moderate|rich
+    std::string sentence_length = "varied";     // 句子长度：short|medium|long|varied
+    std::string vocabulary = "rich";            // 词汇量级：simple|moderate|rich
     std::string voice_reference;                // 叙事声音参考，例如 "类似村上春树"
-    std::string show_vs_tell_bias = "balanced"; // show|balanced|tell
-    std::string dialogue_density = "moderate";  // sparse|moderate|dense
-    std::string description_density = "moderate"; // sparse|moderate|dense
-    std::string introspection_density = "moderate"; // sparse|moderate|dense
-    std::string humor_level = "low";            // none|low|moderate|high
+    std::string show_vs_tell_bias = "balanced"; // 展示 vs 讲述倾向：show|balanced|tell
+    std::string dialogue_density = "moderate";  // 对话密度：sparse|moderate|dense
+    std::string description_density = "moderate"; // 描写密度：sparse|moderate|dense
+    std::string introspection_density = "moderate"; // 内心独白密度：sparse|moderate|dense
+    std::string humor_level = "low";            // 幽默程度：none|low|moderate|high
     std::string sensory_focus;                  // 感官描写重点，例如 "visual, tactile"
     std::vector<std::string> forbidden_phrases; // 禁止使用的词语列表，例如 "suddenly"
     std::vector<std::string> forbidden_tropes;  // 禁止使用的套路列表
