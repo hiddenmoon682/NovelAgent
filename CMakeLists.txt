@@ -37,6 +37,8 @@ set(SOURCES
     src/llm/SSEParser.cpp
     src/llm/StreamAccumulator.h
     src/llm/StreamAccumulator.cpp
+    src/llm/LLMClient.h
+    src/llm/LLMClient.cpp
 
     src/prompt/PromptContextBuilder.h
     src/prompt/PromptContextBuilder.cpp

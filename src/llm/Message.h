@@ -89,9 +89,12 @@ struct Message {
 // Message 的 JSON 序列化。
 // 仅输出非空的可选字段，避免发送空数组/空字符串到 API。
 inline void to_json(nlohmann::json& j, const Message& msg) {
+    // content 为空但 tool_calls 非空时 → 输出 null（OpenAI API 要求）
+    nlohmann::json content_val = (msg.content.empty() && !msg.tool_calls.empty())
+        ? nlohmann::json(nullptr) : nlohmann::json(msg.content);
     j = nlohmann::json{
         {"role", roleToString(msg.role)},
-        {"content", msg.content}
+        {"content", content_val}
     };
     if (!msg.tool_calls.empty()) {
         j["tool_calls"] = msg.tool_calls;
