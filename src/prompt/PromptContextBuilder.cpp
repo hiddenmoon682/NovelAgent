@@ -97,8 +97,12 @@ std::vector<const PlotThread*> selectPlotThreads(
             if (!plotThread.generation.enabled) {
                 continue;
             }
-            if (containsId(plotThread.related_characters, chapter.pov_characters.empty() ? "" : chapter.pov_characters.front()) ||
-                containsId(plotThread.related_settings, chapter.location_id)) {
+            bool matches = containsId(plotThread.related_settings, chapter.location_id);
+            if (!chapter.pov_characters.empty() &&
+                containsId(plotThread.related_characters, chapter.pov_characters.front())) {
+                matches = true;
+            }
+            if (matches) {
                 appendUnique(&plotThread, selected, seen);
             }
         }

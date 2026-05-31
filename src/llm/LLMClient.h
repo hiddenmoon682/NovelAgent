@@ -82,10 +82,6 @@ private:
     ProviderConfig config_;
     std::string last_error_;
 
-    // 超时配置（秒）
-    static constexpr int kConnectionTimeout = 30;
-    static constexpr int kReadTimeout = 120; // 流式模式需较长超时
-
     /// 检查 api_key / base_url / model 等必要字段
     void validateConfig() const;
 

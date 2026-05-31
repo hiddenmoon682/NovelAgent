@@ -91,8 +91,8 @@ int TokenCounter::estimateEnglishWords(const std::string& text)
     int count = 0;
     bool inWord = false;
 
-    for (unsigned char c : text) {
-        if (std::isalpha(c)) {
+    for (char c : text) {
+        if (std::isalpha(static_cast<unsigned char>(c))) {
             if (!inWord) {
                 ++count;
                 inWord = true;

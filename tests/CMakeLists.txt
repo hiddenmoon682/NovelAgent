@@ -92,5 +92,38 @@ target_link_libraries(test_llm_client PRIVATE
     nlohmann_json::nlohmann_json
     spdlog::spdlog
     httplib::httplib
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
 add_test(NAME test_llm_client COMMAND test_llm_client)
+
+# ── 测试运行时依赖标注 ──
+# MSYS2 包（spdlog、fmt、OpenSSL）默认安装动态库，
+# 测试 exe 运行时需要 DLL 在 PATH 中。追加 MSYS2 的 bin 目录。
+if(EXISTS "D:/SoftWare/msys2/mingw64/bin")
+    set_property(TEST test_main test_project_io test_prompt_context
+                      test_llm_client
+        APPEND PROPERTY ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:D:/SoftWare/msys2/mingw64/bin")
+endif()
+
+# 冒烟测试 — 需要真实 API Key，不在 CTest 中自动运行。
+# 手动执行：./build/tests/test_deepseek_smoke.exe（需 config.json 或环境变量）
+add_executable(test_deepseek_smoke
+    test_deepseek_smoke.cpp
+    "${CMAKE_SOURCE_DIR}/src/llm/LLMClient.cpp"
+    "${CMAKE_SOURCE_DIR}/src/llm/SSEParser.cpp"
+    "${CMAKE_SOURCE_DIR}/src/llm/StreamAccumulator.cpp"
+    "${CMAKE_SOURCE_DIR}/src/config/AppConfig.cpp"
+    "${CMAKE_SOURCE_DIR}/src/utils/FileUtils.cpp"
+)
+target_include_directories(test_deepseek_smoke PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+)
+target_link_libraries(test_deepseek_smoke PRIVATE
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    httplib::httplib
+    OpenSSL::SSL
+    OpenSSL::Crypto
+)

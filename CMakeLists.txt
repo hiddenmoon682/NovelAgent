@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.24)
 project(NovelAgent
     DESCRIPTION "AI-powered novel writing assistant"
     LANGUAGES CXX
@@ -7,6 +7,13 @@ project(NovelAgent
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# 若 MSYS2 存在，优先使用其包（本地开发加速）；
+# CI 上该路径不存在，自动回退到 FetchContent 源码编译。
+# 必须在 include(FetchDependencies) 之前设置，否则 FIND_PACKAGE_ARGS 无法命中。
+if(EXISTS "D:/SoftWare/msys2/mingw64")
+    list(PREPEND CMAKE_PREFIX_PATH "D:/SoftWare/msys2/mingw64")
+endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(CompilerSettings)
@@ -47,6 +54,14 @@ set(SOURCES
     src/cli/ReplHandler.cpp
 )
 
+# httplib HTTPS 需要 OpenSSL
+set(OPENSSL_ROOT_DIR "D:/SoftWare/msys2/mingw64" CACHE PATH "OpenSSL root directory")
+# 若缓存的路径不存在（如跨机器共享 build 目录），清理让 CMake 自动搜索
+if(NOT EXISTS "${OPENSSL_ROOT_DIR}")
+    unset(OPENSSL_ROOT_DIR CACHE)
+endif()
+find_package(OpenSSL REQUIRED)
+
 add_executable(novelagent ${SOURCES})
 target_include_directories(novelagent PRIVATE src)
 target_link_libraries(novelagent PRIVATE
@@ -54,7 +69,12 @@ target_link_libraries(novelagent PRIVATE
     CLI11::CLI11
     spdlog::spdlog
     httplib::httplib
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
+
+# 全局定义：httplib HTTPS 支持（所有含 #include <httplib.h> 的目标需要）
+add_compile_definitions(CPPHTTPLIB_OPENSSL_SUPPORT)
 
 enable_testing()
 add_subdirectory(tests)

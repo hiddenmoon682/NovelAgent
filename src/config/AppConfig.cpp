@@ -9,9 +9,15 @@
 using json = nlohmann::json;
 
 AppConfig AppConfig::load() {
-    std::string configPath = utils::file::joinPath(utils::file::configDir(), kDefaultConfigFile);
-    if (utils::file::exists(configPath)) {
-        return loadFromFile(configPath);
+    // 优先从当前目录加载 config.json，不存在则回退到 ~/.novelagent/config.json
+    std::string localPath = kDefaultConfigFile; // 当前目录
+    if (utils::file::exists(localPath)) {
+        return loadFromFile(localPath);
+    }
+
+    std::string globalPath = utils::file::joinPath(utils::file::configDir(), kDefaultConfigFile);
+    if (utils::file::exists(globalPath)) {
+        return loadFromFile(globalPath);
     }
 
     // 配置文件不存在时返回空配置，由调用方继续尝试环境变量。

@@ -1,5 +1,23 @@
 # Changelog
 
+## [2026-05-31] 依赖管理迁移 MSYS2 + Phase 2 代码审查修复
+
+- **新增** — MSYS2 pacman 优先 + FetchContent 回退的二级依赖管理（`find_package` → `FetchContent`）
+- **新增** — `docs/review/DEFERRED.md` 暂缓问题记录（PCH、Volume/Chapter 字段重叠）
+- **修改** — 依赖：nlohmann_json v3.12.0、CLI11 v2.6.2、spdlog v1.17.0（MSYS2 预编译包）
+- **修改** — cpp-httplib 启用 OpenSSL 支持（`HTTPLIB_USE_OPENSSL ON`）
+- **修改** — `AppConfig::load()` 加载顺序：当前目录 config.json 优先于全局 `~/.novelagent/`
+- **修复** — `LLMClient.h` 删除未使用的重复超时常量（`kConnectionTimeout`/`kReadTimeout`）
+- **修复** — `TokenCounter::estimateEnglishWords` 修复 `std::isalpha` 对非 ASCII 字符的 UB
+- **修复** — `PromptContextBuilder::selectPlotThreads` POV 为空时的回退逻辑改进
+- **修复** — 测试运行时 DLL 找不到：MSYS2 动态库路径加入 `ENVIRONMENT_MODIFICATION`
+- **修改** — CMake 最低版本升至 3.24
+- **修改** — `CPPHTTPLIB_OPENSSL_SUPPORT` 移除重复的 target 级定义，仅保留全局
+- **新增** — `OPENSSL_ROOT_DIR` 缓存路径存在性校验（跨机器共享 build 目录时自动清理）
+- **新增** — `tests/test_deepseek_smoke.cpp` DeepSeek API 冒烟测试（手动执行，不在 CTest 中）
+- **删除** — `docs/review/VOLUME_CHAPTER_FIELD_OVERLAP.md`（内容合并至 DEFERRED.md）
+- 影响范围：`CMakeLists.txt`、`cmake/FetchDependencies.cmake`、`src/llm/`、`src/prompt/`、`src/config/`、`tests/`、`docs/review/`
+
 ## [2026-05-30] Phase 2 完成 — LLMClient + 测试全覆盖
 
 - **新增** — `LLMClient` 类实现（Step 2.5），支持流式 `chat()` 和非流式 `chatNonStreaming()`
