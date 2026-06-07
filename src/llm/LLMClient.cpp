@@ -18,9 +18,9 @@ namespace llm {
 namespace {
 
 // 超时配置（秒）
-constexpr int kConnectionTimeout = 30;
-constexpr int kReadTimeout = 120;   // 流式模式需较长超时（大模型逐 token 生成）
-constexpr int kWriteTimeout = 30;
+constexpr int kConnectionTimeout = 60;
+constexpr int kReadTimeout = 180;   // 流式模式需较长超时（大模型逐 token 生成）
+constexpr int kWriteTimeout = 60;
 
 constexpr const char* kUserAgent = "NovelAgent/0.2.0";
 

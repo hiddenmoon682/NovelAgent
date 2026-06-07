@@ -1,6 +1,6 @@
 # NovelAgent CLI -- 细化实现计划
 
-> 版本: 3.3 | 更新时间: 2026-05-30 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 ✓ | Phase 3 待实施
+> 版本: 3.4 | 更新时间: 2026-05-31 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 ✓ | Phase 3 待实施（14 步）
 
 ## 背景
 
@@ -450,16 +450,22 @@ AppConfig (JSON 读写 + 环境变量), FileUtils, StringUtils, JsonUtils, smoke
 
 ### Phase 3: Agent + REPL MVP
 
-> 状态: **待实施** | 预计: 12 个步骤 | 依赖: Phase 1 + Phase 2
+> 状态: **待实施** | 预计: 22 个步骤 | 依赖: Phase 1 + Phase 2
 
-#### Step 3.1: 实现 ToolRegistry
+#### Step 3.1: 实现 ToolRegistry + 内置工具架构
 **新建**: `src/agent/ToolRegistry.h`, `src/agent/ToolRegistry.cpp`
+**新建**: `src/agent/tools/BuiltInTool.h`（内置工具基类）
 
 - `registerTool(name, description, json_schema, callback_fn)`
 - `getToolDefinitions()` → `vector<ToolDefinition>`（发给 LLM 的工具列表）
 - `executeTool(name, args_json)` → 执行并返回 JSON 结果
 - 错误处理：工具不存在、参数解析失败、回调异常
-- 工具数量：原计划 18 个，加上 WorldRule 工具约 21 个
+- **内置工具架构设计**：
+  - 创建 `BuiltInTool` 抽象基类，统一工具接口：`name()` / `description()` / `schema()` / `execute(json)`
+  - 每个工具一个类文件（如 `ShellTool.h`、`ReadChapterTool.h`），职责单一
+  - `ToolRegistry` 支持两种注册方式：`registerTool(function)` 和 `registerBuiltInTool(BuiltInTool*)`
+  - 工具按类别分组（项目管理 / 内容读写 / 系统操作），便于未来按类别显示 `/help`
+- 工具数量：原计划 ~21 个领域工具 + 新增 Shell 工具 ~3 个 + 预留 ~26 个
 
 **验证**: 编译通过
 
@@ -517,14 +523,34 @@ AppConfig (JSON 读写 + 环境变量), FileUtils, StringUtils, JsonUtils, smoke
 - Outline: `get_outline`, `update_outline`, `set_premise`
 - Project: `get_project_status`, `search_novel`, `count_words`, `update_style_config`
 
-#### Step 3.8: 注册所有工具到 ToolRegistry
+#### Step 3.8: 实现 Shell 工具（PowerShell / Bash）
+**新建**: `src/agent/tools/ShellTools.h`, `src/agent/tools/ShellTools.cpp`
+
+- `RunPowerShell` — 执行 PowerShell 命令并返回 stdout/stderr/exit_code
+  - 实现：`_popen("powershell.exe -NoProfile -Command ...")` 读输出
+  - 超时控制（默认 30s，可配置），防止命令卡死
+  - 白名单模式：可限制允许的 cmdlet（如禁止 `Remove-Item`、`Stop-Process` 等危险命令）
+  - 工作目录：继承 Agent 当前项目路径
+  - 错误处理：捕获 stderr，非零 exit_code 以友好格式返回给 LLM，让它自我修正
+- `RunBash` — 同上，Linux/macOS 下等效（`/bin/bash -c`），平台自适应
+- `GetSystemInfo` — 获取系统信息（OS 版本、可用内存、磁盘空间），辅助 LLM 做文件操作决策
+
+**安全设计要点**：
+- 危险命令黑名单（`rm -rf /`、`del /f /s`、`format` 等）→ 执行前拦截
+- 高危操作（修改系统设置、删除文件）→ 要求用户确认后才执行
+- 命令执行历史记录在对话上下文中，可审计
+
+**验证**: 手动 `RunPowerShell("Get-ChildItem")` 返回正确输出
+
+#### Step 3.9: 注册所有工具到 ToolRegistry
 **新建/修改**: Agent 初始化代码
 
-- 在 Agent 构造函数中注册所有工具（约 21 个）
+- 在 Agent 构造函数中注册所有工具（约 24 个）
 - 每个工具提供 JSON Schema 参数定义
 - 配置工具描述（告诉 LLM 何时使用）
+- Shell 工具默认启用，可在 config.json 中禁用
 
-#### Step 3.9: 实现 ReplHandler（完整版）
+#### Step 3.10: 实现 ReplHandler（完整版）
 **修改**: `src/cli/ReplHandler.h`, `src/cli/ReplHandler.cpp`
 
 - 主循环：`std::getline` 读输入
@@ -532,13 +558,13 @@ AppConfig (JSON 读写 + 环境变量), FileUtils, StringUtils, JsonUtils, smoke
 - 其他 → 调用 Agent::processUserMessage()
 - `run()` — 启动 REPL，显示欢迎信息
 
-#### Step 3.10: 实现 CommandParser + StreamDisplay
+#### Step 3.11: 实现 CommandParser + StreamDisplay
 **新建**: `src/cli/CommandParser.h/.cpp`, `src/cli/StreamDisplay.h/.cpp`
 
 - CommandParser: `/help`, `/save`, `/load`, `/clear`, `/model`, `/exit`
 - StreamDisplay: 流式 token 输出、工具调用灰色标注、状态行
 
-#### Step 3.11: 端到端集成测试
+#### Step 3.12: 端到端集成测试
 **修改**: `src/main.cpp`
 
 - 连接 Agent + ReplHandler + ProjectManager + LLMClient
@@ -546,9 +572,247 @@ AppConfig (JSON 读写 + 环境变量), FileUtils, StringUtils, JsonUtils, smoke
 - 手动测试：创建角色 → 写大纲 → 写第一章
 - `novelagent -p test-novel -e "列出所有章节"` → 单次命令
 
-#### Step 3.12: 提交 Phase 3
+#### Step 3.13: 新增规划模式（Plan Mode）数据模型
+**新建**: `src/agent/PlanModel.h`
+
+- `PlanStep` struct：`id` / `title` / `description` / `status`（pending→in_progress→completed→skipped）/ `result`
+- `Plan` struct：`id` / `goal` / `steps[]` / `status`（draft→approved→executing→completed）/ `current_step`
+- 提供 `to_json()` / `from_json()` 序列化（项目统一风格）
+- 计划保存到 `.novelagent/plans/{plan_id}.json`
+
+**验证**: 编译通过
+
+#### Step 3.14: 新增计划生成 Prompt 模板
+**新建**: `src/prompt/plan_prompts.h`
+
+- `buildPlanPrompt(goal, projectContext)` → 组装 system prompt + user prompt
+- 模板要求 LLM 以 JSON 格式返回步骤列表（step_id, title, description）
+- 规则：每步只做一件事、优先读再写、3-7 步为宜、不超过 10 步
+
+**验证**: 编译通过
+
+#### Step 3.15: Agent 集成规划模式
+**修改**: `src/agent/Agent.h`, `src/agent/Agent.cpp`
+
+- `generatePlan(goal)` → 调用 LLMClient 让 LLM 产出计划 JSON → 解析为 Plan
+- `executePlan(plan)` → 逐步执行：从 current_step 开始，每步构造 context（当前步 + 整体计划 + 已完成步骤结果）→ 调用 LLM → 更新 status 和 result
+- `executePlanStep(plan, stepIndex)` → 执行单个步骤
+- Agent 维护 `active_plan_` 和 `in_plan_mode_` 标志
+- `processUserMessage()` 扩展：plan_mode 中的用户输入被视为对步骤的反馈/确认
+
+#### Step 3.16: ProjectIO 支持计划持久化
+**修改**: `src/project/ProjectIO.h`, `src/project/ProjectIO.cpp`
+
+- `loadPlan(projectPath, planId)` → 从 `.novelagent/plans/{plan_id}.json` 读取
+- `savePlan(projectPath, plan)` → 写入 JSON 文件
+- `listPlans(projectPath)` → 列出所有已保存的计划
+
+**验证**: 编译通过
+
+#### Step 3.17: CommandParser 注册 /plan 命令
+**修改**: `src/cli/CommandParser.h`, `src/cli/CommandParser.cpp`
+
+新增 8 个 `/plan` 子命令：
+
+| 命令 | 功能 |
+|------|------|
+| `/plan <目标>` | 进入规划模式，生成计划 |
+| `/plan show` | 显示当前计划所有步骤及状态 |
+| `/plan edit <N> <描述>` | 修改第 N 步 |
+| `/plan approve` | 确认计划，开始执行 |
+| `/plan reject` | 放弃当前计划 |
+| `/plan step` | 仅执行下一步（单步模式） |
+| `/plan resume` | 继续执行剩余步骤 |
+| `/plan status` | 显示执行进度（N/总数，当前步骤名） |
+
+**验证**: 编译通过
+
+#### Step 3.18: 端到端规划模式集成测试
+**修改**: `src/main.cpp`
+
+- 连接 Agent + PlanMode + ReplHandler
+- 启动 → `/plan 创建主角"张三"的角色档案` → 确认 3-5 步 → `/plan approve` → 观察逐步执行
+- 验证 `.novelagent/plans/` 下有持久化的计划 JSON 文件
+
+#### Step 3.20: Agent System Prompt — 思考-计划-执行引导
+**新建/修改**: `src/prompt/AgentPrompts.h`
+
+- `buildAgentSystemPrompt()` → 组装 Agent 的 system prompt
+- 包含"工作方式"指引：**分析**（理解意图）→ **计划**（列出 2-5 步）→ **执行**（调工具）→ **总结**
+- 引导 LLM 在调工具前先输出自然语言思考：
+  - "我先读一下第二章的结尾，确认主角当前位置..."
+  - "大纲要求第三章引入反派，现在开始写草稿..."
+- 或利用模型 reasoning API（DeepSeek V4 的 `reasoning_effort` 参数）让模型内部思考
+- 与现有的 `PromptContextBuilder` 协同：Agent system prompt + 项目上下文 + 对话历史
+
+**验证**: 编译通过
+
+#### Step 3.21: StreamDisplay 扩展 — 思考/工具/回复分层展示
+**修改**: `src/cli/StreamDisplay.h`, `src/cli/StreamDisplay.cpp`
+
+- 四种输出类型的视觉区分：
+
+| 内容类型 | 展示方式 |
+|------|------|
+| LLM 思考文本（reasoning_content） | 灰色/暗色，可选折叠 |
+| 工具调用 | 蓝色标注 + 参数摘要（如 `🔧 read_chapter(2)`） |
+| 工具结果 | 灰色短摘要，不显示完整 JSON |
+| 最终回复 | 正常白色文本 |
+
+- StreamCallback 集成：`on_reasoning` → 灰显，`on_content` → 白显，`on_tool_call_start` → 蓝显
+- 工具结果通过 `on_tool_result` 回调可选展示
+
+**验证**: 编译通过
+
+#### Step 3.22: Agent 循环集成 — reasoning 注入 + 上下文传递
+**修改**: `src/agent/Agent.cpp`, `src/llm/LLMClient.h`
+
+- `Agent::processUserMessage()` 中：
+  - 设置 `request.reasoning_effort = "medium"`（启用模型内部思考）
+  - 思考文本加入 `conversation_` 的 assistant message 中，作为下一轮 LLM 调用的上下文
+  - `reasoning_content` 字段在 `Message` struct 中传递
+- `LLMClient` 确保 `reasoning_content` 在流式响应中正确提取并回调
+
+**验证**: 编译通过
+
+#### Step 3.23: 提交 Phase 3
 - 更新 CHANGELOG.md（增量）
 - `git commit` + `git push`
+
+---
+
+### Phase 3.5: 多Agent 并行编排
+
+> 状态: **待实施** | 预计: 9 个步骤 | 依赖: Phase 3
+
+多Agent 并行编排（Agent Orchestrator）。一个主 Agent 接收复杂任务后，将其拆分为多个子任务，派发给多个子 Agent **同时并行处理**，最后汇总结果返回用户。
+
+**使用场景**：
+```
+用户: "检查所有章节的逻辑一致性"
+  ↓
+主Agent: 拆成 4 个子Agent，每个检查 3 章
+  ↓ (并行)
+  SubAgent A: 第1-3章 → 3处不一致
+  SubAgent B: 第4-6章 → 2处不一致
+  SubAgent C: 第7-9章 → 1处不一致
+  SubAgent D: 第10-12章 → 0处不一致
+  ↓
+主Agent 汇总: "共发现 6 处逻辑不一致：[详细列表]"
+```
+
+#### Step 3.5.1: 实现 SubAgent
+**新建**: `src/agent/SubAgent.h`, `src/agent/SubAgent.cpp`
+
+- `SubAgent::execute(task, project, client, registry)` → 返回结果文本
+- 独立对话上下文（不与主Agent 共享 `conversation_`）
+- 受限工具集（默认只读：`read_chapter`、`get_character` 等，禁止写类工具）
+- 独立 LLM 调用（专用 system prompt + 子任务描述）
+- 超时保护（默认 120s，防止某个子Agent 卡死）
+
+**验证**: 编译通过
+
+#### Step 3.5.2: 实现 AgentOrchestrator
+**新建**: `src/agent/AgentOrchestrator.h`, `src/agent/AgentOrchestrator.cpp`
+
+- `processUserMessage(input)` → 自动判断是否需要并行编排
+- `decomposeTask(input)` → 让 LLM 分析任务并生成子任务列表
+- `executeParallel(tasks)` → `std::async` 并行执行所有子任务
+- `synthesizeResults(tasks)` → LLM 汇总子任务结果为用户友好回复
+- `max_parallel_` 配置最大并行数（默认 4）
+
+**数据模型**：
+```cpp
+struct SubTask {
+    std::string id, description, system_prompt;
+    std::vector<std::string> allowed_tools;
+    std::string result;
+    std::string status;  // pending | running | completed | failed
+};
+```
+
+**验证**: 编译通过
+
+#### Step 3.5.3: 注册 delegate_tasks 工具
+**修改**: `src/agent/Agent.cpp`（或 `AgentOrchestrator` 初始化）
+
+- 注册 `delegate_tasks` 工具到主Agent 的 ToolRegistry
+- 工具参数：`{tasks: [{description, system_prompt_hint?}]}`
+- LLM 主动判断何时调用：任务涉及"检查所有"、"分析多个"等并行场景
+- 工具内部：解析参数 → 构建 SubTask → 并行执行 → 返回原始结果
+
+**验证**: 编译通过
+
+#### Step 3.5.4: CommandParser 注册 /parallel 命令
+**修改**: `src/cli/CommandParser.h`, `src/cli/CommandParser.cpp`
+
+- `/parallel on` — 启用并行编排模式
+- `/parallel off` — 回退到单 Agent 模式
+- `/parallel status` — 显示当前编排配置（并行数、超时等）
+
+**验证**: REPL 中输入 `/parallel status` 输出默认配置
+
+#### Step 3.5.5: 多Agent 端到端集成测试
+**修改**: `src/main.cpp`（集成 AgentOrchestrator）
+
+- 准备多章项目 → "检查所有章节的逻辑一致性" → 验证并行执行 + 汇总结果
+- 验证子Agent 隔离性（各自的 conversation 不互相干扰）
+- 验证超时保护（模拟一个子Agent 超时，主Agent 应该优雅处理）
+- 验证并行执行时间 < 等量任务串行执行时间
+
+#### Step 3.5.6: SubAgent 模板数据模型 + 内置模板
+**新建**: `src/agent/SubAgentTemplate.h`
+
+- `SubAgentTemplate` struct：`name` / `description` / `system_prompt` / `allowed_tools` / `model`
+- 内置 5 个预设模板：
+
+| 模板名 | 功能 | 工具 |
+|------|------|------|
+| `chapter-consistency` | 检查章节间逻辑/时间线/角色一致性 | read_chapter, get_character, get_outline |
+| `character-arc` | 分析角色成长弧光完整性 | get_character, read_chapter |
+| `worldbuilding` | 检查世界观设定一致性 | get_setting, get_world_rule, read_chapter |
+| `grammar-style` | 检查语法和文风统一性 | read_chapter |
+| `plot-thread` | 追踪剧情线展开和收束 | read_chapter, get_outline, get_plot_thread |
+
+- 模板持久化到 `.novelagent/agent_templates.json`
+- 内置模板不可删除（标记 `built_in: true`），用户模板可自由增删改
+
+**验证**: 编译通过
+
+#### Step 3.5.7: TemplateManager — 模板 CRUD
+**新建**: `src/agent/TemplateManager.h`, `src/agent/TemplateManager.cpp`
+
+- `loadTemplates(projectPath)` → `vector<SubAgentTemplate>`（内置 + 用户自定义）
+- `saveTemplates(projectPath, templates)` → 仅保存用户模板
+- `addTemplate(t)` / `removeTemplate(name)` / `updateTemplate(name, t)`
+- `findTemplate(name)` → 按名查找
+
+**验证**: 编译通过
+
+#### Step 3.5.8: CommandParser 注册 /agent 命令
+**修改**: `src/cli/CommandParser.h`, `src/cli/CommandParser.cpp`
+
+新增 `/agent` 子命令族：
+
+| 命令 | 功能 |
+|------|------|
+| `/agent template list` | 列出所有可用模板 |
+| `/agent template show <name>` | 查看模板详细配置 |
+| `/agent template create <name>` | 交互式创建新模板 |
+| `/agent template edit <name>` | 修改模板 |
+| `/agent template delete <name>` | 删除自定义模板 |
+| `/agent run <template> <任务>` | 用指定模板启动子Agent 执行任务 |
+
+**验证**: REPL 中输入 `/agent template list` 显示 5 个内置模板
+
+#### Step 3.5.9: AgentOrchestrator 集成模板感知
+**修改**: `src/agent/AgentOrchestrator.cpp`
+
+- `decomposeTask` 将可用模板列表传给 LLM，LLM 可引用模板名来匹配子任务
+- `/agent run <template>` 路径：跳过 decomposing，直接用指定模板启动子Agent
+- 模板可链式组合：先用 `chapter-consistency` 检查，再用 `grammar-style` 润色
+
+**验证**: 编译通过
 
 ---
 
