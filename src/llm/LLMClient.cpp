@@ -8,6 +8,8 @@
 #include <spdlog/spdlog.h>
 
 #include <stdexcept>
+#include <mutex>
+#include <unordered_map>
 
 namespace llm {
 
@@ -24,20 +26,45 @@ constexpr int kWriteTimeout = 60;
 
 constexpr const char* kUserAgent = "NovelAgent/0.2.0";
 
-/// 创建并配置 httplib::Client（避免在头文件中暴露 httplib 类型）
-httplib::Client createHttpClient(const std::string& base_url)
+/// ── 长连接缓存（按 LLMClient 实例隔离）──────────────────────────────
+
+/// 缓存条目：httplib::Client + 其对应的 host
+struct ClientEntry {
+    std::unique_ptr<httplib::Client> client;
+    std::string host;
+};
+
+std::mutex g_clients_mutex;
+std::unordered_map<const void*, ClientEntry> g_clients;
+
+/// 获取或创建当前 LLMClient 实例专属的长连接
+httplib::Client& getOrCreateClient(const void* instance_key,
+                                   const std::string& base_url)
 {
-    // base_url 格式："https://api.deepseek.com"
+    // 规范化 host
     std::string host = base_url;
     while (!host.empty() && host.back() == '/') {
         host.pop_back();
     }
 
-    httplib::Client cli(host);
-    cli.set_connection_timeout(kConnectionTimeout, 0);
-    cli.set_read_timeout(kReadTimeout, 0);
-    cli.set_write_timeout(kWriteTimeout, 0);
-    return cli;
+    std::lock_guard<std::mutex> lock(g_clients_mutex);
+
+    auto& entry = g_clients[instance_key];
+
+    // 无缓存 或 host 变了（地址复用 / Provider 切换）→ 重建
+    if (!entry.client || entry.host != host) {
+        entry.client = std::make_unique<httplib::Client>(host);
+        entry.client->set_connection_timeout(kConnectionTimeout, 0);
+        entry.client->set_read_timeout(kReadTimeout, 0);
+        entry.client->set_write_timeout(kWriteTimeout, 0);
+        entry.client->set_keep_alive(true);
+        entry.host = host;
+
+        spdlog::debug("[LLMClient] 建立长连接 → {} (实例 {})",
+                      host, instance_key);
+    }
+
+    return *entry.client;
 }
 
 } // namespace
@@ -117,7 +144,7 @@ LLMResponse LLMClient::chatNonStreaming(
     validateConfig();
 
     auto body = buildRequestBody(messages, tools, system_prompt, false);
-    auto cli = createHttpClient(config_.base_url);
+    auto& cli = getOrCreateClient(this, config_.base_url);
 
     httplib::Headers headers = {
         {"Authorization", "Bearer " + config_.api_key},
@@ -169,7 +196,7 @@ LLMResponse LLMClient::chat(
     validateConfig();
 
     auto body = buildRequestBody(messages, tools, system_prompt, true);
-    auto cli = createHttpClient(config_.base_url);
+    auto& cli = getOrCreateClient(this, config_.base_url);
 
     spdlog::info("[LLMClient] 流式请求 → {} model={}", config_.base_url, config_.model);
 

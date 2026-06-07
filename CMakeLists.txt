@@ -76,5 +76,20 @@ target_link_libraries(novelagent PRIVATE
 # 全局定义：httplib HTTPS 支持（所有含 #include <httplib.h> 的目标需要）
 add_compile_definitions(CPPHTTPLIB_OPENSSL_SUPPORT)
 
+# 预编译头（PCH）—— 加速编译。
+# nlohmann/json.hpp（~2万行模板）被 8+ 个源文件分别解析，spdlog 被 5+ 个文件解析，
+# PCH 将这些稳定头文件预编译为编译器快照，后续翻译单元直接加载，跳过重复解析。
+target_precompile_headers(novelagent PRIVATE
+    <string>
+    <vector>
+    <map>
+    <algorithm>
+    <sstream>
+    <functional>
+    <optional>
+    <nlohmann/json.hpp>
+    <spdlog/spdlog.h>
+)
+
 enable_testing()
 add_subdirectory(tests)
