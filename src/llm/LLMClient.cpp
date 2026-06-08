@@ -1,7 +1,6 @@
 #include "llm/LLMClient.h"
 
-#include "llm/SSEParser.h"
-#include "llm/StreamAccumulator.h"
+#include "llm/StreamingPipeline.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -200,47 +199,9 @@ LLMResponse LLMClient::chat(
 
     spdlog::info("[LLMClient] 流式请求 → {} model={}", config_.base_url, config_.model);
 
-    // ── 组装流式管道 ──
-    SSEParser parser;
-    StreamAccumulator acc;
-
-    LLMResponse accumulated;
-    bool stream_completed = false;
-    bool tool_call_seen = false;
-    std::string stream_error;
-    std::string raw_response_body;
-
-    // SSEParser → StreamAccumulator + 回调转发
-    parser.setOnChunk([&](const StreamChunk& chunk) {
-        acc.feed(chunk);
-
-        if (callbacks.on_content && !chunk.content_delta.empty()) {
-            callbacks.on_content(chunk.content_delta);
-        }
-        if (callbacks.on_reasoning && !chunk.reasoning_delta.empty()) {
-            callbacks.on_reasoning(chunk.reasoning_delta);
-        }
-        if (callbacks.on_tool_call_start && !tool_call_seen
-            && !chunk.tool_call_deltas.empty()) {
-            tool_call_seen = true;
-            callbacks.on_tool_call_start();
-        }
-    });
-
-    parser.setOnError([&](const std::string& err) {
-        stream_error = err;
-        if (callbacks.on_error) {
-            callbacks.on_error(err);
-        }
-    });
-
-    acc.setOnDone([&](const LLMResponse& response) {
-        accumulated = response;
-        stream_completed = true;
-        if (callbacks.on_complete) {
-            callbacks.on_complete(response);
-        }
-    });
+    // ── 组装流式管道（StreamingPipeline 封装 SSEParser + StreamAccumulator + 回调转发）──
+    StreamingPipeline pipeline;
+    pipeline.setCallbacks(callbacks);
 
     // ── 发送流式 POST（通过 Request.content_receiver 接收流式数据）──
     httplib::Request req;
@@ -250,10 +211,12 @@ LLMResponse LLMClient::chat(
     req.set_header("Content-Type", "application/json");
     req.set_header("User-Agent", kUserAgent);
     req.body = body.dump();
+
+    std::string raw_response_body; // 用于 HTTP 错误时解析 error message
     req.content_receiver = [&](const char* data, size_t len, uint64_t /*offset*/,
                                 uint64_t /*total*/) {
         raw_response_body.append(data, len);
-        parser.feed(std::string(data, len));
+        pipeline.feed(std::string(data, len));
         return true;
     };
 
@@ -278,20 +241,20 @@ LLMResponse LLMClient::chat(
     }
 
     // ── SSE 解析错误 ──
-    if (!stream_error.empty()) {
-        last_error_ = stream_error;
-        throw std::runtime_error("SSE 解析错误: " + stream_error);
+    if (pipeline.hasError()) {
+        last_error_ = pipeline.error();
+        throw std::runtime_error("SSE 解析错误: " + pipeline.error());
     }
 
     // ── 流未正常结束 ──
-    if (!stream_completed) {
+    if (!pipeline.completed()) {
         last_error_ = "流式响应未正常结束（未收到 finish_reason）";
         spdlog::error("[LLMClient] {}", last_error_);
         if (callbacks.on_error) callbacks.on_error(last_error_);
         throw std::runtime_error(last_error_);
     }
 
-    return accumulated;
+    return pipeline.response();
 }
 
 // ===========================================================================

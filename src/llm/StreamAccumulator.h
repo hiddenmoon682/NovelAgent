@@ -3,6 +3,7 @@
 #include <functional>
 #include <map>
 #include "llm/Message.h"
+#include "llm/StreamingTypes.h"
 
 namespace llm {
 
