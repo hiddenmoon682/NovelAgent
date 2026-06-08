@@ -19,10 +19,22 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(CompilerSettings)
 include(FetchDependencies)
 
-# 明确列出源文件，避免 glob 带来的构建边界不清晰问题。
-set(SOURCES
-    src/main.cpp
+# ============================================================================
+# httplib HTTPS 需要 OpenSSL
+# ============================================================================
+set(OPENSSL_ROOT_DIR "D:/SoftWare/msys2/mingw64" CACHE PATH "OpenSSL root directory")
+# 若缓存的路径不存在（如跨机器共享 build 目录），清理让 CMake 自动搜索
+if(NOT EXISTS "${OPENSSL_ROOT_DIR}")
+    unset(OPENSSL_ROOT_DIR CACHE)
+endif()
+find_package(OpenSSL REQUIRED)
 
+# ============================================================================
+# 对象库 — 所有业务源码编译一次，测试和主程序共享 .o 文件
+# ============================================================================
+
+# 不含 main.cpp（其 main() 与测试的 main() 冲突）
+set(LIB_SOURCES
     src/config/AppConfig.h
     src/config/AppConfig.cpp
 
@@ -38,6 +50,7 @@ set(SOURCES
     src/project/ProjectManager.cpp
 
     src/llm/Message.h
+    src/llm/StreamingTypes.h
     src/llm/TokenCounter.h
     src/llm/TokenCounter.cpp
     src/llm/SSEParser.h
@@ -54,17 +67,12 @@ set(SOURCES
     src/cli/ReplHandler.cpp
 )
 
-# httplib HTTPS 需要 OpenSSL
-set(OPENSSL_ROOT_DIR "D:/SoftWare/msys2/mingw64" CACHE PATH "OpenSSL root directory")
-# 若缓存的路径不存在（如跨机器共享 build 目录），清理让 CMake 自动搜索
-if(NOT EXISTS "${OPENSSL_ROOT_DIR}")
-    unset(OPENSSL_ROOT_DIR CACHE)
-endif()
-find_package(OpenSSL REQUIRED)
+add_library(novelagent_lib OBJECT ${LIB_SOURCES})
 
-add_executable(novelagent ${SOURCES})
-target_include_directories(novelagent PRIVATE src)
-target_link_libraries(novelagent PRIVATE
+# 使用 PUBLIC：消费者（主程序、测试）自动继承 include 路径和链接库
+target_include_directories(novelagent_lib PUBLIC src)
+target_compile_definitions(novelagent_lib PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
+target_link_libraries(novelagent_lib PUBLIC
     nlohmann_json::nlohmann_json
     CLI11::CLI11
     spdlog::spdlog
@@ -73,13 +81,9 @@ target_link_libraries(novelagent PRIVATE
     OpenSSL::Crypto
 )
 
-# 全局定义：httplib HTTPS 支持（所有含 #include <httplib.h> 的目标需要）
-add_compile_definitions(CPPHTTPLIB_OPENSSL_SUPPORT)
-
-# 预编译头（PCH）—— 加速编译。
-# nlohmann/json.hpp（~2万行模板）被 8+ 个源文件分别解析，spdlog 被 5+ 个文件解析，
-# PCH 将这些稳定头文件预编译为编译器快照，后续翻译单元直接加载，跳过重复解析。
-target_precompile_headers(novelagent PRIVATE
+# 预编译头 — 稳定的大型头文件预编译为快照，各翻译单元直接加载
+# novelagent_lib 的 PCH 被所有测试目标 REUSE_FROM 共享
+target_precompile_headers(novelagent_lib PRIVATE
     <string>
     <vector>
     <map>
@@ -91,5 +95,14 @@ target_precompile_headers(novelagent PRIVATE
     <spdlog/spdlog.h>
 )
 
+# ============================================================================
+# 主程序
+# ============================================================================
+add_executable(novelagent src/main.cpp)
+target_link_libraries(novelagent PRIVATE novelagent_lib)
+
+# ============================================================================
+# 测试
+# ============================================================================
 enable_testing()
 add_subdirectory(tests)

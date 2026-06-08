@@ -1,5 +1,16 @@
 # Changelog
 
+## [2026-06-08] 编译速度优化 — 对象库消除重复编译
+
+- **新增** — CMake 对象库 `novelagent_lib`：所有业务源码编译为 `.o` 集合，主程序和测试共享
+- **修改** — 每个 `.cpp` 从编译 2~4 次降为 1 次（`SSEParser.cpp`: 4×→1×, `LLMClient.cpp`: 3×→1×, `StreamAccumulator.cpp`: 3×→1×）
+- **修改** — 测试目标大幅简化：每个测试从 ~10 行（include 路径 + 链接库 + 源文件列表）简化为 ~5 行
+- **修改** — 构建生成器从 MSYS Makefiles 切换为 Ninja（自动检测），增量构建更快
+- **修改** — `add_compile_definitions(CPPHTTPLIB_OPENSSL_SUPPORT)` 从全局改为 `target_compile_definitions` 精确作用域
+- **修改** — MSYS2 DLL PATH 覆盖所有测试目标（对象库 PUBLIC 链接使所有测试都依赖 OpenSSL/spdlog DLL）
+- 影响范围：`CMakeLists.txt`、`tests/CMakeLists.txt`
+- 测试统计：7/7 全部通过，增量构建 ~12s（修改 1 个 `.cpp`）
+
 ## [2026-06-08] Message.h 协议构造代码封装
 
 - **新增** — `Message` 静态工厂方法：`user()`、`system()`、`assistant()`、`toolResult()`，替代冗长的聚合初始化
