@@ -1,5 +1,17 @@
 # Changelog
 
+## [2026-06-08] 新增 LLM 请求→响应流程图文档
+
+- **新增** — `docs/diagrams/` 目录：存放流程图和架构图
+- **新增** — `docs/diagrams/LLM请求响应流程图.md`：Mermaid 格式的完整流程图（含 7 张图）
+  - 总览：非流式 vs 流式两条路径对比（flowchart）
+  - 详细时序图：从用户输入到 LLMResponse 返回（sequence diagram, 7 个阶段）
+  - 组件数据流图：SSE 文本 → StreamChunk → LLMResponse 的类型转换链
+  - 错误处理路径：4 层错误检测（配置/HTTP/SSE/完整性）及中文错误映射
+  - 数据结构对照表：各阶段数据类型的来源/去向
+  - 非流式 vs 流式对比表
+- 可在 VS Code 中按 `Ctrl+Shift+V` 直接预览 Mermaid 渲染效果
+
 ## [2026-06-08] 编译速度优化 — 对象库消除重复编译
 
 - **新增** — CMake 对象库 `novelagent_lib`：所有业务源码编译为 `.o` 集合，主程序和测试共享
