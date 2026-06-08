@@ -28,7 +28,7 @@ int main() {
 
     try {
         auto response = client.chat(
-            {{llm::MessageRole::User, "用一句话介绍你自己"}},
+            {llm::Message::user("用一句话介绍你自己")},
             {},
             "你是一个有帮助的AI助手。",
             cb

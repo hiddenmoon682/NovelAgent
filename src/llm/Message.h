@@ -79,11 +79,47 @@ inline void from_json(const nlohmann::json& j, ToolCall& tc) {
 // ============================================================================
 
 struct Message {
+    // ── 字段 ──
     MessageRole role = MessageRole::User;
     std::string content;               // 消息正文（可为空，当 tool_calls 非空时）
     std::vector<ToolCall> tool_calls;  // 工具调用列表（仅 assistant 角色使用）
     std::string tool_call_id;          // 关联的工具调用 ID（仅 tool 角色使用）
     std::string name;                  // 可选参与者名称
+
+    // ── 便捷工厂方法 ──
+
+    /// 创建用户消息（最常用）
+    static Message user(std::string content) {
+        Message m;
+        m.role = MessageRole::User;
+        m.content = std::move(content);
+        return m;
+    }
+
+    /// 创建系统提示词消息
+    static Message system(std::string content) {
+        Message m;
+        m.role = MessageRole::System;
+        m.content = std::move(content);
+        return m;
+    }
+
+    /// 创建 AI 助手消息
+    static Message assistant(std::string content) {
+        Message m;
+        m.role = MessageRole::Assistant;
+        m.content = std::move(content);
+        return m;
+    }
+
+    /// 创建工具调用结果消息（回传给 LLM）
+    static Message toolResult(std::string call_id, std::string content) {
+        Message m;
+        m.role = MessageRole::Tool;
+        m.tool_call_id = std::move(call_id);
+        m.content = std::move(content);
+        return m;
+    }
 };
 
 // Message 的 JSON 序列化。

@@ -1,5 +1,15 @@
 # Changelog
 
+## [2026-06-08] Message.h 协议构造代码封装
+
+- **新增** — `Message` 静态工厂方法：`user()`、`system()`、`assistant()`、`toolResult()`，替代冗长的聚合初始化
+- **新增** — `Conversation` 类（`src/llm/Conversation.h`）：封装对话历史管理，提供 `addUser()`、`addAssistant()`、`systemPrompt()`、`messages()` 等便捷方法
+- **新增** — `tests/test_sse_helpers.h`：SSE 测试数据构造辅助（`sseContentChunk` / `sseFinishChunk` / `sseToolCallChunk`），消除测试中手工拼接 JSON 字符串
+- **修改** — `test_llm_client.cpp`：迁移至新 API（工厂方法 + SSE 辅助），删除手工 JSON 拼接代码
+- **修改** — `test_deepseek_smoke.cpp`：迁移至 `Message::user()` 工厂方法
+- 影响范围：`src/llm/Message.h`、`src/llm/Conversation.h`、`tests/test_sse_helpers.h`、`tests/test_llm_client.cpp`、`tests/test_deepseek_smoke.cpp`
+- 测试统计：7/7 全部通过
+
 ## [2026-05-31] 依赖管理迁移 MSYS2 + Phase 2 代码审查修复
 
 - **新增** — MSYS2 pacman 优先 + FetchContent 回退的二级依赖管理（`find_package` → `FetchContent`）
