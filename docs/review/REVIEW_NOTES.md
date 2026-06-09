@@ -256,30 +256,194 @@ conversation_.addToolResult(tc.id, result_str);
 
 ---
 
-## 附录：审查覆盖范围
+> 以下为 2026-06-09 Phase 3 完整审查（3.5-3.12）发现的新问题。
 
-| 模块 | 文件 | 审查内容 |
-|------|------|---------|
-| Step 3.1 — ToolRegistry | `ToolRegistry.h/.cpp`, `BuiltInTool.h`, `SchemaUtils.h` | 双注册方式、错误处理、所有权管理 |
-| Step 3.2 — Agent | `Agent.h/.cpp` | 核心循环、tool call 编排、对话历史管理 |
-| Step 3.3 — ContextManager | `ContextManager.h/.cpp` | 预算计算、消息截断、system prompt 构建 |
-| Step 3.4 — ChapterTools | `ChapterTools.h/.cpp` | 5 个工具实现、文件 I/O、错误处理 |
-| 测试 | 4 个 test 文件 | Mock HTTP 服务器、集成测试、边界条件 |
+## 16. [严重] ShellTools 黑名单误拦截 `|` `>` `>>` `;` `&&` `||` — 管道和重定向全部不可用
 
-审查日期: 2026-06-09 | 发现: 3 🔴 + 4 🟡 + 4 🟢
+**文件**: `src/agent/tools/ShellTools.cpp:23-41`
+
+**问题**: 黑名单中包含了管道符 `|`、重定向 `>` `>>`、分隔符 `;` `&&` `||`。这些字符在 PowerShell 中极为常用：
+
+- `Get-ChildItem | Where-Object Name -like "*.md"` → 被 `|` 拦截
+- `Get-Process | Select-Object -First 5` → 被 `|` 拦截
+- `$x = 3; $y = 5` → 被 `;` 拦截
+
+这导致工具**几乎无法用于任何有用的 PowerShell 操作**。`RunPowerShellTool` 本质上变成了只能执行单个 cmdlet 的受限工具，LLM 无论如何构造命令都会触发拦截。
+
+此外，`<` `>` `>>` 作为子串匹配会误伤字符串中的比较操作符。
+
+**建议**:
+- 短期: 从黑名单中移除 `|` `;` `&&` `||` `>` `>>` `<`，这些是正常的 shell 操作符
+- 真正需要阻止的是 **cmdlet 滥用**（`Invoke-Expression`/`iex`、`Remove-Item -Recurse`、`Start-Process` 等），黑名单中的 cmdlet 相关关键词（`rm`/`del`/`format`/`diskpart`/`reg`/`shutdown`）应该保留并加强（加 PowerShell 别名变体）
+- 长期: 改为沙箱执行（Windows Job Object 或容器）
+
+**严重度**: 🔴 严重 — 工具在当前状态下几乎不可用
 
 ---
 
-## 附录：添加新条目
+## 17. [中等] ShellTools 注释声称有白名单但代码中未实现
 
-发现新的问题后，按以下格式追加：
+**文件**: `src/agent/tools/ShellTools.cpp:60-63`
 
-```markdown
-## N. 标题
+**问题**: 注释写道"仅允许读取和查询类命令的白名单前缀 // 限制为 Get-*, echo, dir/ls, type/cat, Select-*, Where-*, ForEach-*, Write-*"，但代码中完全没有任何白名单检测逻辑。实际的防护仅靠黑名单（`isDangerousCommand()`）。
 
-**文件**: `相关文件路径`
+这个注释会误导未来的维护者以为存在白名单保护。
 
-**问题**: 描述...
+**建议**: 删除注释中的错误描述，或将白名单作为额外保护层实现（先检查白名单通过，再检查黑名单）。
 
-**建议**: 如何修复...
+**严重度**: 🟡 中等
+
+---
+
+## 18. [中等] ShellTools 关键词匹配使用末位空格 — 可被轻易绕过
+
+**文件**: `src/agent/tools/ShellTools.cpp:24-28`
+
+**问题**: 部分关键词使用末位空格来减少误匹配（如 `"rm "`, `"del "`, `"rd "`, `"reg "`），但：
+- PowerShell 中 `rm -r`（`rm` 后跟空格）会被匹配，但 `rm.exe` 或 `r'm'`（引号转义）不会
+- `Remove-Item` 和 `del` 被分别检查，但 PowerShell 支持 `Remove-Item` 的缩写 `ri`
+- `net user` 和 `net localgroup` 被检查，但 `net group`（域环境）未被检查
+
+黑名单本质上是不安全的——总有绕过的方法。
+
+**建议**: 在文档中明确标注"黑名单仅提供最低限度的防护，不应在不可信环境中运行"。在黑名单中补充 PowerShell 常见缩写：`ri`（Remove-Item）、`rdr`（Remove-Directory）、`sasv`（Start-Service）等。
+
+**严重度**: 🟡 中等
+
+---
+
+## 19. [中等] StreamDisplay — 缺少 Windows ANSI 终端初始化
+
+**文件**: `src/cli/StreamDisplay.cpp:13、17、22、27`
+
+**问题**: 代码使用 ANSI 转义序列（`\033[90m`、`\033[31m` 等）做彩色输出，但未调用 `SetConsoleMode()` 启用虚拟终端处理。
+
+在 Windows 10 1809 之前的版本，或某些终端模拟器中，ANSI 序列不会被正确解析，用户会看到类似 `←[90m[工具调用...]←[0m` 的乱码，而非彩色文本。
+
+**建议**: 在 `StreamDisplay` 或 `main()` 中添加终端初始化：
+```cpp
+#ifdef _WIN32
+#include <windows.h>
+void enableAnsiSupport() {
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    GetConsoleMode(hOut, &mode);
+    SetConsoleMode(hOut, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+}
+#endif
 ```
+
+**严重度**: 🟡 中等 — 影响 Windows 终端用户体验
+
+---
+
+## 20. [轻微] ChapterTools.h header 注释仍引用 `word_count`
+
+**文件**: `src/agent/tools/ChapterTools.h:60`
+
+**问题**: `ListChaptersTool` 的类级注释写道 `{ id, title, order, word_count }`，但 `description()` 方法（#9 修复后）和 `execute()` 实现都正确地去掉了 `word_count`。header 注释作为文档没有同步更新。
+
+```cpp
+/// 返回: { chapters: [{ id, title, order, word_count }] }  // ← 过期
+```
+
+**建议**: 改为 `{ id, title, order, file_path, synopsis }`。
+
+**严重度**: 🟢 轻微
+
+---
+
+## 21. [轻微] UpdateCharacterTool vs UpdateSettingTool 字段更新方式不一致
+
+**文件**: `CharacterTools.cpp:166-193` vs `SettingTools.cpp:46-58`
+
+**问题**: `UpdateCharacterTool` 使用指针到成员的 map（优雅、类型安全、易扩展），而 `UpdateSettingTool` 和 `UpdateWorldRuleTool` 使用 if-else 链（冗长、修改字段时容易漏分支）。同一代码库中两种风格并存，增加维护成本。
+
+**建议**: 统一为指针到成员 map 方式（如 CharacterTools 的实现），在 SettingTools 和 WorldRuleTools 中采用。或将指针到成员 map 抽象为 `BuiltInTool` 提供的辅助方法。
+
+**严重度**: 🟢 轻微
+
+---
+
+## 22. [轻微] ReplHandler 未使用 LLMResponse 返回值
+
+**文件**: `src/cli/ReplHandler.cpp:63-64`
+
+**问题**: 
+```cpp
+auto response = agent_.processUserMessage(input, callbacks);
+std::cout << "\n" << std::flush;
+```
+`response` 对象（含 token 统计、finish_reason）被获取但从未使用。StreamDisplay 的 `on_complete` 已经输出了 token 信息，但如果有异常情况（如 `finish_reason == "length"` 表示被截断），用户无法从界面得知。
+
+**建议**: 检查 `response.finish_reason`，在非 `"stop"` 时给用户提示：
+```cpp
+if (response.finish_reason == "length") {
+    std::cout << "\n  \033[33m[注意: 回复因长度限制被截断]\033[0m";
+}
+if (response.finish_reason == "content_filter") {
+    std::cout << "\n  \033[33m[注意: 部分内容因安全策略被过滤]\033[0m";
+}
+```
+
+**严重度**: 🟢 轻微
+
+---
+
+## 23. [轻微] execute() 路径不使用 ContextManager
+
+**文件**: `src/agent/Agent.cpp:64-72`
+
+**问题**: `execute()`（单次命令模式，`--exec` 参数）直接调用 `client_.chat()`，不经过 ContextManager。这意味着单次命令不受 token 预算管理，也不享受 system prompt 上下文组装。
+
+如果用户通过 `--exec` 执行"帮我分析第5章的剧情"这类需要项目上下文的命令，LLM 收到的只是裸的用户消息 + 基础 system_prompt_，缺少章节/角色/设定上下文。
+
+**建议**: 当 `context_manager_` 存在时，`execute()` 也应该组装上下文：
+```cpp
+if (context_manager_) {
+    auto assembly = context_manager_->assemble(conversation_, context_window_);
+    effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
+}
+```
+
+**严重度**: 🟢 轻微 — 当前 `--exec` 模式可能是故意保持简单的
+
+---
+
+## 附加观察：已确认修复的上一轮 11 个问题
+
+| 问题 | 状态 |
+|------|------|
+| #1 system_prompt 覆盖 | ✅ 修复 — 改为局部变量 `effective_prompt` |
+| #2 truncate 减法不一致 | ✅ 修复 — 改为 `countMessages(result)` 实时计算 |
+| #3 空 prompt 回退 | ✅ 修复 — `buildForChapter` 失败时 fallback |
+| #4 budget≤0 不截断 | ✅ 修复 — 现在返回空列表 |
+| #5 Project& 裸引用 | ⏸ 暂缓（已文档化风险） |
+| #6 CreateChapter 部分保存 | ⏸ 暂缓（已文档化，且后续 Create 工具用全量 save） |
+| #7 tool result 无大小限制 | ✅ 修复 — 添加 4000 字符截断 |
+| #8 空 try/catch | ✅ 已删除 |
+| #9 ListChapters 描述 | ✅ 修复 — description() 正确 |
+| #10 additionalProperties | ⏸ 暂缓（已文档化） |
+| #11 total_tokens 精度说明 | ✅ 修复 — 注释已更新 |
+
+---
+
+## 附录：Phase 3 完整审查覆盖范围
+
+| 步骤 | 模块 | 文件 | 状态 |
+|------|------|------|------|
+| 3.1 | ToolRegistry + BuiltInTool | `ToolRegistry.h/.cpp`, `BuiltInTool.h` | ⚪ 无新问题 |
+| 3.2 | Agent 核心循环 | `Agent.h/.cpp` | ⚪ 已修复上轮全部问题 |
+| 3.3 | ContextManager | `ContextManager.h/.cpp` | ⚪ 已修复上轮全部问题 |
+| 3.4 | Chapter 工具 | `ChapterTools.h/.cpp` | 🟢 #20 header 注释过期 |
+| 3.5 | Character 工具 | `CharacterTools.h/.cpp` | ⚪ 设计良好 |
+| 3.6 | Setting + WorldRule 工具 | `SettingTools.h/.cpp`, `WorldRuleTools.h/.cpp` | 🟢 #21 风格不一致 |
+| 3.7 | Outline + Project 工具 | `OutlineTools.h/.cpp` | ⚪ 无问题 |
+| 3.8 | Shell 工具 | `ShellTools.h/.cpp` | 🔴 #16 黑名单误拦截 + 🟡 #17 #18 |
+| 3.9 | AgentSetup 注册 | `AgentSetup.h` | ⚪ 干净的内联函数 |
+| 3.10 | ReplHandler | `ReplHandler.h/.cpp` | 🟢 #22 response 未使用 |
+| 3.11 | CommandParser + StreamDisplay | `CommandParser.h/.cpp`, `StreamDisplay.h/.cpp` | 🟡 #19 ANSI 初始化缺失 |
+| 3.12 | main.cpp 集成 | `main.cpp` | 🟢 #23 execute 路径无 CM |
+| 测试 | 4 个新增测试 | `test_character_tools`, `test_e2e_chapter` | ⚪ 覆盖合理 |
+
+审查日期: 2026-06-09 | 本轮新发现问题: 1 🔴 + 4 🟡 + 4 🟢
