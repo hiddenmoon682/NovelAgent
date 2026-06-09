@@ -3,6 +3,7 @@
 #include "llm/Conversation.h"
 #include "llm/ILLMClient.h"
 
+#include <memory>
 #include <string>
 
 namespace agent {
@@ -10,6 +11,7 @@ namespace agent {
 // 前向声明（避免拉入 ToolRegistry → BuiltInTool → json_fwd.hpp 链）
 class ToolRegistry;
 class ContextManager;
+class TemplateManager;
 ///
 /// 职责：
 /// - 维护对话历史（Conversation）
@@ -31,6 +33,7 @@ public:
     /// @param client    LLM 客户端引用（外部管理生命周期）
     /// @param registry  工具注册中心引用（外部管理生命周期）
     Agent(llm::ILLMClient& client, ToolRegistry& registry);
+    ~Agent();
 
     // ================================================================
     // 配置
@@ -92,6 +95,18 @@ public:
     /// 清空对话历史。
     void clearConversation();
 
+    // ── 并行编排（Phase 3.5）──
+
+    /// 启用并行编排模式（创建内部 AgentOrchestrator）。
+    /// @param templateMgr  模板管理器（可选，用于模板感知分解）
+    void enableParallel(TemplateManager* templateMgr = nullptr);
+
+    /// 禁用并行编排模式。
+    void disableParallel();
+
+    /// 是否启用了并行编排。
+    bool isParallelEnabled() const;
+
 private:
     llm::ILLMClient& client_;
     ToolRegistry& registry_;
@@ -100,6 +115,7 @@ private:
     int max_tool_rounds_ = 10;
     ContextManager* context_manager_ = nullptr;
     int context_window_ = 65536;
+    std::unique_ptr<class AgentOrchestrator> orchestrator_;
 
     /// 调用 LLM + 检查 tool_calls，循环执行直到 LLM 不再请求工具。
     /// @return 最终的 LLM 响应（不含 tool_calls 的那条）

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "agent/Agent.h"
-#include "agent/AgentOrchestrator.h"
 #include "agent/ContextManager.h"
 #include "agent/TemplateManager.h"
 #include "agent/ToolRegistry.h"
@@ -29,7 +28,6 @@ public:
 
     agent::Agent& agent() { return agent_; }
     agent::ToolRegistry& registry() { return registry_; }
-    agent::AgentOrchestrator& orchestrator() { return *orchestrator_; }
     agent::TemplateManager& templateManager() { return template_mgr_; }
     std::shared_ptr<Project> project() { return project_; }
 
@@ -42,7 +40,6 @@ private:
     agent::ContextManager cm_;
     std::shared_ptr<Project> project_;
     agent::TemplateManager template_mgr_;
-    std::unique_ptr<agent::AgentOrchestrator> orchestrator_;
 
     void setupAgent(const std::vector<std::string>& disabledTools);
     void saveConversationIfNeeded(const llm::LLMResponse& response);

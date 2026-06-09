@@ -1,8 +1,9 @@
 #include "agent/Agent.h"
+#include "agent/AgentOrchestrator.h"
 #include "agent/ContextManager.h"
 #include "agent/PromptComposer.h"
 #include "agent/ToolPipeline.h"
-#include "agent/ToolRegistry.h"  // Agent.h 中前向声明，完整类型在 .cpp
+#include "agent/ToolRegistry.h"
 
 #include <spdlog/spdlog.h>
 
@@ -17,6 +18,8 @@ Agent::Agent(llm::ILLMClient& client, ToolRegistry& registry)
     , registry_(registry)
 {
 }
+
+Agent::~Agent() = default;  // 在 .cpp 中定义（orchestrator_ 需要完整类型）
 
 void Agent::setSystemPrompt(std::string prompt)
 {
@@ -45,6 +48,18 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
         return llm::LLMResponse{};
     }
 
+    // 并行编排：检测到并行关键词时，由 Orchestrator 处理
+    if (orchestrator_ && orchestrator_->isParallelEnabled() &&
+        (input.find("所有") != std::string::npos ||
+         input.find("检查") != std::string::npos)) {
+        auto result = orchestrator_->processMessage(input);
+        llm::LLMResponse resp;
+        resp.content = result;
+        conversation_.addUser(input);
+        conversation_.addAssistant(result);
+        return resp;
+    }
+
     conversation_.addUser(input);
     auto response = runToolLoop(std::move(callbacks));
 
@@ -53,6 +68,22 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
     }
 
     return response;
+}
+
+void Agent::enableParallel(TemplateManager* templateMgr) {
+    orchestrator_ = std::make_unique<AgentOrchestrator>(
+        client_, registry_, system_prompt_);
+    if (templateMgr) orchestrator_->setTemplateManager(templateMgr);
+    spdlog::info("[Agent] 并行编排已启用");
+}
+
+void Agent::disableParallel() {
+    orchestrator_.reset();
+    spdlog::info("[Agent] 并行编排已禁用");
+}
+
+bool Agent::isParallelEnabled() const {
+    return orchestrator_ != nullptr && orchestrator_->isParallelEnabled();
 }
 
 // ===========================================================================

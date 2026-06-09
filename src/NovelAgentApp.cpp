@@ -44,11 +44,7 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
 
     agent_.setContextManager(&cm_);
     agent_.setContextWindow(client_.config().context_window);
-
-    // 初始化并行编排器
-    orchestrator_ = std::make_unique<agent::AgentOrchestrator>(
-        client_, registry_, agent::PromptComposer::compose(pc));
-    orchestrator_->setTemplateManager(&template_mgr_);
+    agent_.enableParallel(&template_mgr_);
 }
 
 void NovelAgentApp::saveConversationIfNeeded(const llm::LLMResponse& /*response*/)
@@ -66,7 +62,7 @@ void NovelAgentApp::saveConversationIfNeeded(const llm::LLMResponse& /*response*
 
 void NovelAgentApp::runRepl(const std::string& welcomeMessage)
 {
-    ReplHandler repl(agent_, out_, orchestrator_.get());
+    ReplHandler repl(agent_, out_);
     if (!welcomeMessage.empty()) {
         repl.setWelcomeMessage(welcomeMessage);
     } else {
