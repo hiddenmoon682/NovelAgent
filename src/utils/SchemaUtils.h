@@ -24,7 +24,8 @@ namespace utils::schema {
 /// @param required    必填字段名列表（可选）
 inline nlohmann::json object(
     std::vector<std::pair<std::string, nlohmann::json>> properties,
-    std::vector<std::string> required = {})
+    std::vector<std::string> required = {},
+    bool allowExtra = false)
 {
     nlohmann::json props = nlohmann::json::object();
     for (auto& [name, schema] : properties) {
@@ -37,8 +38,8 @@ inline nlohmann::json object(
     if (!required.empty()) {
         result["required"] = required;
     }
-    // 禁用额外属性：LLM 不应传入 schema 未定义的字段
-    result["additionalProperties"] = false;
+    // 默认禁用额外属性（安全），允许调用方覆盖（兼容某些 LLM）
+    result["additionalProperties"] = allowExtra;
     return result;
 }
 

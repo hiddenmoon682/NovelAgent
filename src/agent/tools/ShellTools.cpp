@@ -1,11 +1,13 @@
 #include "agent/tools/ShellTools.h"
 #include "utils/SchemaUtils.h"
 #include <spdlog/spdlog.h>
-#include <array>
-#include <cstdio>
-#include <memory>
 #include <string>
 #include <set>
+#include <cstdio>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace agent {
 using json = nlohmann::json;
@@ -18,48 +20,96 @@ json RunPowerShellTool::parameters() const {
 
 namespace {
 
-/// 危险命令关键词黑名单。
-/// 仅拦截破坏性操作（删除/格式化/修改系统/下载执行/提权等），
-/// 允许正常的管道和重定向操作（| ; && || > >> <）。
-/// 注意：黑名单不能提供绝对安全，不可在完全不可信环境中运行。
 bool isDangerousCommand(const std::string& cmd) {
-    // 破坏性 cmdlet（含常见 PowerShell 缩写/别名）
     static const std::set<std::string> blocked = {
-        // 删除/清理操作（含尾随空格防止误匹配，如 "rm " 不匹配 "rmdir"）
-        "remove-item", "ri ", "rm ", "rm\t", "del ", "rd ", "rdr ",
+        "remove-item", "ri ", "rm ", "del ", "rmdir", "rd ", "rdr ",
         "erase", "delete", "clear-content", "clear-item",
-        // 裸关键词（LLM 可能直接输出不带空格的命令）
-        "rmdir", "diskpart",
-        // 格式化/磁盘操作
         "format", "diskpart", "initialize-disk", "clear-disk",
-        // 进程/服务操作
         "stop-process", "kill", "spps ", "stop-service", "sasv ",
-        // 系统配置修改
         "set-content", "set-itemproperty", "set-service",
         "out-file", "out-printer",
-        // 网络下载/执行（远程代码执行风险）
         "invoke-webrequest", "iwr ", "invoke-restmethod", "irm ",
         "curl", "wget", "start-process", "saps ",
         "iex ", "invoke-expression", "invoke-command", "icm ",
         "new-object", "download", "upload",
-        // 账户/权限操作
         "net user", "net localgroup", "net group",
         "new-localuser", "add-localgroupmember",
-        // 注册表修改
         "reg add", "reg delete", "reg import",
-        "set-itemproperty -path registry",
-        // 系统关机/重启
-        "shutdown", "restart-computer", "stop-computer",
-        "logoff",
+        "shutdown", "restart-computer", "stop-computer", "logoff",
     };
     std::string lower = cmd;
     for (char& c : lower) c = static_cast<char>(std::tolower(c));
-    for (const auto& keyword : blocked) {
-        if (lower.find(keyword) != std::string::npos) {
-            return true;
-        }
-    }
+    for (const auto& kw : blocked)
+        if (lower.find(kw) != std::string::npos) return true;
     return false;
+}
+
+/// 使用 CreateProcess 执行命令，支持超时（Windows）。
+/// @param cmd     PowerShell 命令
+/// @param output  出参：stdout 输出
+/// @param timeoutMs 超时毫秒数
+/// @return        进程退出码（超时时返回 -1）
+int execWithTimeout(const std::string& cmd, std::string& output, DWORD timeoutMs = 30000) {
+#ifdef _WIN32
+    std::string fullCmd = "powershell.exe -NoProfile -Command " + cmd;
+
+    HANDLE hRead, hWrite;
+    SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+    if (!CreatePipe(&hRead, &hWrite, &sa, 0)) return -1;
+    SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOA si = {sizeof(STARTUPINFOA)};
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = hWrite;
+    si.hStdError = hWrite;
+
+    PROCESS_INFORMATION pi = {};
+    if (!CreateProcessA(nullptr, const_cast<char*>(fullCmd.c_str()),
+                        nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
+                        nullptr, nullptr, &si, &pi)) {
+        CloseHandle(hRead); CloseHandle(hWrite);
+        return -1;
+    }
+    CloseHandle(hWrite);
+
+    // 等待进程完成或超时
+    DWORD waitResult = WaitForSingleObject(pi.hProcess, timeoutMs);
+
+    int exitCode = -1;
+    if (waitResult == WAIT_TIMEOUT) {
+        TerminateProcess(pi.hProcess, 1);
+        output = "(命令超时)";
+    } else {
+        // 读取输出
+        char buf[256];
+        DWORD read;
+        while (ReadFile(hRead, buf, sizeof(buf) - 1, &read, nullptr) && read > 0) {
+            buf[read] = '\0';
+            output += buf;
+            if (output.size() > 100 * 1024) {
+                output += "\n...(已截断)";
+                break;
+            }
+        }
+        GetExitCodeProcess(pi.hProcess, reinterpret_cast<LPDWORD>(&exitCode));
+    }
+
+    CloseHandle(hRead);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return exitCode;
+#else
+    // 非 Windows：回退到 _popen
+    std::string fullCmd = "powershell -NoProfile -Command " + cmd;
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(fullCmd.c_str(), "r"), pclose);
+    if (!pipe) return -1;
+    char buf[256];
+    while (fgets(buf, sizeof(buf), pipe.get())) {
+        output += buf;
+        if (output.size() > 100 * 1024) { output += "\n...(已截断)"; break; }
+    }
+    return 0;
+#endif
 }
 
 } // namespace
@@ -68,45 +118,20 @@ json RunPowerShellTool::execute(const json& args) {
     std::string cmd = args.value("command", "");
     if (cmd.empty()) return {{"error", "命令不能为空"}};
 
-    // 安全检查：拒绝包含危险关键字的命令
     if (isDangerousCommand(cmd)) {
         spdlog::warn("[run_powershell] 拦截危险命令: {}", cmd);
-        return {
-            {"error", "命令被安全策略拦截（包含危险操作关键词）。如需执行，请在终端中手动运行。"},
-            {"blocked", true}
-        };
+        return {{"error", "命令被安全策略拦截"}, {"blocked", true}};
     }
 
     spdlog::info("[run_powershell] {}", cmd);
 
-    // 使用 _popen 执行命令并捕获输出。
-    // 安全依赖 isDangerousCommand() 黑名单（上面），不是绝对安全。
-    // TODO: Phase 3.5 迁移到 CreateProcess + WaitForSingleObject 实现超时控制。
-    std::string full_cmd = "powershell.exe -NoProfile -Command " + cmd;
-    std::unique_ptr<FILE, decltype(&_pclose)> pipe(
-        _popen(full_cmd.c_str(), "r"), _pclose);
-
-    if (!pipe) {
-        return {{"error", "无法执行命令"}};
-    }
-
-    std::array<char, 256> buffer;
     std::string output;
-    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe.get())) {
-        output += buffer.data();
-        // 防止输出过大导致内存问题（限制 100KB）
-        if (output.size() > 100 * 1024) {
-            output += "\n...(输出已截断，超过 100KB 限制)";
-            break;
-        }
-    }
-
-    int exit_code = _pclose(pipe.release());
+    int exitCode = execWithTimeout(cmd, output, 30000); // 30s timeout
 
     return {
         {"stdout", output},
         {"stderr", ""},
-        {"exit_code", exit_code}
+        {"exit_code", exitCode}
     };
 }
 
