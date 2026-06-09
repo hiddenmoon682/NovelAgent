@@ -46,43 +46,46 @@ bool isRetryableNetworkError(int err) {
 
 /// ── 长连接缓存（按 LLMClient 实例隔离）──────────────────────────────
 
-/// 缓存条目：httplib::Client + 其对应的 host
-struct ClientEntry {
-    std::unique_ptr<httplib::Client> client;
-    std::string host;
+/// RAII 封装全局连接缓存 — 替代裸 std::mutex + std::unordered_map。
+/// 线程安全，程序退出时自动清理所有连接。
+class ConnectionCache {
+public:
+    struct Entry {
+        std::unique_ptr<httplib::Client> client;
+        std::string host;
+    };
+
+    httplib::Client& getOrCreate(const void* key, const std::string& baseUrl) {
+        std::string host = baseUrl;
+        while (!host.empty() && host.back() == '/') host.pop_back();
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto& entry = clients_[key];
+        if (!entry.client || entry.host != host) {
+            entry.client = std::make_unique<httplib::Client>(host);
+            entry.client->set_connection_timeout(kConnectionTimeout, 0);
+            entry.client->set_read_timeout(kReadTimeout, 0);
+            entry.client->set_write_timeout(kWriteTimeout, 0);
+            entry.client->set_keep_alive(true);
+            entry.host = host;
+            spdlog::debug("[LLMClient] 建立长连接 → {} (实例 {})", host, key);
+        }
+        return *entry.client;
+    }
+
+private:
+    std::mutex mutex_;
+    std::unordered_map<const void*, Entry> clients_;
 };
 
-std::mutex g_clients_mutex;
-std::unordered_map<const void*, ClientEntry> g_clients;
+// 全局连接缓存实例（程序生命周期内唯一）
+ConnectionCache g_connectionCache;
 
 /// 获取或创建当前 LLMClient 实例专属的长连接
 httplib::Client& getOrCreateClient(const void* instance_key,
                                    const std::string& base_url)
 {
-    // 规范化 host
-    std::string host = base_url;
-    while (!host.empty() && host.back() == '/') {
-        host.pop_back();
-    }
-
-    std::lock_guard<std::mutex> lock(g_clients_mutex);
-
-    auto& entry = g_clients[instance_key];
-
-    // 无缓存 或 host 变了（地址复用 / Provider 切换）→ 重建
-    if (!entry.client || entry.host != host) {
-        entry.client = std::make_unique<httplib::Client>(host);
-        entry.client->set_connection_timeout(kConnectionTimeout, 0);
-        entry.client->set_read_timeout(kReadTimeout, 0);
-        entry.client->set_write_timeout(kWriteTimeout, 0);
-        entry.client->set_keep_alive(true);
-        entry.host = host;
-
-        spdlog::debug("[LLMClient] 建立长连接 → {} (实例 {})",
-                      host, instance_key);
-    }
-
-    return *entry.client;
+    return g_connectionCache.getOrCreate(instance_key, base_url);
 }
 
 } // namespace

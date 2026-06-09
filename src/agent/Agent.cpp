@@ -2,7 +2,7 @@
 #include "agent/ContextManager.h"
 #include "agent/PromptComposer.h"
 #include "agent/ToolPipeline.h"
-#include "agent/ToolRegistry.h"  // 前向声明在 Agent.h，完整类型在 .cpp
+#include "agent/ToolRegistry.h"  // Agent.h 中前向声明，完整类型在 .cpp
 
 #include <spdlog/spdlog.h>
 

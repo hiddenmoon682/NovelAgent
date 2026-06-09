@@ -7,7 +7,7 @@
 
 namespace agent {
 
-// 前向声明（避免拉入 ToolRegistry → BuiltInTool → nlohmann/json_fwd 链）
+// 前向声明（避免拉入 ToolRegistry → BuiltInTool → json_fwd.hpp 链）
 class ToolRegistry;
 class ContextManager;
 ///
