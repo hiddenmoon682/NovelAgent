@@ -9,14 +9,15 @@
 
 #include <iostream>
 
-NovelAgentApp::NovelAgentApp(const ProviderConfig& provider, Project project,
+NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
+                               std::shared_ptr<Project> project,
                                IOutputChannel* out,
                                std::vector<std::string> disabledTools)
     : ownedOutput_(out ? nullptr : std::make_unique<ConsoleOutput>())
     , out_(out ? *out : *ownedOutput_)
     , client_(provider)
     , agent_(client_, registry_)
-    , project_(std::move(project))
+    , project_(project ? std::move(project) : std::make_shared<Project>())
 {
     setupAgent(std::move(disabledTools));
 }
@@ -24,7 +25,7 @@ NovelAgentApp::NovelAgentApp(const ProviderConfig& provider, Project project,
 void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
 {
     // 工具自注册（通过 REGISTER_TOOL 宏），支持按配置禁用
-    if (!project_.title.empty()) {
+    if (!project_->title.empty()) {
         agent::registerAllTools(registry_, project_, disabledTools);
     }
 
@@ -54,7 +55,7 @@ void NovelAgentApp::saveConversationIfNeeded(const llm::LLMResponse& /*response*
 {
     // 基础版：每次对话轮次后持久化到 .novelagent/conversation.json
     // Phase 4 将添加增量保存和压缩
-    if (project_.path.empty()) return;
+    if (project_->path.empty()) return;
     try {
         // 使用 Agent 的 conversation 状态
         // TODO: Phase 4 添加 loadConversation 恢复支持

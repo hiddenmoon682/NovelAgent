@@ -37,7 +37,7 @@ json GetCharacterTool::parameters() const {
 
 json GetCharacterTool::execute(const json& args) {
     std::string id = args.value("character_id", "");
-    const auto* ch = findCharacter(project_.characters, id);
+    const auto* ch = findCharacter(project_->characters, id);
     if (!ch) {
         return {{"error", "角色 '" + id + "' 不存在"}};
     }
@@ -56,7 +56,7 @@ json ListCharactersTool::parameters() const {
 
 json ListCharactersTool::execute(const json& /*args*/) {
     json chars = json::array();
-    for (const auto& ch : project_.characters) {
+    for (const auto& ch : project_->characters) {
         chars.push_back({
             {"id", ch.id},
             {"name", ch.name},
@@ -89,7 +89,7 @@ json CreateCharacterTool::execute(const json& args) {
     }
 
     // 检查重名
-    for (const auto& ch : project_.characters) {
+    for (const auto& ch : project_->characters) {
         if (ch.name == name) {
             return {{"error", "角色 '" + name + "' 已存在（ID: " + ch.id + "）"}};
         }
@@ -97,7 +97,7 @@ json CreateCharacterTool::execute(const json& args) {
 
     // 生成 ID
     int max_num = 0;
-    for (const auto& ch : project_.characters) {
+    for (const auto& ch : project_->characters) {
         if (ch.id.size() >= 5 && ch.id.substr(0, 5) == "char-") {
             try { max_num = std::max(max_num, std::stoi(ch.id.substr(5))); }
             catch (...) {}
@@ -112,8 +112,8 @@ json CreateCharacterTool::execute(const json& args) {
     new_ch.name = name;
     new_ch.role = args.value("role", "supporting");
 
-    project_.characters.push_back(new_ch);
-    ProjectIO::save(project_);
+    project_->characters.push_back(new_ch);
+    ProjectIO::save(*project_);
 
     spdlog::info("[create_character] {} '{}' (role={})", new_ch.id, name, new_ch.role);
 
@@ -152,7 +152,7 @@ static const std::set<std::string> kUpdatableArrayFields = {
 
 json UpdateCharacterTool::execute(const json& args) {
     std::string id = args.value("character_id", "");
-    auto* ch = findCharacter(project_.characters, id);
+    auto* ch = findCharacter(project_->characters, id);
     if (!ch) {
         return {{"error", "角色 '" + id + "' 不存在"}};
     }
@@ -212,7 +212,7 @@ json UpdateCharacterTool::execute(const json& args) {
         return {{"error", "没有可以更新的字段"}};
     }
 
-    ProjectIO::save(project_);
+    ProjectIO::save(*project_);
     // 拼接更新字段名用于日志
     std::string fields_str;
     for (size_t i = 0; i < updated.size(); ++i) {

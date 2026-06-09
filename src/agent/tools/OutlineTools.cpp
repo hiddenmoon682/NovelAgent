@@ -9,7 +9,7 @@ json GetOutlineTool::parameters() const {
     return utils::schema::object({});
 }
 json GetOutlineTool::execute(const json&) {
-    const auto& o = project_.outline;
+    const auto& o = project_->outline;
     json vol_arr = json::array();
     for (const auto& v : o.volumes)
         vol_arr.push_back({{"id", v.id}, {"title", v.title}, {"order", v.order}});
@@ -33,17 +33,17 @@ json GetProjectStatusTool::parameters() const {
     return utils::schema::object({});
 }
 json GetProjectStatusTool::execute(const json&) {
-    spdlog::info("[get_project_status] {}", project_.title);
+    spdlog::info("[get_project_status] {}", project_->title);
     return {
-        {"title", project_.title},
-        {"logline", project_.logline},
-        {"theme", project_.theme},
-        {"target_audience", project_.target_audience},
-        {"content_rating", project_.content_rating},
-        {"characters_count", static_cast<int>(project_.characters.size())},
-        {"chapters_count", static_cast<int>(project_.outline.chapters.size())},
-        {"settings_count", static_cast<int>(project_.settings.size())},
-        {"world_rules_count", static_cast<int>(project_.world_rules.size())}
+        {"title", project_->title},
+        {"logline", project_->logline},
+        {"theme", project_->theme},
+        {"target_audience", project_->target_audience},
+        {"content_rating", project_->content_rating},
+        {"characters_count", static_cast<int>(project_->characters.size())},
+        {"chapters_count", static_cast<int>(project_->outline.chapters.size())},
+        {"settings_count", static_cast<int>(project_->settings.size())},
+        {"world_rules_count", static_cast<int>(project_->world_rules.size())}
     };
 }
 

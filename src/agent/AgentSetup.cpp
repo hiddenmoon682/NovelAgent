@@ -4,11 +4,14 @@
 #include "agent/tools/BuiltInTool.h"
 #include "project/Models.h"
 
+#include <memory>
+
 namespace agent {
 
-void registerAllTools(ToolRegistry& registry, Project& project,
+void registerAllTools(ToolRegistry& registry,
+                      std::shared_ptr<Project> project,
                       const std::vector<std::string>& disabled) {
-    BuiltInTool::registerAllTo(registry, project, disabled);
+    BuiltInTool::registerAllTo(registry, std::move(project), disabled);
 }
 
 } // namespace agent

@@ -39,12 +39,12 @@ json ReadChapterTool::parameters() const {
 
 json ReadChapterTool::execute(const json& args) {
     std::string chapter_id = args.value("chapter_id", "");
-    const auto* ch = findChapter(project_.outline.chapters, chapter_id);
+    const auto* ch = findChapter(project_->outline.chapters, chapter_id);
     if (!ch) {
         return {{"error", "章节 '" + chapter_id + "' 不存在"}};
     }
 
-    std::string content = ProjectIO::readChapter(project_.path, ch->file_path);
+    std::string content = ProjectIO::readChapter(project_->path, ch->file_path);
     spdlog::info("[read_chapter] {} → {} 字", chapter_id, content.size());
 
     return {
@@ -69,12 +69,12 @@ json WriteChapterTool::execute(const json& args) {
     std::string chapter_id = args.value("chapter_id", "");
     std::string content = args.value("content", "");
 
-    const auto* ch = findChapter(project_.outline.chapters, chapter_id);
+    const auto* ch = findChapter(project_->outline.chapters, chapter_id);
     if (!ch) {
         return {{"error", "章节 '" + chapter_id + "' 不存在"}};
     }
 
-    ProjectIO::writeChapter(project_.path, ch->file_path, content);
+    ProjectIO::writeChapter(project_->path, ch->file_path, content);
     spdlog::info("[write_chapter] {} ← {} 字", chapter_id, content.size());
 
     return {{"success", true}, {"chapter_id", chapter_id}};
@@ -95,13 +95,13 @@ json AppendChapterTool::execute(const json& args) {
     std::string chapter_id = args.value("chapter_id", "");
     std::string append_content = args.value("content", "");
 
-    const auto* ch = findChapter(project_.outline.chapters, chapter_id);
+    const auto* ch = findChapter(project_->outline.chapters, chapter_id);
     if (!ch) {
         return {{"error", "章节 '" + chapter_id + "' 不存在"}};
     }
 
     // 读取现有内容 → 追加 → 写回
-    std::string existing = ProjectIO::readChapter(project_.path, ch->file_path);
+    std::string existing = ProjectIO::readChapter(project_->path, ch->file_path);
     if (!existing.empty() && existing.back() != '\n') {
         existing += '\n';
     }
@@ -110,7 +110,7 @@ json AppendChapterTool::execute(const json& args) {
         combined += '\n';
     }
 
-    ProjectIO::writeChapter(project_.path, ch->file_path, combined);
+    ProjectIO::writeChapter(project_->path, ch->file_path, combined);
     spdlog::info("[append_to_chapter] {} += {} 字 (总计 {} 字)",
                  chapter_id, append_content.size(), combined.size());
 
@@ -127,7 +127,7 @@ json ListChaptersTool::parameters() const {
 
 json ListChaptersTool::execute(const json& /*args*/) {
     json chapters = json::array();
-    for (const auto& ch : project_.outline.chapters) {
+    for (const auto& ch : project_->outline.chapters) {
         chapters.push_back({
             {"id", ch.id},
             {"title", ch.title},
@@ -163,7 +163,7 @@ json CreateChapterTool::execute(const json& args) {
     // 计算新章节编号
     int max_order = 0;
     int max_ch_num = 0;
-    for (const auto& ch : project_.outline.chapters) {
+    for (const auto& ch : project_->outline.chapters) {
         max_order = std::max(max_order, ch.order);
         // 尝试从 id 中提取数字
         if (ch.id.size() >= 3 && ch.id.substr(0, 3) == "ch-") {
@@ -187,12 +187,12 @@ json CreateChapterTool::execute(const json& args) {
     new_ch.file_path = "chapters/" + new_ch.id + ".md";
 
     // 添加到 outline 并全量保存（保证 outline.json 与其他 JSON 文件一致）
-    project_.outline.chapters.push_back(new_ch);
-    ProjectIO::save(project_);
+    project_->outline.chapters.push_back(new_ch);
+    ProjectIO::save(*project_);
 
     // 写入空的章节文件
     std::string init_content = "# " + title + "\n\n";
-    ProjectIO::writeChapter(project_.path, new_ch.file_path, init_content);
+    ProjectIO::writeChapter(project_->path, new_ch.file_path, init_content);
 
     spdlog::info("[create_chapter] {} '{}' → {}", new_ch.id, title, new_ch.file_path);
 

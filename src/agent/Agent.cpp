@@ -64,7 +64,19 @@ llm::LLMResponse Agent::execute(const std::string& command,
 {
     std::vector<llm::Message> messages = { llm::Message::user(command) };
     auto tools = registry_.getToolDefinitions();
-    return client_.chat(messages, tools, system_prompt_, std::move(callbacks));
+
+    // --exec 模式也使用 ContextManager（如果已设置）
+    std::string effective_prompt = system_prompt_;
+    if (context_manager_) {
+        llm::Conversation tempConv;
+        tempConv.addUser(command);
+        auto assembly = context_manager_->assemble(tempConv, context_window_);
+        if (!assembly.system_prompt.empty()) {
+            effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
+        }
+    }
+
+    return client_.chat(messages, tools, effective_prompt, std::move(callbacks));
 }
 
 // ===========================================================================

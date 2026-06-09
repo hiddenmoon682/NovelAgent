@@ -20,7 +20,7 @@ public:
     /// @param project   已打开的小说项目
     /// @param out       输出通道（默认=控制台）
     /// @param disabledTools  禁用的工具名列表（空=全部启用）
-    NovelAgentApp(const ProviderConfig& provider, Project project,
+    NovelAgentApp(const ProviderConfig& provider, std::shared_ptr<Project> project,
                   IOutputChannel* out = nullptr,
                   std::vector<std::string> disabledTools = {});
 
@@ -31,7 +31,7 @@ public:
     agent::ToolRegistry& registry() { return registry_; }
     agent::AgentOrchestrator& orchestrator() { return *orchestrator_; }
     agent::TemplateManager& templateManager() { return template_mgr_; }
-    Project& project() { return project_; }
+    std::shared_ptr<Project> project() { return project_; }
 
 private:
     std::unique_ptr<IOutputChannel> ownedOutput_;
@@ -40,7 +40,7 @@ private:
     agent::ToolRegistry registry_;
     agent::Agent agent_;
     agent::ContextManager cm_;
-    Project project_;
+    std::shared_ptr<Project> project_;
     agent::TemplateManager template_mgr_;
     std::unique_ptr<agent::AgentOrchestrator> orchestrator_;
 

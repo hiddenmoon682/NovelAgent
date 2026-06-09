@@ -116,7 +116,7 @@ json RunPowerShellTool::execute(const json& args) {
 namespace {
     static const bool _reg_ShellTools = []() {
         agent::BuiltInTool::registerFactory("run_powershell",
-            [](Project&) -> std::unique_ptr<agent::BuiltInTool> {
+            [](std::shared_ptr<Project>) -> std::unique_ptr<agent::BuiltInTool> {
                 return std::make_unique<agent::RunPowerShellTool>();
             });
         return true;

@@ -13,7 +13,8 @@ void BuiltInTool::registerFactory(std::string name, Factory factory) {
     factories().push_back({std::move(name), std::move(factory)});
 }
 
-void BuiltInTool::registerAllTo(ToolRegistry& registry, Project& project,
+void BuiltInTool::registerAllTo(ToolRegistry& registry,
+                                 std::shared_ptr<Project> project,
                                  const std::vector<std::string>& disabled) {
     for (auto& entry : factories()) {
         // 跳过被禁用的工具

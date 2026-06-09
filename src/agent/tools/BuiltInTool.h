@@ -3,7 +3,7 @@
 #include "llm/Message.h"
 #include <nlohmann/json_fwd.hpp>  // 仅前向声明，避免拉入 ~25K 行模板
 #include <functional>
-#include <memory>
+#include <memory>  // shared_ptr, unique_ptr
 #include <string>
 #include <vector>
 
@@ -54,13 +54,14 @@ public:
     // 自注册机制 — 工具只需在 .cpp 中调用 REGISTER_TOOL 宏
     // ================================================================
 
-    using Factory = std::function<std::unique_ptr<BuiltInTool>(::Project&)>;
+    using Factory = std::function<std::unique_ptr<BuiltInTool>(std::shared_ptr<Project>)>;
 
     /// 注册工具工厂（由 REGISTER_TOOL 宏调用）
     static void registerFactory(std::string name, Factory factory);
 
     /// 将所有已注册工具实例化并添加到 ToolRegistry
-    static void registerAllTo(class ToolRegistry& registry, Project& project,
+    static void registerAllTo(class ToolRegistry& registry,
+                               std::shared_ptr<Project> project,
                                const std::vector<std::string>& disabled = {});
 
     /// 列出所有已注册的工具名
@@ -80,8 +81,8 @@ private:
         static const bool _reg_##varSuffix = []() { \
             agent::BuiltInTool::registerFactory( \
                 toolName, \
-                [](::Project& p) -> std::unique_ptr<agent::BuiltInTool> { \
-                    return std::make_unique<ToolClass>(p); \
+                [](std::shared_ptr<::Project> p) -> std::unique_ptr<agent::BuiltInTool> { \
+                    return std::make_unique<ToolClass>(std::move(p)); \
                 }); \
             return true; \
         }(); \

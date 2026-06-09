@@ -59,8 +59,9 @@ int main(int argc, char** argv) {
                   << " | 角色: " << project.characters.size() << "\n";
     }
 
-    // 创建应用（封装所有组件装配）
-    NovelAgentApp novelAgent(*provider, std::move(project));
+    // 创建应用（封装所有组件装配，project 由 shared_ptr 管理生命周期）
+    auto projectPtr = std::make_shared<Project>(std::move(project));
+    NovelAgentApp novelAgent(*provider, projectPtr);
 
     // 分发到 REPL 或 --exec
     if (!execCommand.empty()) {

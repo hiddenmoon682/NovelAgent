@@ -104,15 +104,15 @@ int main() {
     agent::ToolRegistry registry;
 
     registry.registerBuiltInTool(
-        std::make_unique<agent::ListChaptersTool>(tp.project));
+        std::make_unique<agent::ListChaptersTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
     registry.registerBuiltInTool(
-        std::make_unique<agent::ReadChapterTool>(tp.project));
+        std::make_unique<agent::ReadChapterTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
     registry.registerBuiltInTool(
-        std::make_unique<agent::WriteChapterTool>(tp.project));
+        std::make_unique<agent::WriteChapterTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
     registry.registerBuiltInTool(
-        std::make_unique<agent::AppendChapterTool>(tp.project));
+        std::make_unique<agent::AppendChapterTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
     registry.registerBuiltInTool(
-        std::make_unique<agent::CreateChapterTool>(tp.project));
+        std::make_unique<agent::CreateChapterTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
 
     std::cout << "  已注册 " << registry.toolCount() << " 个工具:\n";
     for (const auto& name : registry.toolNames()) {

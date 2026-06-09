@@ -69,7 +69,7 @@ void test_list_chapters() {
     TEST("list_chapters — 列出所有章节");
 
     TestProject tp;
-    agent::ListChaptersTool tool(tp.project);
+    agent::ListChaptersTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
 
     auto result = tool.execute({});
     CHECK(result.contains("chapters"));
@@ -89,7 +89,7 @@ void test_read_chapter() {
     TEST("read_chapter — 读取章节全文");
 
     TestProject tp;
-    agent::ReadChapterTool tool(tp.project);
+    agent::ReadChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
 
     auto result = tool.execute({{"chapter_id", "ch-001"}});
     CHECK(result.contains("content"));
@@ -107,7 +107,7 @@ void test_write_chapter() {
     TEST("write_chapter — 覆写章节内容");
 
     TestProject tp;
-    agent::WriteChapterTool tool(tp.project);
+    agent::WriteChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
 
     auto result = tool.execute({
         {"chapter_id", "ch-001"},
@@ -116,7 +116,7 @@ void test_write_chapter() {
     CHECK(result["success"] == true);
 
     // 验证写入
-    agent::ReadChapterTool reader(tp.project);
+    agent::ReadChapterTool reader(std::shared_ptr<Project>(&tp.project, [](Project*){}));
     auto readback = reader.execute({{"chapter_id", "ch-001"}});
     CHECK(readback["content"].get<std::string>().find("改写后") != std::string::npos);
 
@@ -131,7 +131,7 @@ void test_append_to_chapter() {
     TEST("append_to_chapter — 追加内容");
 
     TestProject tp;
-    agent::AppendChapterTool tool(tp.project);
+    agent::AppendChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
 
     auto result = tool.execute({
         {"chapter_id", "ch-001"},
@@ -140,7 +140,7 @@ void test_append_to_chapter() {
     CHECK(result["success"] == true);
 
     // 验证原始内容仍在 + 新内容已追加
-    agent::ReadChapterTool reader(tp.project);
+    agent::ReadChapterTool reader(std::shared_ptr<Project>(&tp.project, [](Project*){}));
     auto readback = reader.execute({{"chapter_id", "ch-001"}});
     std::string content = readback["content"];
     CHECK(content.find("第一章的内容") != std::string::npos); // 原有内容
@@ -157,7 +157,7 @@ void test_create_chapter() {
     TEST("create_chapter — 创建新章节");
 
     TestProject tp;
-    agent::CreateChapterTool tool(tp.project);
+    agent::CreateChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
 
     auto result = tool.execute({{"title", "第二章"}, {"synopsis", "第二章节"}});
     CHECK(result["success"] == true);
@@ -184,7 +184,7 @@ void test_read_nonexistent() {
     TEST("read_chapter — 不存在的章节返回错误");
 
     TestProject tp;
-    agent::ReadChapterTool tool(tp.project);
+    agent::ReadChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
 
     auto result = tool.execute({{"chapter_id", "ch-999"}});
     CHECK(result.contains("error"));
@@ -204,9 +204,9 @@ void test_via_registry() {
     agent::ToolRegistry registry;
 
     registry.registerBuiltInTool(
-        std::make_unique<agent::ListChaptersTool>(tp.project));
+        std::make_unique<agent::ListChaptersTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
     registry.registerBuiltInTool(
-        std::make_unique<agent::ReadChapterTool>(tp.project));
+        std::make_unique<agent::ReadChapterTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
 
     CHECK(registry.hasTool("list_chapters"));
     CHECK(registry.hasTool("read_chapter"));
