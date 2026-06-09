@@ -1,5 +1,15 @@
 # Changelog
 
+## [2026-06-09] Phase 3.5 — Character 工具（4 个）
+
+- **新增** — `src/agent/tools/CharacterTools.h/.cpp`：4 个角色管理工具类
+  - `GetCharacterTool` — 按 ID 查询角色完整档案（利用 Models.h 的 to_json 序列化）
+  - `ListCharactersTool` — 列出所有角色摘要（id/name/role/goal）
+  - `CreateCharacterTool` — 创建角色（自动生成 char-001 格式 ID，重名检测，补零对齐）
+  - `UpdateCharacterTool` — 更新角色字段（指针到成员 map 驱动，支持 16 个 string + 4 个 array 字段）
+- **新增** — `tests/test_character_tools.cpp`：6 个测试（创建/查询/列表/更新/错误处理/ToolRegistry）
+- 测试统计：12/12 全部通过（新增 1 个测试目标）
+
 ## [2026-06-09] 第三轮代码审查修复 — REVIEW_NOTES.md 11 问题
 
 - **修复** — #1 Agent 不再覆盖用户的 `system_prompt_`：ContextManager 产出用局部变量拼接（审查发现的回归 bug）

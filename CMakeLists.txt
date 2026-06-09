@@ -70,6 +70,8 @@ set(LIB_SOURCES
     src/agent/tools/BuiltInTool.h
     src/agent/tools/ChapterTools.h
     src/agent/tools/ChapterTools.cpp
+    src/agent/tools/CharacterTools.h
+    src/agent/tools/CharacterTools.cpp
     src/agent/ToolRegistry.h
     src/agent/ToolRegistry.cpp
     src/agent/Agent.h
