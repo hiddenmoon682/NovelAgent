@@ -24,8 +24,15 @@ bool CommandParser::execute(const std::string& input) {
     std::string arg;
     while (ss >> arg) args.push_back(arg);
 
+    // 大小写不敏感匹配
+    auto lower_cmd = cmd_name;
+    for (char& ch : lower_cmd) ch = static_cast<char>(std::tolower(ch));
     auto it = std::find_if(commands_.begin(), commands_.end(),
-        [&](const Command& c) { return c.name == cmd_name; });
+        [&](const Command& c) {
+            std::string lower_name = c.name;
+            for (char& ch : lower_name) ch = static_cast<char>(std::tolower(ch));
+            return lower_name == lower_cmd;
+        });
 
     if (it == commands_.end()) {
         std::cout << "未知命令: /" << cmd_name << "（输入 /help 查看可用命令）\n";

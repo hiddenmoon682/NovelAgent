@@ -109,7 +109,9 @@ int main(int argc, char** argv) {
         "- 保持语言流畅、情节紧凑"
     );
 
-    // 设置 ContextManager（可选，启用 token 预算管理）
+    // 设置 ContextManager（启用 token 预算管理）。
+    // 注意: cm 生命周期必须 ≥ agent 生命周期（agent 持有裸指针）。
+    // 当前在同一作用域内，安全。如果重构为分离函数，需改为 shared_ptr。
     agent::ContextManager cm;
     agent.setContextManager(&cm);
     agent.setContextWindow(provider->context_window);

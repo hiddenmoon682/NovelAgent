@@ -10,6 +10,38 @@
 > 以下为 2026-06-09 Phase 3.1-3.4 代码审查发现的问题。
 >
 > **状态**: 11 个问题中 9 个已修复（2026-06-09），2 个暂缓（#5 #10）。
+>
+> ---
+>
+> 以下为 2026-06-09 Phase 3.6-3.12 代码审查发现的问题。
+
+## 12. [严重] ShellTools — PowerShell 命令注入漏洞
+
+**文件**: `src/agent/tools/ShellTools.cpp`
+
+**问题**: LLM 传入的 `command` 参数直接拼接到 `powershell.exe -NoProfile -Command` 中执行，完全没有校验。LLM 可能被 prompt injection 攻击诱导执行危险系统命令。
+
+**修复**: 添加 `isDangerousCommand()` 黑名单（24 个危险关键词）+ 输出 100KB 截断。✅ 已修复
+
+## 13. [中等] ShellTools — 无超时控制
+
+**问题**: `_popen` 无超时。挂起命令（如 `while($true){}`）会导致进程永久阻塞。
+
+**决定**: 暂缓。`_popen` 不直接支持超时，需改用 `CreateProcess` + `WaitForSingleObject`。当前通过 Agent 的 tool call 间接限流。
+
+## 14. [轻微] CommandParser — 命令名大小写敏感
+
+**文件**: `src/cli/CommandParser.cpp`
+
+**问题**: `/Help` 和 `/help` 不视为同一命令。
+
+**修复**: 命令名转小写后比较。✅ 已修复
+
+## 15. [轻微] ShellTools — 输出无大小限制
+
+**问题**: 命令输出可能无限增长（如 `dir C:\Windows\System32`）。
+
+**修复**: 添加 100KB 输出截断。✅ 已修复
 
 ---
 
