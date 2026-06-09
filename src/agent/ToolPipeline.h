@@ -17,8 +17,11 @@ namespace agent {
 
 class ToolPipeline {
 public:
-    /// 最大单条工具结果字符数（防止超长消息）。
-    static constexpr size_t kMaxResultChars = 4000;
+    /// 最大单条工具结果字符数（安全上限，~8000 中文字）。
+    /// 内容类工具（read_chapter）可返回完整章节内容；
+    /// 列表类工具（list_chapters）本身已限制输出大小。
+    /// 超出上限的结果由 ContextManager 在消息截断阶段处理。
+    static constexpr size_t kMaxResultChars = 32000;
 
     /// @param registry  工具注册中心
     /// @param conv      对话历史（结果将追加到此）

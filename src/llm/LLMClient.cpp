@@ -8,6 +8,8 @@
 
 #include <stdexcept>
 #include <mutex>
+#include <thread>
+#include <chrono>
 #include <unordered_map>
 
 namespace llm {
@@ -20,10 +22,27 @@ namespace {
 
 // 超时配置（秒）
 constexpr int kConnectionTimeout = 60;
-constexpr int kReadTimeout = 180;   // 流式模式需较长超时（大模型逐 token 生成）
+constexpr int kReadTimeout = 180;
 constexpr int kWriteTimeout = 60;
 
 constexpr const char* kUserAgent = "NovelAgent/0.2.0";
+
+// API 重试配置
+constexpr int kMaxRetries = 3;
+constexpr int kRetryBaseDelayMs = 1000; // 指数退避基数: 1s, 2s, 4s
+
+/// 判断 HTTP 状态码是否可重试
+bool isRetryableStatus(int status) {
+    return status == 429 || status == 502 || status == 503;
+}
+
+/// 判断网络错误是否可重试
+bool isRetryableNetworkError(int err) {
+    auto e = static_cast<httplib::Error>(err);
+    return e == httplib::Error::Connection
+        || e == httplib::Error::Read
+        || e == httplib::Error::ConnectionTimeout;
+}
 
 /// ── 长连接缓存（按 LLMClient 实例隔离）──────────────────────────────
 
@@ -153,33 +172,52 @@ LLMResponse LLMClient::chatNonStreaming(
 
     spdlog::info("[LLMClient] 非流式请求 → {} model={}", config_.base_url, config_.model);
 
-    auto res = cli.Post("/v1/chat/completions", headers, body.dump(), "application/json");
+    // ── 带指数退避的重试循环 ──
+    for (int attempt = 0; attempt <= kMaxRetries; ++attempt) {
+        if (attempt > 0) {
+            int delay_ms = kRetryBaseDelayMs * (1 << (attempt - 1)); // 1s, 2s, 4s
+            spdlog::warn("[LLMClient] 重试 {}/{} ({}ms 后)", attempt, kMaxRetries, delay_ms);
+            std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+        }
 
-    // 传输层错误
-    if (!res) {
-        auto err = httpErrorToString(static_cast<int>(res.error()));
-        last_error_ = err;
-        spdlog::error("[LLMClient] 网络错误: {}", err);
-        throw std::runtime_error("LLM 请求失败: " + err);
+        auto res = cli.Post("/v1/chat/completions", headers, body.dump(), "application/json");
+
+        // 传输层错误 → 可重试
+        if (!res) {
+            int err_code = static_cast<int>(res.error());
+            if (attempt < kMaxRetries && isRetryableNetworkError(err_code)) {
+                continue;
+            }
+            auto err = httpErrorToString(err_code);
+            last_error_ = err;
+            spdlog::error("[LLMClient] 网络错误: {}", err);
+            throw std::runtime_error("LLM 请求失败: " + err);
+        }
+
+        // HTTP 错误 → 429/502/503 可重试
+        if (res->status != 200) {
+            if (attempt < kMaxRetries && isRetryableStatus(res->status)) {
+                spdlog::warn("[LLMClient] HTTP {} 可重试", res->status);
+                continue;
+            }
+            auto err = parseApiError(res->status, res->body);
+            last_error_ = err;
+            spdlog::error("[LLMClient] API 错误 ({}): {}", res->status, err);
+            throw std::runtime_error("API 错误: " + err);
+        }
+
+        // 成功 → 解析
+        try {
+            auto j = nlohmann::json::parse(res->body);
+            return j.get<LLMResponse>();
+        } catch (const nlohmann::json::exception& e) {
+            last_error_ = e.what();
+            spdlog::error("[LLMClient] JSON 解析失败: {}", e.what());
+            throw std::runtime_error("API 响应解析失败: " + std::string(e.what()));
+        }
     }
 
-    // HTTP 错误
-    if (res->status != 200) {
-        auto err = parseApiError(res->status, res->body);
-        last_error_ = err;
-        spdlog::error("[LLMClient] API 错误 ({}): {}", res->status, err);
-        throw std::runtime_error("API 错误: " + err);
-    }
-
-    // 解析 JSON 响应 → LLMResponse
-    try {
-        auto j = nlohmann::json::parse(res->body);
-        return j.get<LLMResponse>();
-    } catch (const nlohmann::json::exception& e) {
-        last_error_ = e.what();
-        spdlog::error("[LLMClient] JSON 解析失败: {}", e.what());
-        throw std::runtime_error("API 响应解析失败: " + std::string(e.what()));
-    }
+    throw std::runtime_error("LLM 请求失败: 超过最大重试次数");
 }
 
 // ===========================================================================

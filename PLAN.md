@@ -1,6 +1,6 @@
 # NovelAgent CLI -- 细化实现计划
 
-> 版本: 3.4 | 更新时间: 2026-05-31 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 ✓ | Phase 3 待实施（14 步）
+> 版本: 3.5 | 更新时间: 2026-06-09 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 ✓ | Phase 3 ✓ (核心完成) | Phase 5 新增 3 步
 
 ## 背景
 
@@ -923,7 +923,7 @@ struct SubTask {
 
 ### Phase 5: 打磨
 
-> 状态: **待实施** | 预计: 6 个步骤 | 依赖: Phase 3 + Phase 4
+> 状态: **待实施** | 预计: 9 个步骤（原 6 步 + 新增状态机/参数校验/执行轨迹 3 步）| 依赖: Phase 3 + Phase 4
 
 #### Step 5.1: ANSI 颜色输出
 **修改**: `src/cli/StreamDisplay.cpp`
@@ -943,10 +943,68 @@ struct SubTask {
 **修改**: `src/main.cpp`, `src/agent/Agent.cpp`
 
 - 未捕获异常自动保存项目
-- LLM 调用超时的重试逻辑（最多 3 次）
+- LLM 调用超时的重试逻辑（最多 3 次）✅ 已在 Phase 3 中提前实现（LLMClient 指数退避重试, 429/502/503 + 网络错误）
 - 磁盘写入失败的友好提示
+- Agent 崩溃时的状态恢复（加载上次 conversation）
 
-#### Step 5.4: Markdown 渲染（基础）
+#### Step 5.4: Agent 显式状态机
+**新建/修改**: `src/agent/AgentState.h`, `src/agent/Agent.cpp`
+
+- 定义显式 Agent 状态枚举：
+  ```cpp
+  enum class AgentState {
+      Idle,           // 等待用户输入
+      Thinking,       // LLM 思考中（流式输出）
+      AwaitingTool,   // 工具执行中
+      WaitingUser,    // 等待用户确认（Plan Mode / 危险操作确认）
+      Error,          // 错误状态（可恢复）
+      Fatal           // 不可恢复错误
+  };
+  ```
+- `Agent::processUserMessage()` 中更新状态转换
+- 状态转换日志：`spdlog::info("[Agent] {} → {}", oldState, newState)`
+- StreamDisplay 根据状态切换界面提示（如 `Thinking...`、`Executing tool...`）
+- Phase 3.5 的 SubAgent 可复用状态机（独立实例、独立状态）
+
+**验证**: 编译通过 + 状态转换日志输出
+
+#### Step 5.5: 工具参数 Schema 校验
+**新建/修改**: `src/agent/ToolPipeline.h`, `src/agent/ToolRegistry.cpp`
+
+- 在 `ToolPipeline::executeOne()` 中，执行工具前根据 `ToolDefinition::parameters` JSON Schema 校验 LLM 传入的 `arguments`
+- 校验内容：
+  - required 字段是否存在
+  - 字段类型是否匹配（string/integer/boolean/array）
+  - string 枚举值是否在允许范围内
+- 校验失败时返回结构化错误：`{"error": "参数校验失败", "details": [{"field": "chapter_id", "reason": "缺少必填字段"}]}`
+- 校验通过后再调用工具执行
+- 注意：`additionalProperties: false` → 拒绝 LLM 传入的额外字段（记录 warning 日志但不阻断）
+
+**验证**: 编译通过 + `test_tool_registry` 新增参数校验测试
+
+#### Step 5.6: Agent 执行轨迹记录
+**新建**: `src/agent/ExecutionTracer.h`
+
+- 结构化记录每次 Agent 决策步骤：
+  ```cpp
+  struct TraceEntry {
+      std::string timestamp;
+      int step_index;
+      std::string event_type;    // "user_input" | "llm_call" | "tool_call" | "tool_result" | "llm_response"
+      nlohmann::json payload;     // 事件详情（不含完整章节内容，只含摘要）
+      int tokens_used;
+      int duration_ms;
+  };
+  ```
+- `ExecutionTracer` 类：
+  - `record(TraceEntry)` → 追加到内存 trace 列表
+  - `dump(path)` → 保存为 `.novelagent/traces/{session_id}.jsonl`
+  - 每条记录一行 JSON，支持流式追加和回放
+- 在 `Agent::processUserMessage()` 和 `ToolPipeline::executeAndAppend()` 中插入 trace 记录点
+- `/trace show` 命令在 REPL 中展示最近 N 步
+- 用于调试：回放 Agent 的完整决策过程，分析工具调用成功率、token 消耗趋势
+
+**验证**: 编译通过 + REPL 中 `/trace show` 输出最近步骤
 **修改**: `src/cli/StreamDisplay.cpp`
 
 - 检测 LLM 输出中的 Markdown 格式（`**粗体**`, `*斜体*`, 代码块）
