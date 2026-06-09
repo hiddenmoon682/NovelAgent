@@ -1,5 +1,25 @@
 # 已修复问题记录
 
+## 第六轮审查（2026-06-09） — 暂缓项集中修复
+
+Phase 3.5 完成后触发条件满足，修复了 4 个暂缓项：
+
+### #1 Project& → shared_ptr ✅
+22 个文件修改。所有工具类从 Project& 裸引用改为 std::shared_ptr<Project>。
+BuiltInTool::Factory 签名更新，REGISTER_TOOL 宏适配。
+
+### #3 Update 风格统一 ✅
+SettingTools/WorldRuleTools 从 if-else 链改为指针到成员 map。
+
+### #4 execute() 集成 ContextManager ✅
+Agent::execute() 在 --exec 模式中也使用 ContextManager 组装 system prompt。
+
+### #2 ShellTools 超时 ⏭ 暂缓
+添加 TODO，Phase 5 迁移到 CreateProcess。
+
+---
+
+
 > 创建时间: 2026-05-29
 > 用途: 记录已排查并修复的问题，按时间倒序排列
 >
@@ -71,9 +91,9 @@
 
 **修复**: `budget <= 0` 时返回空列表并设置 `truncated_count`，不再返回无法容纳的全部消息。
 
-### #5 ChapterTools 持有 Project& 裸引用 🔵 暂缓
+### #5 ChapterTools 持有 Project& 裸引用 ✅ 已修复（第六轮）
 
-**决定**: 当前生命周期一致，无实际触发路径。在 `BuiltInTool` 文档中标注生命周期约束。等 Phase 3.5 多 Agent 并行编排时重新评估。
+**修复**: 22 个文件修改，所有工具类从 `Project&` 改为 `std::shared_ptr<Project>`。Phase 3.5 完成后触发条件满足。
 
 ### #6 CreateChapter 部分保存风险 ✅
 
