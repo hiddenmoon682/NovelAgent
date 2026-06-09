@@ -42,6 +42,7 @@ set(LIB_SOURCES
     src/utils/FileUtils.cpp
     src/utils/StringUtils.h
     src/utils/JsonUtils.h
+    src/utils/SchemaUtils.h
 
     src/project/Models.h
     src/project/ProjectIO.h
@@ -65,6 +66,10 @@ set(LIB_SOURCES
 
     src/cli/ReplHandler.h
     src/cli/ReplHandler.cpp
+
+    src/agent/tools/BuiltInTool.h
+    src/agent/ToolRegistry.h
+    src/agent/ToolRegistry.cpp
 )
 
 add_library(novelagent_lib OBJECT ${LIB_SOURCES})

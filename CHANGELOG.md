@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026-06-08] Phase 3.1 — ToolRegistry + 内置工具架构
+
+- **新增** — `src/agent/tools/BuiltInTool.h`：工具抽象基类 + `ToolCategory` 枚举（7 个类别）+ `toDefinition()` 转换
+- **新增** — `src/utils/SchemaUtils.h`：JSON Schema 构建辅助（`object` / `stringProp` / `integerProp` / `booleanProp` / `stringEnum` 等）
+- **新增** — `src/agent/ToolRegistry.h/.cpp`：工具注册中心，支持 `registerTool()`（函数式）和 `registerBuiltInTool()`（类式）两种注册方式
+- **新增** — `tests/test_tool_registry.cpp`：8 个测试（函数式/类式注册、执行、ToolDefinition 输出、错误处理、分类查询、SchemaUtils）
+- 影响范围：`src/agent/`、`src/utils/SchemaUtils.h`、`CMakeLists.txt`、`tests/CMakeLists.txt`
+- 测试统计：8/8 全部通过（新增 1 个测试目标）
+
 ## [2026-06-08] 新增 LLM 请求→响应流程图文档
 
 - **新增** — `docs/diagrams/` 目录：存放流程图和架构图

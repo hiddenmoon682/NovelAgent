@@ -57,6 +57,13 @@ target_link_libraries(test_llm_client PRIVATE novelagent_lib)
 add_test(NAME test_llm_client COMMAND test_llm_client)
 target_precompile_headers(test_llm_client REUSE_FROM novelagent_lib)
 
+add_executable(test_tool_registry
+    test_tool_registry.cpp
+)
+target_link_libraries(test_tool_registry PRIVATE novelagent_lib)
+add_test(NAME test_tool_registry COMMAND test_tool_registry)
+target_precompile_headers(test_tool_registry REUSE_FROM novelagent_lib)
+
 # ── 测试运行时依赖标注 ──
 # MSYS2 包（spdlog、fmt、OpenSSL）默认安装动态库，
 # 测试 exe 运行时需要 DLL 在 PATH 中。追加 MSYS2 的 bin 目录。
@@ -65,6 +72,7 @@ target_precompile_headers(test_llm_client REUSE_FROM novelagent_lib)
 if(EXISTS "D:/SoftWare/msys2/mingw64/bin")
     set_property(TEST test_main test_models test_project_io test_prompt_context
                       test_token_counter test_sse_parser test_llm_client
+                      test_tool_registry
         APPEND PROPERTY ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:D:/SoftWare/msys2/mingw64/bin")
 endif()
