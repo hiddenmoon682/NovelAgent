@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026-06-09] Step 3.1-3.4 代码审查修复
+
+- **修复** — Agent 集成 ContextManager：`runToolLoop` 每次 LLM 调用前做 token 预算截断（可选，通过 `setContextManager()` 启用）
+- **修复** — `ListChaptersTool` 不再逐章读取文件（100 章 = 省 100 次磁盘 I/O），改为只返回元数据
+- **修复** — 删除 `countWords()` 重复实现（与 `TokenCounter` 功能重复且算法不一致）
+- **修复** — `CreateChapterTool` 只保存 `outline.json` 而非全部 6 个 JSON 文件
+- **修复** — Agent 新增 `setContextWindow()` 配置入口
+- 测试统计：11/11 全部通过
+
 ## [2026-06-08] Phase 3.4 — Chapter 工具（5 个）
 
 - **新增** — `src/agent/tools/ChapterTools.h/.cpp`：5 个章节操作工具类

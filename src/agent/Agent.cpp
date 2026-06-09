@@ -1,4 +1,5 @@
 #include "agent/Agent.h"
+#include "agent/ContextManager.h"
 
 #include <spdlog/spdlog.h>
 #include <stdexcept>
@@ -87,9 +88,20 @@ llm::LLMResponse Agent::runToolLoop(llm::StreamCallbacks callbacks)
 {
     auto tools = registry_.getToolDefinitions();
 
+    // 若设置了 ContextManager，做 token 预算截断
+    auto effective_messages = conversation_.messages();
+    if (context_manager_) {
+        auto assembly = context_manager_->assemble(
+            conversation_, context_window_);
+        effective_messages = std::move(assembly.messages);
+        if (!assembly.system_prompt.empty()) {
+            system_prompt_ = assembly.system_prompt;
+        }
+    }
+
     // 首轮：流式调用（用户看到实时 token 输出）
     auto response = client_.chat(
-        conversation_.messages(),
+        effective_messages,
         tools,
         system_prompt_,
         std::move(callbacks)
@@ -112,8 +124,19 @@ llm::LLMResponse Agent::runToolLoop(llm::StreamCallbacks callbacks)
         executeToolCallsAndAppend(response.tool_calls);
 
         // 工具结果后的 LLM 调用使用非流式
+        // 再次做预算截断（对话已增长）
+        effective_messages = conversation_.messages();
+        if (context_manager_) {
+            auto assembly = context_manager_->assemble(
+                conversation_, context_window_);
+            effective_messages = std::move(assembly.messages);
+            if (!assembly.system_prompt.empty()) {
+                system_prompt_ = assembly.system_prompt;
+            }
+        }
+
         response = client_.chatNonStreaming(
-            conversation_.messages(),
+            effective_messages,
             tools,
             system_prompt_
         );

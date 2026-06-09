@@ -1,6 +1,7 @@
 #include "agent/tools/ChapterTools.h"
 
 #include "project/ProjectIO.h"
+#include "utils/FileUtils.h"
 #include "utils/SchemaUtils.h"
 
 #include <algorithm>
@@ -22,34 +23,6 @@ const Chapter* findChapter(const std::vector<Chapter>& chapters,
     auto it = std::find_if(chapters.begin(), chapters.end(),
         [&](const Chapter& ch) { return ch.id == chapter_id; });
     return (it != chapters.end()) ? &(*it) : nullptr;
-}
-
-/// 统计章节字数（中文字符 + 英文单词）
-int countWords(const std::string& text) {
-    if (text.empty()) return 0;
-    // 简单统计：按空白切分
-    int count = 0;
-    for (size_t i = 0; i < text.size(); ++i) {
-        // 统计 CJK 字符
-        unsigned char c = static_cast<unsigned char>(text[i]);
-        if (c >= 0x80) {
-            // 多字节 UTF-8 CJK 字符
-            if ((c & 0xE0) == 0xE0 && i + 2 < text.size()) {
-                // 3 字节序列: CJK 通常在此范围 (U+4E00-U+9FFF)
-                count++;
-                i += 2;
-            } else if ((c & 0xC0) == 0xC0 && i + 1 < text.size()) {
-                i += 1;
-                count++;
-            }
-        } else if (c == ' ' || c == '\n' || c == '\t') {
-            count++; // 空白也分开计数
-        } else if (std::isalpha(c)) {
-            count++; // 英文（累积到单词级不够精确，简化为字符级）
-        }
-    }
-    // 粗略换算：~3 字符 = 1 英文单词
-    return std::max(1, count / 3);
 }
 
 } // namespace
@@ -155,12 +128,12 @@ json ListChaptersTool::parameters() const {
 json ListChaptersTool::execute(const json& /*args*/) {
     json chapters = json::array();
     for (const auto& ch : project_.outline.chapters) {
-        std::string content = ProjectIO::readChapter(project_.path, ch.file_path);
         chapters.push_back({
             {"id", ch.id},
             {"title", ch.title},
             {"order", ch.order},
-            {"word_count", countWords(content)}
+            {"file_path", ch.file_path},
+            {"synopsis", ch.synopsis}
         });
     }
 
@@ -213,11 +186,11 @@ json CreateChapterTool::execute(const json& args) {
     // 生成文件路径（用章节 ID 而非标题，避免 Windows 窄字符 API 下 UTF-8 路径问题）
     new_ch.file_path = "chapters/" + new_ch.id + ".md";
 
-    // 添加到 outline 并保存
+    // 添加到 outline 并仅保存 outline.json（避免覆盖用户对其它文件的修改）
     project_.outline.chapters.push_back(new_ch);
-
-    // 保存 outline.json
-    ProjectIO::save(project_);
+    ProjectIO::saveJsonFile(
+        utils::file::joinPath(project_.path, "outline.json"),
+        nlohmann::json(project_.outline));
 
     // 写入空的章节文件
     std::string init_content = "# " + title + "\n\n";

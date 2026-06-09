@@ -8,6 +8,9 @@
 
 namespace agent {
 
+// 前向声明
+class ContextManager;
+
 /// 核心 Agent — 接收用户输入，编排 LLM 调用与工具执行。
 ///
 /// 职责：
@@ -41,6 +44,14 @@ public:
     /// 设置最大 tool call 循环轮数（默认 10）。
     /// 超过此轮数后强制退出循环，返回最近的 LLM 响应。
     void setMaxToolRounds(int n);
+
+    /// 设置上下文管理器（可选）。
+    /// 设置后，每次 LLM 调用前会自动做 token 预算截断。
+    /// 不设置则使用完整对话历史（行为与之前一致）。
+    void setContextManager(ContextManager* cm) { context_manager_ = cm; }
+
+    /// 设置上下文窗口大小（默认 65536），供 ContextManager 做预算计算。
+    void setContextWindow(int window) { context_window_ = window; }
 
     // ================================================================
     // 核心 API
@@ -89,6 +100,8 @@ private:
     llm::Conversation conversation_;
     std::string system_prompt_;
     int max_tool_rounds_ = 10;
+    ContextManager* context_manager_ = nullptr;
+    int context_window_ = 65536;
 
     /// 调用 LLM + 检查 tool_calls，循环执行直到 LLM 不再请求工具。
     /// @return 最终的 LLM 响应（不含 tool_calls 的那条）
