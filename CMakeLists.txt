@@ -70,6 +70,8 @@ set(LIB_SOURCES
     src/agent/tools/BuiltInTool.h
     src/agent/ToolRegistry.h
     src/agent/ToolRegistry.cpp
+    src/agent/Agent.h
+    src/agent/Agent.cpp
 )
 
 add_library(novelagent_lib OBJECT ${LIB_SOURCES})

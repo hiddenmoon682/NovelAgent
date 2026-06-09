@@ -1,5 +1,15 @@
 # Changelog
 
+## [2026-06-08] Phase 3.2 — Agent 核心循环
+
+- **新增** — `src/agent/Agent.h/.cpp`：核心 Agent 类，实现 `processUserMessage()` 和 `execute()` 两种入口
+- **新增** — Tool call 循环：LLM 请求工具 → Agent 执行 → 回传结果 → 再次调用 LLM（最多 10 轮）
+- **新增** — 首轮流式 + 后续非流式的混合调用策略（用户看到实时输出，工具循环节省开销）
+- **新增** — 对话历史自动管理：用户消息、assistant 回复、tool 结果自动追加到 Conversation
+- **新增** — `tests/test_agent.cpp`：5 个 Mock HTTP 测试（简单对话、tool call 循环、execute 模式、对话管理、空输入）
+- 影响范围：`src/agent/Agent.h`、`src/agent/Agent.cpp`、`tests/test_agent.cpp`、`CMakeLists.txt`、`tests/CMakeLists.txt`
+- 测试统计：9/9 全部通过（新增 1 个测试目标）
+
 ## [2026-06-08] Phase 3.1 — ToolRegistry + 内置工具架构
 
 - **新增** — `src/agent/tools/BuiltInTool.h`：工具抽象基类 + `ToolCategory` 枚举（7 个类别）+ `toDefinition()` 转换
