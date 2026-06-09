@@ -150,8 +150,10 @@ void Agent::executeToolCallsAndAppend(
             } catch (const nlohmann::json::parse_error& e) {
                 spdlog::error("[Agent] 工具参数 JSON 解析失败: {} — args='{}'",
                               e.what(), tc.arguments);
-                conversation_.addToolResult(tc.id,
-                    R"({"error": "参数 JSON 解析失败: )" + std::string(e.what()) + R"("})");
+                nlohmann::json err = {
+                    {"error", std::string("参数 JSON 解析失败: ") + e.what()}
+                };
+                conversation_.addToolResult(tc.id, err.dump());
                 continue;
             }
         }
