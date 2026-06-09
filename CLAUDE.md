@@ -143,6 +143,36 @@
 
 ---
 
+---
+
+## C++ 专项规则
+
+### RAII — 所有资源必须由类管理
+- 文件句柄：`std::unique_ptr<FILE, decltype(&_pclose)>`（见 `ShellTools.cpp`）
+- 互斥锁 + 容器：封装为 RAII 类（见 `ConnectionCache` in `LLMClient.cpp`）
+- 临时目录/文件：构造创建、析构清理（见测试中的 `TestProject`）
+- 输出通道所有权：`std::unique_ptr<IOutputChannel>`（见 `NovelAgentApp`）
+- **禁止**：裸 `new`/`delete`、裸 `malloc`/`free`、全局 `std::mutex` + `std::unordered_map` 散落
+
+### 虚接口 vs 模板
+- **运行时多态用虚接口**：`ILLMClient`, `BuiltInTool`, `IOutputChannel`, `IProjectReader`, `IStorageBackend`
+- **回调用 `std::function`**（类型擦除）：`StreamCallbacks`, `ToolRegistry` 的 fn
+- **不要为"未来可能的扩展"添加虚接口**（`ContextManager` 当前无虚方法，Phase 4 需要时再加）
+- **模板在本项目中仅用于**：`SchemaUtils` builder、nlohmann 的 `to_json`/`from_json` ADL
+
+### Pimpl — 判断标准
+- **考虑 Pimpl**：类被 10+ 个翻译单元包含 且 有 5+ 个重型 include 且 频繁修改
+- **当前不需要**：`NovelAgentApp`（仅 2 个消费者）、`Agent`（已通过前向声明优化）、`ToolRegistry`（`vector<unique_ptr>` 无法 Pimpl 不引入额外分配）
+- **已通过其他方式优化**：声明/实现分离（`ToolPipeline.h`→`.cpp`）、前向声明替代 include（`Agent.h` 中 `ToolRegistry`）
+
+### 编译依赖最小化
+- `nlohmann/json_fwd.hpp` 可用于头文件（仅需前向声明时），`nlohmann/json.hpp` 限 `.cpp`
+- 前向声明优先级：class/struct → `json_fwd.hpp` → 轻型 STL（`<string>`）→ 重型三方库 → PCH 中的头文件
+- 构建时用 Ninja（自动检测），不要切换回 Makefiles
+- 不要把实现细节（spdlog 调用、nlohmann 构造）放在头文件的 inline 函数中
+
+---
+
 ## 参考文档
 
 | 文档 | 内容 |
