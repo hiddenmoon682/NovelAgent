@@ -140,12 +140,20 @@ std::vector<llm::Message> ContextManager::truncateMessages(
         return messages;
     }
 
-    // 从头部（最旧）开始移除，每次移除后重新计算（保证与 countMessages 公式一致）
-    std::vector<llm::Message> result = messages;
-    while (!result.empty() && llm::TokenCounter::countMessages(result) > budget) {
-        result.erase(result.begin());
-        ++truncated_count;
+    // 从尾部（最新消息）向前构建结果，O(n) 单次遍历。
+    // 每轮 LLM 调用最需要的是最近的消息（当前对话上下文），
+    // 旧消息最先被丢弃。
+    std::vector<llm::Message> result;
+    int used = 0;
+    for (auto it = messages.rbegin(); it != messages.rend(); ++it) {
+        int msg_cost = llm::TokenCounter::countMessages({*it});
+        if (used + msg_cost > budget) break;
+        used += msg_cost;
+        result.push_back(*it);
     }
+    // 反转为原始顺序（旧→新）
+    std::reverse(result.begin(), result.end());
+    truncated_count = static_cast<int>(messages.size()) - static_cast<int>(result.size());
 
     // 确保至少保留最后一条消息（通常是用户的最后输入）
     if (result.empty() && !messages.empty()) {

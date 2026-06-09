@@ -81,24 +81,6 @@ static std::string nonStreamJson(const std::string& content,
     return j.dump();
 }
 
-/// 构造非流式 JSON 响应（含 tool_calls）。
-static std::string nonStreamToolCalls(const std::vector<json>& tool_calls) {
-    json j;
-    j["id"] = "chatcmpl-test";
-    j["model"] = "test-model";
-    json msg;
-    msg["role"] = "assistant";
-    msg["content"] = nullptr;
-    msg["tool_calls"] = tool_calls;
-    j["choices"] = json::array({{
-        {"index", 0},
-        {"message", msg},
-        {"finish_reason", "tool_calls"}
-    }});
-    j["usage"] = {{"prompt_tokens", 10}, {"completion_tokens", 5}, {"total_tokens", 15}};
-    return j.dump();
-}
-
 // =========================================================================
 // 测试 1: 简单对话（无工具调用）
 // =========================================================================
@@ -153,7 +135,7 @@ void test_tool_call_loop() {
 
     // 状态跟踪：第一次调用返回 tool_calls，第二次返回文本
     int call_count = 0;
-    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
+    server.svr.Post("/v1/chat/completions", [&](const httplib::Request&,
                                                  httplib::Response& res) {
         call_count++;
         if (call_count == 1) {

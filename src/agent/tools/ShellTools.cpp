@@ -25,9 +25,11 @@ namespace {
 bool isDangerousCommand(const std::string& cmd) {
     // 破坏性 cmdlet（含常见 PowerShell 缩写/别名）
     static const std::set<std::string> blocked = {
-        // 删除/清理操作
-        "remove-item", "ri ", "rm ", "del ", "rmdir", "rd ", "rdr ",
+        // 删除/清理操作（含尾随空格防止误匹配，如 "rm " 不匹配 "rmdir"）
+        "remove-item", "ri ", "rm ", "rm\t", "del ", "rd ", "rdr ",
         "erase", "delete", "clear-content", "clear-item",
+        // 裸关键词（LLM 可能直接输出不带空格的命令）
+        "rmdir", "diskpart",
         // 格式化/磁盘操作
         "format", "diskpart", "initialize-disk", "clear-disk",
         // 进程/服务操作

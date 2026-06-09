@@ -2,7 +2,6 @@
 #include "agent/ContextManager.h"
 
 #include <spdlog/spdlog.h>
-#include <stdexcept>
 
 namespace agent {
 
@@ -82,25 +81,11 @@ llm::LLMResponse Agent::runToolLoop(llm::StreamCallbacks callbacks)
 {
     auto tools = registry_.getToolDefinitions();
 
-    // 组装有效的 system prompt（人格提示词 + 可选的上下文提示词）
-    std::string effective_prompt = system_prompt_;
-    auto effective_messages = conversation_.messages();
-    if (context_manager_) {
-        auto assembly = context_manager_->assemble(
-            conversation_, context_window_);
-        effective_messages = std::move(assembly.messages);
-        if (!assembly.system_prompt.empty()) {
-            effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
-        }
-    }
-
     // 首轮：流式调用（用户看到实时 token 输出）
+    std::vector<llm::Message> effective_messages;
+    auto effective_prompt = buildEffectivePrompt(effective_messages);
     auto response = client_.chat(
-        effective_messages,
-        tools,
-        effective_prompt,
-        std::move(callbacks)
-    );
+        effective_messages, tools, effective_prompt, std::move(callbacks));
 
     // 后续轮次：非流式调用 + 工具执行循环
     for (int round = 0; round < max_tool_rounds_; ++round) {
@@ -112,35 +97,30 @@ llm::LLMResponse Agent::runToolLoop(llm::StreamCallbacks callbacks)
         spdlog::info("[Agent] LLM 请求 {} 个工具调用 (round={})",
                      response.tool_calls.size(), round);
 
-        // 将 assistant 消息（含 tool_calls）加入对话
         conversation_.add(makeAssistantMessage(response));
-
-        // 执行工具并将结果加入对话
         executeToolCallsAndAppend(response.tool_calls);
 
-        // 工具结果后的 LLM 调用使用非流式
-        // 再次做预算截断（对话已增长）+ 组装 system prompt
-        effective_messages = conversation_.messages();
-        effective_prompt = system_prompt_;
-        if (context_manager_) {
-            auto assembly = context_manager_->assemble(
-                conversation_, context_window_);
-            effective_messages = std::move(assembly.messages);
-            if (!assembly.system_prompt.empty()) {
-                effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
-            }
-        }
-
+        // 工具结果后再次做预算截断（对话已增长）
+        effective_prompt = buildEffectivePrompt(effective_messages);
         response = client_.chatNonStreaming(
-            effective_messages,
-            tools,
-            effective_prompt
-        );
+            effective_messages, tools, effective_prompt);
     }
 
-    // 超过最大轮数 → 返回最后一次响应（即使仍有 tool_calls）
     spdlog::warn("[Agent] 达到最大 tool call 轮数 ({})，强制退出", max_tool_rounds_);
     return response;
+}
+
+std::string Agent::buildEffectivePrompt(std::vector<llm::Message>& out_messages)
+{
+    out_messages = conversation_.messages();
+    if (!context_manager_) return system_prompt_;
+
+    auto assembly = context_manager_->assemble(
+        conversation_, context_window_);
+    out_messages = std::move(assembly.messages);
+
+    if (assembly.system_prompt.empty()) return system_prompt_;
+    return system_prompt_ + "\n\n" + assembly.system_prompt;
 }
 
 // ===========================================================================
