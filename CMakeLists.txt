@@ -76,8 +76,11 @@ set(CORE_SOURCES
     src/retrieval/NovelChunker.h
     src/retrieval/NovelChunker.cpp
 
+    src/cli/AnsiTerminal.h
     src/cli/IOutputChannel.h
     src/cli/ConsoleOutput.h
+    src/cli/TerminalGUI.h
+    src/cli/TerminalGUI.cpp
 
     src/agent/ToolRegistry.h
     src/agent/ToolRegistry.cpp
@@ -99,6 +102,12 @@ set(CORE_SOURCES
     src/agent/IMessageProcessor.cpp
     src/agent/ISynthesisStrategy.h
     src/agent/ISynthesisStrategy.cpp
+    src/agent/AgentState.h
+    src/agent/AgentState.cpp
+    src/agent/ParameterValidator.h
+    src/agent/ParameterValidator.cpp
+    src/agent/ExecutionTracer.h
+    src/agent/ExecutionTracer.cpp
     src/agent/ContextManager.h
     src/agent/ContextManager.cpp
     src/agent/Agent.h

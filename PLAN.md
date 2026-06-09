@@ -1,6 +1,6 @@
 # NovelAgent CLI -- 细化实现计划
 
-> 版本: 4.0 | 更新时间: 2026-06-09 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 ✓ | Phase 3 ✓ (核心完成) | Phase 3.5 ✓ | Phase 4 ✓ | Phase 5 待实施
+> 版本: 5.0 | 更新时间: 2026-06-10 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 ✓ | Phase 3 ✓ | Phase 3.5 ✓ | Phase 4 ✓ | Phase 5 ✓
 
 ## 背景
 
@@ -921,9 +921,56 @@ struct SubTask {
 
 ---
 
-### Phase 5: 打磨
+### Phase 5: 打磨 + 终端 GUI
 
-> 状态: **待实施** | 预计: 9 个步骤（原 6 步 + 新增状态机/参数校验/执行轨迹 3 步）| 依赖: Phase 3 + Phase 4
+> 状态: **已完成** ✅ | 7 个步骤 + 终端 GUI | 依赖: Phase 3 + Phase 4
+
+#### 终端 GUI（Claude Code CLI 风格）
+
+NovelAgent 拥有类 Claude Code 的终端交互界面，通过 ANSI 转义码实现丰富的可视化体验：
+
+**颜色主题（语义化角色区分）：**
+- 助手回复：绿色（`Ansi::assistant()`）
+- 用户输入：蓝色加粗（`Ansi::userInput()`）
+- 工具调用：灰色（`Ansi::toolCall()`）
+- 思考链：暗灰色（`Ansi::thinking()`）
+- 错误：红色（`Ansi::error()`）
+- 警告：黄色（`Ansi::warning()`）
+- 标题：亮白色加粗（`Ansi::title()`）
+
+**界面布局：**
+```
+┌─ NovelAgent v0.3.0 — AI 写小说助手 ───────────────┐
+│                                                      │
+│  Serial | 项目: 我的小说 | 1500 tokens               │  ← 状态栏
+│                                                      │
+│  > 请帮我写第三章的开场段落                           │  ← 用户输入（蓝色）
+│                                                      │
+│  好的，让我先读取当前大纲和第二章的结尾...            │  ← 助手回复（绿色）
+│                                                      │
+│  [工具调用] read_chapter                             │  ← 工具调用（灰色）
+│  (3200 tokens)                                       │  ← token 统计（暗灰色）
+│                                                      │
+└──────────────────────────────────────────────────────┘
+```
+
+**核心组件：**
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| `AnsiTerminal` | `src/cli/AnsiTerminal.h` | ANSI 转义码工具库（颜色/样式/光标/语义主题） |
+| `TerminalGUI` | `src/cli/TerminalGUI.h/.cpp` | 终端 GUI 控制器（主题输出/状态栏/进度/Markdown渲染/历史） |
+| `StreamDisplay` | `src/cli/StreamDisplay.h/.cpp` | 流式输出 + ANSI 主题包装（Phase 5 重写） |
+| `ReplHandler` | `src/cli/ReplHandler.h/.cpp` | REPL 主循环 + 命令系统 + Tab 补全（Phase 5 重写） |
+
+**Markdown 终端渲染：**
+- `**粗体**` → ANSI 粗体转义码
+- `*斜体*` → ANSI 斜体转义码
+- 代码块 → 灰色背景
+- 渲染集成在 `TerminalGUI::renderMarkdown()` 中，流式输出时自动应用
+
+**Windows 兼容性：**
+- 程序启动时 `Ansi::enableWindowsAnsi()` 调用 `SetConsoleMode(ENABLE_VIRTUAL_TERMINAL_PROCESSING)`
+- Windows 10 1607+ 原生支持，旧版 Windows 退化显示纯文本
 
 #### Step 5.1: ANSI 颜色输出
 **修改**: `src/cli/StreamDisplay.cpp`
@@ -1060,5 +1107,5 @@ Phase 0 (骨架) ✓ 完成
 | Phase 3 | 12 steps | ✓ 核心完成 |
 | Phase 3.5 | 9 steps | ✓ 已完成 |
 | Phase 4 | 9 steps | ✓ 已完成 |
-| Phase 5 | 9 steps | ○ 待实施 |
-| **总计** | **35+ steps** | Phase 0-4 done, Phase 5 remaining |
+| Phase 5 | 7 steps + 终端GUI | ✓ 已完成 |
+| **总计** | **35+ steps** | Phase 0-5 全部完成 ✅ |

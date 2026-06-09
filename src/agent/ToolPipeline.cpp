@@ -1,4 +1,5 @@
 #include "agent/ToolPipeline.h"
+#include "agent/ParameterValidator.h"
 
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -28,6 +29,19 @@ std::string ToolPipeline::executeOne(const llm::ToolCall& tc)
                 {"error", std::string("参数 JSON 解析失败: ") + e.what()}
             };
             return err.dump();
+        }
+    }
+
+    // Phase 5.5: 参数 Schema 校验
+    auto tool_defs = registry_.getToolDefinitions();
+    for (const auto& def : tool_defs) {
+        if (def.name == tc.function_name) {
+            auto validation = ParameterValidator::validate(def.parameters, args);
+            if (!validation.valid) {
+                spdlog::warn("[ToolPipeline] 参数校验失败: {}", tc.function_name);
+                return validation.toJson().dump();
+            }
+            break;
         }
     }
 

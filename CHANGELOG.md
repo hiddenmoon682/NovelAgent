@@ -1,5 +1,47 @@
 # Changelog
 
+## [2026-06-10] Phase 5 — 打磨 + 终端 GUI (7步全部完成)
+
+- **5.1** — `AnsiTerminal.h`: 统一 ANSI 工具库（颜色/样式/光标/语义主题）
+  - Windows `SetConsoleMode` 自动启用 ANSI 支持
+  - 语义化颜色：assistant(绿)/userInput(蓝)/toolCall(灰)/thinking(暗)/error(红)/warning(黄)
+- **5.2** — Tab 补全 + 4 个新斜杠命令:
+  - `/status` — 项目统计（章节/角色/设定/字数/对话）
+  - `/config <key> <value>` — 运行时配置（context_window, max_tool_rounds）
+  - `/export` — 导出所有章节为单个 Markdown 文件
+  - `/save` — 手动保存项目
+  - `/trace` — 执行轨迹查询
+  - Tab 补全：输入 `/` 后自动补全命令名
+- **5.3** — 错误恢复:
+  - main.cpp 最外层 try/catch（全局异常兜底）
+  - ReplHandler 自动保存（崩溃前保存项目）
+  - 磁盘写入失败的友好提示
+- **5.4** — `AgentState.h`: 显式状态机
+  - `AgentState` 枚举（Idle/Thinking/AwaitingTool/WaitingUser/Error/Fatal）
+  - `StateMachine` 类：状态转换 + 合法性检查 + 日志
+  - 状态名中文化（"就绪"/"思考中"/"执行工具"等）
+- **5.5** — `ParameterValidator.h/.cpp`: 工具参数 Schema 校验
+  - 必填字段检查、类型匹配（string/integer/boolean/array/enum）
+  - additionalProperties 检测（记录 warning 不阻断）
+  - 校验失败返回结构化 JSON 错误 `{"error":"...","details":[...]}`
+  - 集成到 `ToolPipeline::executeOne()` 执行前
+- **5.6** — `ExecutionTracer.h/.cpp`: Agent 执行轨迹记录
+  - `TraceEntry` 结构（timestamp/step_index/event_type/payload/tokens/duration）
+  - `dump()` 保存为 JSONL 格式到 `.novelagent/traces/`
+  - `summary()` 汇总统计（总步数/token/LLM调用/工具调用/错误）
+  - `recentSummary(n)` 最近 N 步文本摘要
+- **终端 GUI** — `TerminalGUI.h/.cpp`: Claude Code CLI 风格界面
+  - 语义化颜色主题（角色区分）
+  - 状态栏渲染（模式 | 项目 | token 用量）
+  - Markdown 渲染（**粗体**/*斜体* → ANSI 转义码）
+  - 进度指示器（旋转动画）
+  - 命令历史管理
+  - 标题/分隔线渲染
+- **修改** — StreamDisplay(重写-ANSI主题), ReplHandler(重写-GUI+命令), ToolPipeline(校验), NovelAgentApp(项目传递), main(ANSI+错误恢复)
+- **新增** — 11 个文件: AnsiTerminal, TerminalGUI, AgentState, ParameterValidator, ExecutionTracer
+- 测试统计: **14/14** 全部通过
+- **版本**: v0.3.0
+
 ## [2026-06-10] 架构深层重构 — 依赖倒置+策略模式+安全约束 (P0-P3)
 
 - **P0** — `ToolCallLoop`: 提取 Agent/SubAgent 中 ~90 行重复 tool call 循环为独立引擎
