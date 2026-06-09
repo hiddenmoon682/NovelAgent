@@ -1,11 +1,13 @@
 #include "cli/ReplHandler.h"
 #include "cli/StreamDisplay.h"
+#include "agent/AgentOrchestrator.h"
 
 #include <iostream>
 #include <string>
 
-ReplHandler::ReplHandler(agent::Agent& agent, IOutputChannel& out)
-    : agent_(agent), out_(out), parser_(out) {
+ReplHandler::ReplHandler(agent::Agent& agent, IOutputChannel& out,
+                         agent::AgentOrchestrator* orchestrator)
+    : agent_(agent), out_(out), parser_(out), orchestrator_(orchestrator) {
     setupCommands();
 }
 
@@ -95,12 +97,20 @@ void ReplHandler::run() {
 
         out_.write("\n");
         try {
-            auto callbacks = StreamDisplay::create(out_);
-            auto response = agent_.processUserMessage(input, callbacks);
-            if (response.finish_reason == "length") {
+            // 如果有 Orchestrator 且输入包含并行关键词，走并行编排
+            if (orchestrator_ && orchestrator_->isParallelEnabled() &&
+                (input.find("所有") != std::string::npos ||
+                 input.find("检查") != std::string::npos)) {
+                auto result = orchestrator_->processMessage(input);
+                out_.write(result + "\n");
+            } else {
+                auto callbacks = StreamDisplay::create(out_);
+                auto response = agent_.processUserMessage(input, callbacks);
+                if (response.finish_reason == "length") {
                 out_.write("\n  \033[33m[注意: 回复因长度限制被截断]\033[0m");
             } else if (response.finish_reason == "content_filter") {
                 out_.write("\n  \033[33m[注意: 部分内容因安全策略被过滤]\033[0m");
+            }
             }
             out_.write("\n");
         } catch (const std::exception& e) {

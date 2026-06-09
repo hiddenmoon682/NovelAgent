@@ -91,19 +91,24 @@ std::vector<SubTask> AgentOrchestrator::decompose(const std::string& input)
 
 void AgentOrchestrator::executeParallel(std::vector<SubTask>& tasks)
 {
-    std::vector<std::future<SubAgentResult>> futures;
+    // 使用索引追踪：futures 与 task 下标一一对应
+    std::vector<std::future<SubAgentResult>> futures(tasks.size());
+    int running = 0;  // 当前正在运行的子任务数
 
-    for (auto& task : tasks) {
-        if (static_cast<int>(futures.size()) >= max_parallel_) {
-            // 等待一个完成后再启动下一个
-            for (auto& f : futures) {
-                if (f.valid() && f.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-                    f.get();
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        // 节流：等待直到有空闲槽位
+        while (running >= max_parallel_) {
+            for (size_t j = 0; j < i; ++j) {
+                if (futures[j].valid() &&
+                    futures[j].wait_for(std::chrono::milliseconds(100)) == std::future_status::ready) {
+                    futures[j].get();
+                    --running;
+                    break;
                 }
             }
         }
 
-        futures.push_back(std::async(std::launch::async, [&, task]() {
+        futures[i] = std::async(std::launch::async, [this, task = tasks[i]]() {
             SubAgentConfig config;
             config.task = task.description;
             config.system_prompt = task.system_prompt;
@@ -113,10 +118,11 @@ void AgentOrchestrator::executeParallel(std::vector<SubTask>& tasks)
 
             SubAgent agent(client_, registry_);
             return agent.execute(config);
-        }));
+        });
+        ++running;
     }
 
-    // 收集结果
+    // 收集所有结果
     for (size_t i = 0; i < futures.size(); ++i) {
         auto result = futures[i].get();
         tasks[i].status = result.timed_out ? "timed_out" :

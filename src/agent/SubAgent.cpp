@@ -1,4 +1,5 @@
 #include "agent/SubAgent.h"
+#include "agent/ToolPipeline.h"
 #include "agent/ToolRegistry.h"
 
 #include <spdlog/spdlog.h>
@@ -46,11 +47,13 @@ SubAgentResult SubAgent::execute(const SubAgentConfig& config)
         SubAgentResult r;
 
         try {
-            // 首轮：非流式（子 Agent 不需要实时显示）
+            ToolPipeline pipeline(registry_, conversation_);
+
+            // 首轮：非流式
             auto response = client_.chatNonStreaming(
                 conversation_.messages(), tools, config.system_prompt);
 
-            // 简化的 tool call 循环
+            // 工具调用循环（复用 ToolPipeline）
             for (int round = 0; round < config.max_tool_rounds; ++round) {
                 if (response.tool_calls.empty()) {
                     r.output = response.content;
@@ -58,29 +61,18 @@ SubAgentResult SubAgent::execute(const SubAgentConfig& config)
                     return r;
                 }
 
-                // 追加 assistant 消息
+                // 追加 assistant 消息 + 通过 ToolPipeline 执行工具
                 llm::Message assistant;
                 assistant.role = llm::MessageRole::Assistant;
                 assistant.content = response.content;
                 assistant.tool_calls = response.tool_calls;
                 conversation_.add(assistant);
-
-                // 执行工具
-                for (const auto& tc : response.tool_calls) {
-                    nlohmann::json args;
-                    if (!tc.arguments.empty()) {
-                        try { args = nlohmann::json::parse(tc.arguments); }
-                        catch (...) { args = nlohmann::json::object(); }
-                    }
-                    auto toolResult = registry_.executeTool(tc.function_name, args);
-                    conversation_.addToolResult(tc.id, toolResult.dump());
-                }
+                pipeline.executeAndAppend(response.tool_calls);
 
                 response = client_.chatNonStreaming(
                     conversation_.messages(), tools, config.system_prompt);
             }
 
-            // 超过最大轮数
             r.output = response.content;
             spdlog::warn("[SubAgent] 达到最大轮数({})", config.max_tool_rounds);
         } catch (const std::exception& e) {

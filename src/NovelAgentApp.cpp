@@ -66,7 +66,7 @@ void NovelAgentApp::saveConversationIfNeeded(const llm::LLMResponse& /*response*
 
 void NovelAgentApp::runRepl(const std::string& welcomeMessage)
 {
-    ReplHandler repl(agent_, out_);
+    ReplHandler repl(agent_, out_, orchestrator_.get());
     if (!welcomeMessage.empty()) {
         repl.setWelcomeMessage(welcomeMessage);
     } else {
