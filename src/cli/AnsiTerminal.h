@@ -20,10 +20,16 @@ namespace Ansi {
 // 初始化
 // ============================================================================
 
-/// 在 Windows 上启用 ANSI 转义码支持。Linux/macOS 无需调用。
+/// 在 Windows 上启用 ANSI 转义码支持 + UTF-8 编码。Linux/macOS 无需调用。
 /// 应在程序启动时调用一次。
 inline void enableWindowsAnsi() {
 #ifdef _WIN32
+    // 设置 C 运行时为 UTF-8（解决 MinGW 中文输出乱码）
+    setlocale(LC_ALL, ".utf8");
+    // 设置控制台代码页为 UTF-8
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+    // 启用 ANSI 转义码处理
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     if (hOut != INVALID_HANDLE_VALUE) {
         DWORD mode = 0;
@@ -130,8 +136,8 @@ inline std::string statusBar()  { return bgBlue() + fgWhite(); }
 // ============================================================================
 
 /// 渲染水平分隔线。
-inline std::string hLine(int width = 60, char c = '─') {
-    return dim() + std::string(width, c) + reset() + "\n";
+inline std::string hLine(int width = 60) {
+    return dim() + std::string(width, '-') + reset() + "\n";
 }
 
 /// 渲染带颜色的标签 [标签]。
