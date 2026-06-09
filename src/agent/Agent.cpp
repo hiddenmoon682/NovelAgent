@@ -112,9 +112,12 @@ llm::LLMResponse Agent::runToolLoop(llm::StreamCallbacks callbacks)
 
 std::string Agent::buildEffectivePrompt(std::vector<llm::Message>& out_messages)
 {
-    out_messages = conversation_.messages();
-    if (!context_manager_) return system_prompt_;
+    if (!context_manager_) {
+        out_messages = conversation_.messages();
+        return system_prompt_;
+    }
 
+    // ContextManager 内部处理截断，避免提前拷贝全部消息
     auto assembly = context_manager_->assemble(
         conversation_, context_window_);
     out_messages = std::move(assembly.messages);

@@ -141,12 +141,11 @@ std::vector<llm::Message> ContextManager::truncateMessages(
     }
 
     // 从尾部（最新消息）向前构建结果，O(n) 单次遍历。
-    // 每轮 LLM 调用最需要的是最近的消息（当前对话上下文），
-    // 旧消息最先被丢弃。
+    // 使用 countSingleMessage 避免构造临时 vector<Message> 的开销。
     std::vector<llm::Message> result;
     int used = 0;
     for (auto it = messages.rbegin(); it != messages.rend(); ++it) {
-        int msg_cost = llm::TokenCounter::countMessages({*it});
+        int msg_cost = llm::TokenCounter::countSingleMessage(*it);
         if (used + msg_cost > budget) break;
         used += msg_cost;
         result.push_back(*it);
