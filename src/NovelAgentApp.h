@@ -6,6 +6,7 @@
 #include "agent/ToolRegistry.h"
 #include "config/AppConfig.h"
 #include "llm/LLMClient.h"
+#include "project/FileStorageBackend.h"
 #include "project/Models.h"
 
 #include "cli/IOutputChannel.h"
@@ -37,8 +38,9 @@ private:
     llm::LLMClient client_;
     agent::ToolRegistry registry_;
     agent::Agent agent_;
-    agent::ContextManager cm_;
     std::shared_ptr<Project> project_;
+    FileStorageBackend storage_;   // 必须在 cm_ 之前初始化
+    agent::ContextManager cm_;
     agent::TemplateManager template_mgr_;
 
     void setupAgent(const std::vector<std::string>& disabledTools);

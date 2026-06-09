@@ -1,15 +1,12 @@
-/// EmbeddingGenerator 实现 — HTTP POST 调用 OpenAI 兼容 embeddings API。
+/// EmbeddingGenerator 实现 — 委托 HttpClient 发送 HTTP 请求。
 
 #include "retrieval/EmbeddingGenerator.h"
 
 #include "utils/JsonUtils.h"
 
 #include <spdlog/spdlog.h>
-#include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
-#include <thread>
-#include <chrono>
 
 using json = nlohmann::json;
 
@@ -25,6 +22,14 @@ EmbeddingGenerator::EmbeddingGenerator(const ProviderConfig& provider_config)
     if (provider_config_.api_key.empty()) {
         spdlog::warn("[EmbeddingGenerator] API Key 为空，嵌入生成将不可用");
     }
+
+    llm::HttpConfig http_cfg;
+    http_cfg.base_url = provider_config_.base_url;
+    http_cfg.api_key = provider_config_.api_key;
+    http_cfg.connect_timeout = 30;
+    http_cfg.read_timeout = 60;
+    http_cfg.max_retries = 3;
+    http_ = std::make_unique<llm::HttpClient>(http_cfg);
 }
 
 EmbeddingGenerator::EmbeddingGenerator(
@@ -36,6 +41,14 @@ EmbeddingGenerator::EmbeddingGenerator(
     if (provider_config_.api_key.empty()) {
         spdlog::warn("[EmbeddingGenerator] API Key 为空，嵌入生成将不可用");
     }
+
+    llm::HttpConfig http_cfg;
+    http_cfg.base_url = provider_config_.base_url;
+    http_cfg.api_key = provider_config_.api_key;
+    http_cfg.connect_timeout = 30;
+    http_cfg.read_timeout = 60;
+    http_cfg.max_retries = 3;
+    http_ = std::make_unique<llm::HttpClient>(http_cfg);
 }
 
 // ===========================================================================
@@ -80,8 +93,7 @@ std::vector<std::vector<float>> EmbeddingGenerator::generateEmbeddings(
             text = preprocessText(text);
         }
 
-        spdlog::debug("[EmbeddingGenerator] 发送批量嵌入请求: {} 条文本 (offset={})",
-                      batch.size(), offset);
+        spdlog::debug("[EmbeddingGenerator] 发送批量嵌入请求: {} 条文本", batch.size());
 
         try {
             json response = sendEmbeddingRequest(batch);
@@ -105,104 +117,18 @@ std::vector<std::vector<float>> EmbeddingGenerator::generateEmbeddings(
 }
 
 // ===========================================================================
-// HTTP 请求
+// HTTP 请求（委托 HttpClient::post）
 // ===========================================================================
 
 json EmbeddingGenerator::sendEmbeddingRequest(
     const std::vector<std::string>& texts) const
 {
-    // 解析 base_url 获取 host 和 path
-    std::string url = provider_config_.base_url;
-    // 移除末尾斜杠
-    while (!url.empty() && url.back() == '/') url.pop_back();
-
-    // 提取 scheme + host
-    std::string scheme = "https";
-    std::string host;
-    std::string path_prefix;
-
-    if (url.find("https://") == 0) {
-        url = url.substr(8);
-    } else if (url.find("http://") == 0) {
-        scheme = "http";
-        url = url.substr(7);
-    }
-
-    size_t slash_pos = url.find('/');
-    if (slash_pos != std::string::npos) {
-        host = url.substr(0, slash_pos);
-        path_prefix = url.substr(slash_pos);
-    } else {
-        host = url;
-    }
-
-    // 构造请求体
     json request_body;
     request_body["model"] = embed_config_.model;
     request_body["input"] = texts;
 
-    // 发送 HTTP POST
-    httplib::Client cli(host);
-    cli.set_connection_timeout(30);
-    cli.set_read_timeout(60);
-
-    httplib::Headers headers = {
-        {"Authorization", "Bearer " + provider_config_.api_key},
-        {"Content-Type", "application/json"}
-    };
-
-    std::string api_path = path_prefix + "/v1/embeddings";
-
-    // 指数退避重试（最多 3 次）
-    const int max_retries = 3;
-    int retry_delay_ms = 1000;
-
-    for (int attempt = 0; attempt < max_retries; ++attempt) {
-        auto res = cli.Post(api_path, headers,
-                           request_body.dump(), "application/json");
-
-        if (res) {
-            if (res->status == 200) {
-                return json::parse(res->body);
-            }
-
-            // 可重试的错误码
-            if (res->status == 429 || res->status == 502 || res->status == 503) {
-                if (attempt < max_retries - 1) {
-                    spdlog::warn("[EmbeddingGenerator] HTTP {} — 重试 {}/{} ({}ms)",
-                                 res->status, attempt + 1, max_retries, retry_delay_ms);
-                    std::this_thread::sleep_for(std::chrono::milliseconds(retry_delay_ms));
-                    retry_delay_ms *= 2;
-                    continue;
-                }
-            }
-
-            // 不可重试的错误
-            std::string error_msg = "HTTP " + std::to_string(res->status);
-            try {
-                auto err_json = json::parse(res->body);
-                if (err_json.contains("error") && err_json["error"].contains("message")) {
-                    error_msg += ": " + err_json["error"]["message"].get<std::string>();
-                }
-            } catch (...) {}
-
-            throw std::runtime_error("[EmbeddingGenerator] API 错误: " + error_msg);
-        } else {
-            // 网络错误
-            auto err = res.error();
-            if (attempt < max_retries - 1) {
-                spdlog::warn("[EmbeddingGenerator] 网络错误 — 重试 {}/{} ({}ms)",
-                             attempt + 1, max_retries, retry_delay_ms);
-                std::this_thread::sleep_for(std::chrono::milliseconds(retry_delay_ms));
-                retry_delay_ms *= 2;
-                continue;
-            }
-            throw std::runtime_error(
-                "[EmbeddingGenerator] 网络错误: " + httplib::to_string(err));
-        }
-    }
-
-    throw std::runtime_error("[EmbeddingGenerator] 请求失败：已达最大重试次数");
+    // 委托 HttpClient 处理 URL/认证/重试/错误
+    return http_->post("/v1/embeddings", request_body);
 }
 
 // ===========================================================================
@@ -246,13 +172,12 @@ std::string EmbeddingGenerator::preprocessText(const std::string& text) const
         return text;
     }
 
-    // 截断到 max_text_length 字符
-    // 优先在句子边界处截断
+    // 截断到 max_text_length 字符，优先在句子边界处截断
     std::string truncated = text.substr(0, embed_config_.max_text_length);
 
-    // 查找最后一个句子结束标记
     auto last_period = truncated.find_last_of(".。！？!?");
-    if (last_period != std::string::npos && static_cast<int>(last_period) > embed_config_.max_text_length / 2) {
+    if (last_period != std::string::npos
+        && static_cast<int>(last_period) > embed_config_.max_text_length / 2) {
         truncated = truncated.substr(0, last_period + 1);
     }
 

@@ -18,6 +18,8 @@ NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
     , client_(provider)
     , agent_(client_, registry_)
     , project_(project ? std::move(project) : std::make_shared<Project>())
+    , storage_(project_ ? project_->path : "")
+    , cm_(storage_)
 {
     setupAgent(std::move(disabledTools));
 }

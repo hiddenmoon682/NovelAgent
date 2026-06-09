@@ -43,6 +43,8 @@ set(CORE_SOURCES
     src/project/IProjectAccess.h
     src/project/ProjectAccess.h
     src/project/IStorageBackend.h
+    src/project/FileStorageBackend.h
+    src/project/FileStorageBackend.cpp
     src/project/ProjectIO.h
     src/project/ProjectIO.cpp
     src/project/ProjectManager.h
@@ -57,6 +59,8 @@ set(CORE_SOURCES
     src/llm/SSEParser.cpp
     src/llm/StreamAccumulator.h
     src/llm/StreamAccumulator.cpp
+    src/llm/HttpClient.h
+    src/llm/HttpClient.cpp
     src/llm/LLMClient.h
     src/llm/LLMClient.cpp
 
@@ -65,8 +69,10 @@ set(CORE_SOURCES
 
     src/retrieval/VectorStore.h
     src/retrieval/VectorStore.cpp
+    src/retrieval/IVectorStore.h
     src/retrieval/EmbeddingGenerator.h
     src/retrieval/EmbeddingGenerator.cpp
+    src/retrieval/IEmbeddingGenerator.h
     src/retrieval/NovelChunker.h
     src/retrieval/NovelChunker.cpp
 
@@ -75,6 +81,15 @@ set(CORE_SOURCES
 
     src/agent/ToolRegistry.h
     src/agent/ToolRegistry.cpp
+    src/agent/ContextManagerTypes.h
+    src/agent/ConversationSummarizer.h
+    src/agent/ConversationSummarizer.cpp
+    src/agent/ChapterSummaryCache.h
+    src/agent/ChapterSummaryCache.cpp
+    src/agent/DegradationPipeline.h
+    src/agent/DegradationPipeline.cpp
+    src/agent/SessionPersistence.h
+    src/agent/SessionPersistence.cpp
     src/agent/ContextManager.h
     src/agent/ContextManager.cpp
     src/agent/Agent.h

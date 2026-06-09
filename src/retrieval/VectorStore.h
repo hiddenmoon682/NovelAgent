@@ -13,32 +13,19 @@
 ///   3. store.insert("ch-001-seg-0", embedding, {{"type", "chapter"}});
 ///   4. auto results = store.search(query_embedding, 5);
 
-#include <nlohmann/json_fwd.hpp>
+#include "retrieval/IVectorStore.h"
 
 #include <string>
 #include <vector>
-#include <map>
 
 namespace retrieval {
 
-/// 搜索结果条目。
-struct SearchResult {
-    std::string id;               // 向量唯一标识
-    double similarity = 0.0;      // 余弦相似度 [0, 1]，越高越相关
-    nlohmann::json metadata;      // 关联元数据（如 type, chapter_id, chunk_index）
-};
-
-/// 向量条目（内部存储格式）。
-struct VectorEntry {
-    std::string id;
-    std::vector<float> embedding;
-    nlohmann::json metadata;
-};
-
-/// 向量存储 — 嵌入向量的 CRUD + 语义搜索。
+/// 向量存储 — JSON 文件后端 + 暴力余弦相似度搜索。
+///
+/// 实现 IVectorStore 抽象接口，API 兼容 sqlite-vec（后续替换只需修改 .cpp）。
 ///
 /// 线程安全：不安全。同一实例不应并发调用。
-class VectorStore {
+class VectorStore : public IVectorStore {
 public:
     VectorStore() = default;
     ~VectorStore() = default;

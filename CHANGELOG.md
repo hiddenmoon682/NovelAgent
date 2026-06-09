@@ -1,5 +1,31 @@
 # Changelog
 
+## [2026-06-10] Phase 4 架构重构 — 审查问题修复 (P0-P3)
+
+- **P0** — `HttpClient`: 提取共享 HTTP 基础设施（URL解析/认证/重试/错误处理）
+  - LLMClient 和 EmbeddingGenerator 均通过组合持有 HttpClient，消除 ~150 行重复代码
+  - LLMClient.cpp: 从 363 行精简到 140 行（-61%）
+  - EmbeddingGenerator.cpp: 从 262 行精简到 155 行（-41%）
+- **P1** — 检索模块抽象接口: `IVectorStore` + `IEmbeddingGenerator`
+  - VectorStore 和 EmbeddingGenerator 改为实现纯虚接口
+  - 支持 Mock 测试，未来可替换为 sqlite-vec / ONNX 后端
+- **P1** — 拆分 ContextManager 上帝类（7→1 职责）:
+  - `ConversationSummarizer` — 对话摘要（规则提取+渲染）
+  - `ChapterSummaryCache` — 章节摘要缓存 CRUD（通过 IStorageBackend）
+  - `DegradationPipeline` — 策略模式降级管线（5个独立策略类）
+  - `SessionPersistence` — 会话保存/加载/归档
+  - ContextManager 精简为编排器（~150 行），组合 4 个子模块
+- **P2** — ContextManager 通过 IStorageBackend 访问存储:
+  - `FileStorageBackend` 适配 ProjectIO → IStorageBackend
+  - ContextManager 构造函数注入 `IStorageBackend&`，不再直接依赖 ProjectIO
+  - 符合 CLAUDE.md 架构规则
+- **P2** — 降级策略模式: `IDegradationStrategy` + 5 个具体策略类 + `DegradationPipeline`
+  - 新增降级等级只需实现接口并注册，符合开闭原则
+- **P3** — `SummaryKeywords` 配置化: 剧情/任务关键词可通过构造函数或 setter 定制
+- **新增** — 15 个文件: Http客户端、4个抽象接口、4个拆分类、FileStorageBackend、ContextManagerTypes
+- **修改** — ContextManager(重写)、LLMClient(瘦身)、EmbeddingGenerator(瘦身)、NovelAgentApp(适配)
+- 测试统计: **14/14** 全部通过
+
 ## [2026-06-09] Phase 4 — 上下文管理与语义检索 (9步)
 
 - **新增** — `ContextManager` Phase 4 完整版:

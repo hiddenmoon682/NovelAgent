@@ -1,10 +1,12 @@
 #pragma once
 
 #include "config/AppConfig.h"
+#include "llm/HttpClient.h"
 #include "llm/ILLMClient.h"
 #include "llm/Message.h"
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -12,6 +14,9 @@ namespace llm {
 
 /// LLM Chat Completion 客户端 — HTTP + SSE 实现。
 /// 封装 OpenAI 兼容格式的 HTTP POST 请求，支持流式和非流式两种模式。
+///
+/// Phase 4 架构改进：通过组合 HttpClient 复用 HTTP 基础设施（URL 解析/认证/重试），
+/// 避免与 EmbeddingGenerator 之间的代码重复。
 ///
 /// 生命周期：由 Agent 持有，每次对话轮次调用 chat()。
 /// LLMClient 自身不维护对话历史——历史由 Agent 维护。
@@ -28,13 +33,6 @@ public:
     // ================================================================
 
     /// 流式调用：实时通过 callbacks 输出，请求完成后返回完整 LLMResponse。
-    ///
-    /// @param messages      对话历史（不含 system 消息）
-    /// @param tools         可供 LLM 调用的工具定义列表
-    /// @param system_prompt 系统提示词（非空时作为首条 system 消息自动插入）
-    /// @param callbacks     流式回调（可为空，仅返回完整结果，无实时输出）
-    /// @return              完整 LLMResponse（含 content, tool_calls, usage）
-    /// @throws std::runtime_error 网络错误、API 错误、JSON 解析错误
     LLMResponse chat(
         const std::vector<Message>& messages,
         const std::vector<ToolDefinition>& tools = {},
@@ -43,7 +41,6 @@ public:
     );
 
     /// 非流式调用：等待完整 JSON 响应后返回。
-    /// 用于 --exec 单次命令模式或不需要实时输出的场景。
     LLMResponse chatNonStreaming(
         const std::vector<Message>& messages,
         const std::vector<ToolDefinition>& tools = {},
@@ -57,11 +54,12 @@ public:
     /// 返回当前使用的 ProviderConfig
     const ProviderConfig& config() const { return config_; }
 
-    /// 返回最近一次调用的错误详情（异常 what() 之外的额外上下文）
+    /// 返回最近一次调用的错误详情
     std::string lastError() const { return last_error_; }
 
 private:
     ProviderConfig config_;
+    HttpClient http_;
     std::string last_error_;
 
     /// 检查 api_key / base_url / model 等必要字段
@@ -73,13 +71,6 @@ private:
         const std::vector<ToolDefinition>& tools,
         const std::string& system_prompt,
         bool stream) const;
-
-    /// 从 HTTP 错误响应中提取人类可读的错误消息
-    /// 优先解析 JSON error.message，回退到 HTTP 状态码描述
-    std::string parseApiError(int http_status, const std::string& response_body) const;
-
-    /// 将 httplib::Error 枚举转换为中文错误描述
-    static std::string httpErrorToString(int error_code);
 };
 
 } // namespace llm
