@@ -68,6 +68,8 @@ set(LIB_SOURCES
     src/cli/ReplHandler.cpp
 
     src/agent/tools/BuiltInTool.h
+    src/agent/tools/ChapterTools.h
+    src/agent/tools/ChapterTools.cpp
     src/agent/ToolRegistry.h
     src/agent/ToolRegistry.cpp
     src/agent/Agent.h

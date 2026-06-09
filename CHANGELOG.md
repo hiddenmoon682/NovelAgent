@@ -1,5 +1,19 @@
 # Changelog
 
+## [2026-06-08] Phase 3.4 — Chapter 工具（5 个）
+
+- **新增** — `src/agent/tools/ChapterTools.h/.cpp`：5 个章节操作工具类
+  - `ReadChapterTool` — 读取章节 Markdown 全文
+  - `WriteChapterTool` — 覆写章节内容
+  - `CreateChapterTool` — 创建新章节 + 更新 outline + 写入文件
+  - `AppendChapterTool` — 读取 → 追加 → 写回
+  - `ListChaptersTool` — 列出所有章节 ID/标题/顺序/字数
+- **新增** — 每个工具持有 `Project&` 引用，通过 `ProjectIO` 执行磁盘 I/O
+- **新增** — `tests/test_chapter_tools.cpp`：7 个集成测试（临时目录 + 真实文件 I/O）
+- **修复** — 文件名使用章节 ID（`ch-001.md`）而非标题，避免 Windows 窄字符 API 下 UTF-8 路径问题
+- 影响范围：`src/agent/tools/ChapterTools.h/.cpp`、`tests/test_chapter_tools.cpp`
+- 测试统计：11/11 全部通过（新增 1 个测试目标）
+
 ## [2026-06-08] Phase 3.3 — ContextManager（基础版）
 
 - **新增** — `src/agent/ContextManager.h/.cpp`：上下文管理器，负责 token 预算计算 + 消息截断 + 系统提示词构建
