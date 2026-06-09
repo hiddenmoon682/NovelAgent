@@ -7,6 +7,56 @@
 
 ---
 
+## 第三轮审查（2026-06-09） — Phase 3.1-3.4 修复
+
+来自 `REVIEW_NOTES.md` 的 11 个问题，修复了 9 个。
+
+### #1 ContextManager 覆盖用户 system_prompt ✅
+
+**修复**: `runToolLoop()` 中使用局部变量 `effective_prompt`，不再修改成员 `system_prompt_`。ContextManager 产出的上下文 prompt 与用户设置的人格 prompt 通过 `"\n\n"` 拼接。
+
+### #2 truncateMessages token 公式不一致 ✅
+
+**修复**: 截断循环中每次移除消息后调用 `TokenCounter::countMessages()` 重新计算，消除手工减法与初始估值的不一致。
+
+### #3 buildSystemPrompt 无效章节返回空 ✅
+
+**修复**: `buildForChapter()` 返回 `nullopt` 时，fallback 到无章节版本（返回项目概述），而非返回空字符串。
+
+### #4 truncateMessages budget ≤ 0 返回全部消息 ✅
+
+**修复**: `budget <= 0` 时返回空列表并设置 `truncated_count`，不再返回无法容纳的全部消息。
+
+### #5 ChapterTools 持有 Project& 裸引用 🔵 暂缓
+
+**决定**: 当前生命周期一致，无实际触发路径。在 `BuiltInTool` 文档中标注生命周期约束。等 Phase 3.5 多 Agent 并行编排时重新评估。
+
+### #6 CreateChapter 部分保存风险 ✅
+
+**修复**: 恢复为 `ProjectIO::save()` 全量保存，保证 outline.json 与其他 JSON 文件一致。
+
+### #7 工具调用结果无大小限制 ✅
+
+**修复**: `executeToolCallsAndAppend()` 中对结果 JSON 做 4000 字符截断。截断时附加原文长度提示。
+
+### #8 空 try/catch 块 ✅
+
+**修复**: 删除 `processUserMessage()` 中无操作的 `try { ... } catch (...) { throw; }` 块。
+
+### #9 ListChaptersTool 描述与行为不一致 ✅
+
+**修复**: `description()` 更新为"列出当前项目所有章节的 ID、标题、顺序、文件路径和摘要"，与实现了无 `word_count` 的行为一致。
+
+### #10 SchemaUtils additionalProperties 硬编码 🔵 暂缓
+
+**决定**: 当前安全默认值正确。在注释中记录此设计决策。
+
+### #11 total_tokens 精度说明缺失 ✅
+
+**修复**: 注释更新为"占用的 token 数（TokenCounter 启发式估算，非精确值）"。
+
+---
+
 ## 第二轮审查（2026-05-29） — 流式架构重构
 
 ---

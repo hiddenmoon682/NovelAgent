@@ -1,5 +1,20 @@
 # Changelog
 
+## [2026-06-09] 第三轮代码审查修复 — REVIEW_NOTES.md 11 问题
+
+- **修复** — #1 Agent 不再覆盖用户的 `system_prompt_`：ContextManager 产出用局部变量拼接（审查发现的回归 bug）
+- **修复** — #2 `truncateMessages()` token 公式统一为 `countMessages()` 循环重算（审查发现的 bug）
+- **修复** — #3 `buildSystemPrompt()` 无效章节 fallback 到项目概述（审查发现的 bug）
+- **修复** — #4 `truncateMessages()` budget ≤ 0 时返回空列表（审查发现的 edge case）
+- **修复** — #6 `CreateChapterTool` 恢复全量保存（审查发现的回归 bug）
+- **修复** — #7 工具执行结果 4000 字符截断（防止单条消息超出 token 预算）
+- **修复** — #8 删除 `processUserMessage` 中空 `try/catch`（审查发现的死代码）
+- **修复** — #9 `ListChaptersTool` 描述与实际行为同步（审查发现的文档不一致）
+- **修复** — #11 `ContextAssembly::total_tokens` 注释标注为估算值
+- 暂缓 — #5 Project& 生命周期约束（等 Phase 3.5）+ #10 additionalProperties 安全默认
+- 影响范围：`Agent.cpp`、`ContextManager.h/.cpp`、`ChapterTools.h/.cpp`
+- 测试统计：11/11 全部通过
+
 ## [2026-06-09] Step 3.1-3.4 代码审查修复
 
 - **修复** — Agent 集成 ContextManager：`runToolLoop` 每次 LLM 调用前做 token 预算截断（可选，通过 `setContextManager()` 启用）

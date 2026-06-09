@@ -64,7 +64,7 @@ public:
     explicit ListChaptersTool(Project& p) : project_(p) {}
     std::string name() const override { return "list_chapters"; }
     std::string description() const override {
-        return "列出当前项目所有章节的 ID、标题、顺序和字数";
+        return "列出当前项目所有章节的 ID、标题、顺序、文件路径和摘要";
     }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;

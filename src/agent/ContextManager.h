@@ -18,7 +18,7 @@ namespace agent {
 struct ContextAssembly {
     std::vector<llm::Message> messages;  // 截断后的消息列表
     std::string system_prompt;           // 系统提示词（供 LLMClient 使用）
-    int total_tokens = 0;                // 实际占用的 token 数（估算值）
+    int total_tokens = 0;                // 占用的 token 数（TokenCounter 启发式估算，非精确值）
     int budget = 0;                      // 上下文窗口预算上限
     bool truncated = false;              // 是否发生了消息截断
     int truncated_count = 0;             // 被移除的消息条数

@@ -46,14 +46,8 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
     // 1. 将用户消息加入对话历史
     conversation_.addUser(input);
 
-    // 2. 调用 LLM + tool call 循环
-    llm::LLMResponse response;
-    try {
-        response = runToolLoop(std::move(callbacks));
-    } catch (...) {
-        // 异常时保留对话历史（已加入的用户消息），向上抛出
-        throw;
-    }
+    // 2. 调用 LLM + tool call 循环（异常向上抛出，对话历史中保留用户消息）
+    auto response = runToolLoop(std::move(callbacks));
 
     // 3. 将最终 assistant 回复加入对话历史
     if (!response.content.empty() || !response.tool_calls.empty()) {
@@ -88,14 +82,15 @@ llm::LLMResponse Agent::runToolLoop(llm::StreamCallbacks callbacks)
 {
     auto tools = registry_.getToolDefinitions();
 
-    // 若设置了 ContextManager，做 token 预算截断
+    // 组装有效的 system prompt（人格提示词 + 可选的上下文提示词）
+    std::string effective_prompt = system_prompt_;
     auto effective_messages = conversation_.messages();
     if (context_manager_) {
         auto assembly = context_manager_->assemble(
             conversation_, context_window_);
         effective_messages = std::move(assembly.messages);
         if (!assembly.system_prompt.empty()) {
-            system_prompt_ = assembly.system_prompt;
+            effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
         }
     }
 
@@ -103,7 +98,7 @@ llm::LLMResponse Agent::runToolLoop(llm::StreamCallbacks callbacks)
     auto response = client_.chat(
         effective_messages,
         tools,
-        system_prompt_,
+        effective_prompt,
         std::move(callbacks)
     );
 
@@ -124,21 +119,22 @@ llm::LLMResponse Agent::runToolLoop(llm::StreamCallbacks callbacks)
         executeToolCallsAndAppend(response.tool_calls);
 
         // 工具结果后的 LLM 调用使用非流式
-        // 再次做预算截断（对话已增长）
+        // 再次做预算截断（对话已增长）+ 组装 system prompt
         effective_messages = conversation_.messages();
+        effective_prompt = system_prompt_;
         if (context_manager_) {
             auto assembly = context_manager_->assemble(
                 conversation_, context_window_);
             effective_messages = std::move(assembly.messages);
             if (!assembly.system_prompt.empty()) {
-                system_prompt_ = assembly.system_prompt;
+                effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
             }
         }
 
         response = client_.chatNonStreaming(
             effective_messages,
             tools,
-            system_prompt_
+            effective_prompt
         );
     }
 
@@ -182,7 +178,16 @@ void Agent::executeToolCallsAndAppend(
         }
 
         auto result = registry_.executeTool(tc.function_name, args);
-        conversation_.addToolResult(tc.id, result.dump());
+
+        // 工具结果截断：防止单条消息过大（如 read_chapter 返回全文）
+        // LLM 在后续轮次中不需要完整原文，截断后的摘要信息足够
+        constexpr size_t kMaxResultChars = 4000;
+        std::string result_str = result.dump();
+        if (result_str.size() > kMaxResultChars) {
+            result_str = result_str.substr(0, kMaxResultChars)
+                       + "\n...(已截断，共 " + std::to_string(result_str.size()) + " 字符)";
+        }
+        conversation_.addToolResult(tc.id, std::move(result_str));
     }
 }
 

@@ -91,8 +91,8 @@ std::string ContextManager::buildSystemPrompt(
 
     auto ctx = prompt::PromptContextBuilder::buildForChapter(project, options);
     if (!ctx) {
-        spdlog::error("[ContextManager] 无法为章节 '{}' 构建上下文", chapter_id);
-        return {};
+        spdlog::warn("[ContextManager] 无法为章节 '{}' 构建上下文，回退到项目概述", chapter_id);
+        return buildSystemPrompt(project); // fallback 到无章节版本
     }
 
     spdlog::debug("[ContextManager] 系统提示词构建完成 — 章节={}, 长度={}",
@@ -125,23 +125,24 @@ std::vector<llm::Message> ContextManager::truncateMessages(
 {
     truncated_count = 0;
 
-    // 空列表或预算充足 → 直接返回
-    if (messages.empty() || budget <= 0) {
+    if (messages.empty()) {
         return messages;
     }
 
-    int total = llm::TokenCounter::countMessages(messages);
-    if (total <= budget) {
-        return messages; // 无需截断
+    // 预算非正数时，无法容纳任何消息
+    if (budget <= 0) {
+        truncated_count = static_cast<int>(messages.size());
+        return {};
     }
 
-    // 从头部（最旧）开始移除，直到剩余 token ≤ budget
-    // 跳过 system 角色（但 messages 中通常不含 system——已经在 system_prompt 中）
+    // 无需截断
+    if (llm::TokenCounter::countMessages(messages) <= budget) {
+        return messages;
+    }
+
+    // 从头部（最旧）开始移除，每次移除后重新计算（保证与 countMessages 公式一致）
     std::vector<llm::Message> result = messages;
-    while (!result.empty() && total > budget) {
-        total -= llm::TokenCounter::countTokens(result.front().content);
-        // 加上结构开销的估算（角色标记 + 可能的 tool_calls）
-        total -= 4; // 大约每个消息的结构开销
+    while (!result.empty() && llm::TokenCounter::countMessages(result) > budget) {
         result.erase(result.begin());
         ++truncated_count;
     }

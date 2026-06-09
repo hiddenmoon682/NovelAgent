@@ -186,11 +186,9 @@ json CreateChapterTool::execute(const json& args) {
     // 生成文件路径（用章节 ID 而非标题，避免 Windows 窄字符 API 下 UTF-8 路径问题）
     new_ch.file_path = "chapters/" + new_ch.id + ".md";
 
-    // 添加到 outline 并仅保存 outline.json（避免覆盖用户对其它文件的修改）
+    // 添加到 outline 并全量保存（保证 outline.json 与其他 JSON 文件一致）
     project_.outline.chapters.push_back(new_ch);
-    ProjectIO::saveJsonFile(
-        utils::file::joinPath(project_.path, "outline.json"),
-        nlohmann::json(project_.outline));
+    ProjectIO::save(project_);
 
     // 写入空的章节文件
     std::string init_content = "# " + title + "\n\n";
