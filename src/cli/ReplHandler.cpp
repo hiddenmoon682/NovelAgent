@@ -62,6 +62,12 @@ void ReplHandler::run() {
         try {
             auto callbacks = StreamDisplay::create();
             auto response = agent_.processUserMessage(input, callbacks);
+            // 非正常结束时提示用户
+            if (response.finish_reason == "length") {
+                std::cout << "\n  \033[33m[注意: 回复因长度限制被截断]\033[0m";
+            } else if (response.finish_reason == "content_filter") {
+                std::cout << "\n  \033[33m[注意: 部分内容因安全策略被过滤]\033[0m";
+            }
             std::cout << "\n" << std::flush;
         } catch (const std::exception& e) {
             std::cerr << "\n错误: " << e.what() << "\n";

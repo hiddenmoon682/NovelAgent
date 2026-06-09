@@ -18,17 +18,37 @@ json RunPowerShellTool::parameters() const {
 
 namespace {
 
-/// 危险命令关键词黑名单（LLM 可能被 prompt injection 诱导执行危险操作）
+/// 危险命令关键词黑名单。
+/// 仅拦截破坏性操作（删除/格式化/修改系统/下载执行/提权等），
+/// 允许正常的管道和重定向操作（| ; && || > >> <）。
+/// 注意：黑名单不能提供绝对安全，不可在完全不可信环境中运行。
 bool isDangerousCommand(const std::string& cmd) {
+    // 破坏性 cmdlet（含常见 PowerShell 缩写/别名）
     static const std::set<std::string> blocked = {
-        "rm ", "del ", "remove-item", "rmdir", "rd ",
-        "format", "diskpart", "stop-process", "kill",
-        "remove", "delete", "clear-content", "set-content",
-        "out-file", ">", ">>", "|", ";", "&&", "||",
-        "invoke-webrequest", "invoke-restmethod", "curl",
-        "wget", "start-process", "iex", "invoke-expression",
-        "download", "upload", "net user", "net localgroup",
-        "reg ", "shutdown", "restart", "logoff",
+        // 删除/清理操作
+        "remove-item", "ri ", "rm ", "del ", "rmdir", "rd ", "rdr ",
+        "erase", "delete", "clear-content", "clear-item",
+        // 格式化/磁盘操作
+        "format", "diskpart", "initialize-disk", "clear-disk",
+        // 进程/服务操作
+        "stop-process", "kill", "spps ", "stop-service", "sasv ",
+        // 系统配置修改
+        "set-content", "set-itemproperty", "set-service",
+        "out-file", "out-printer",
+        // 网络下载/执行（远程代码执行风险）
+        "invoke-webrequest", "iwr ", "invoke-restmethod", "irm ",
+        "curl", "wget", "start-process", "saps ",
+        "iex ", "invoke-expression", "invoke-command", "icm ",
+        "new-object", "download", "upload",
+        // 账户/权限操作
+        "net user", "net localgroup", "net group",
+        "new-localuser", "add-localgroupmember",
+        // 注册表修改
+        "reg add", "reg delete", "reg import",
+        "set-itemproperty -path registry",
+        // 系统关机/重启
+        "shutdown", "restart-computer", "stop-computer",
+        "logoff",
     };
     std::string lower = cmd;
     for (char& c : lower) c = static_cast<char>(std::tolower(c));
@@ -57,12 +77,9 @@ json RunPowerShellTool::execute(const json& args) {
 
     spdlog::info("[run_powershell] {}", cmd);
 
-    // 仅允许读取和查询类命令的白名单前缀
-    // 限制为 Get-*, echo, dir/ls, type/cat, Select-*, Where-*, ForEach-*, Write-*
-    // 注意：这个白名单不是绝对安全的，LLM 仍可能通过 ForEach-Object 执行恶意代码
-    // 真正的安全措施是黑名单（上面）+ 将来的沙箱执行
-
-    // 使用 _popen 执行命令并捕获输出（带 30s 超时则由外部调用者通过 Agent 的 max_tool_rounds 间接控制）
+    // 使用 _popen 执行命令并捕获输出。
+    // 安全依赖 isDangerousCommand() 黑名单（上面），不是绝对安全。
+    // TODO: Phase 3.5 迁移到 CreateProcess + WaitForSingleObject 实现超时控制。
     std::string full_cmd = "powershell.exe -NoProfile -Command " + cmd;
     std::unique_ptr<FILE, decltype(&_pclose)> pipe(
         _popen(full_cmd.c_str(), "r"), _pclose);

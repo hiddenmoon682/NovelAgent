@@ -7,6 +7,50 @@
 
 ---
 
+## 第五轮审查（2026-06-09） — Phase 3.6-3.12 代码审查修复
+
+### #16 ShellTools 黑名单误拦截管道/重定向 ✅
+
+**修复**: 从黑名单移除 `|` `>` `>>` `;` `&&` `||`，补充 PowerShell 缩写变体（ri/rdr/saps/iwr/irm/spps/sasv/icm），添加注册表修改检测。
+
+### #17 ShellTools 误导性白名单注释 ✅
+
+**修复**: 删除未实现的白名单注释，替换为准确的安全说明 + TODO。
+
+### #18 ShellTools 关键词绕过风险 ✅
+
+**修复**: 补充 PowerShell 常见缩写到黑名单 + 添加安全声明"不可在完全不可信环境中运行"。
+
+### #19 StreamDisplay Windows ANSI 初始化 ✅
+
+**修复**: 添加 `SetConsoleMode(ENABLE_VIRTUAL_TERMINAL_PROCESSING)` 初始化，确保 Windows 终端正确渲染颜色码。
+
+### #20 ChapterTools.h 注释过期 ✅
+
+**修复**: `ListChaptersTool` header 注释从 `word_count` 更新为 `file_path, synopsis`。
+
+### #22 ReplHandler 未使用 LLMResponse ✅
+
+**修复**: 检查 `finish_reason`，在 `"length"` 和 `"content_filter"` 时给用户提示。
+
+### #6 CreateChapterTool 部分保存风险 ✅ (第三轮已修复)
+
+已恢复为 `ProjectIO::save()` 全量保存。
+
+### #12 ShellTools 命令注入 ✅ (第四轮已修复)
+
+添加 24 关键词黑名单 + 100KB 输出截断。
+
+### #14 CommandParser 大小写敏感 ✅ (第四轮已修复)
+
+命令名转小写比较。
+
+### #15 ShellTools 输出无大小限制 ✅ (第四轮已修复)
+
+100KB 截断。
+
+---
+
 ## 第三轮审查（2026-06-09） — Phase 3.1-3.4 修复
 
 来自 `REVIEW_NOTES.md` 的 11 个问题，修复了 9 个。

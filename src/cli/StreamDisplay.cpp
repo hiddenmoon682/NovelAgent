@@ -1,6 +1,19 @@
 #include "cli/StreamDisplay.h"
 #include <iostream>
 
+#ifdef _WIN32
+#include <windows.h>
+namespace {
+    bool g_ansiEnabled = []() -> bool {
+        HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (hOut == INVALID_HANDLE_VALUE) return false;
+        DWORD mode = 0;
+        if (!GetConsoleMode(hOut, &mode)) return false;
+        return SetConsoleMode(hOut, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
+    }();
+} // namespace
+#endif
+
 llm::StreamCallbacks StreamDisplay::create() {
     llm::StreamCallbacks cb;
 

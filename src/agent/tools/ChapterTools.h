@@ -57,7 +57,7 @@ public:
 
 /// 列出所有章节。
 /// 参数: 无
-/// 返回: { chapters: [{ id, title, order, word_count }] }
+/// 返回: { chapters: [{ id, title, order, file_path, synopsis }] }
 class ListChaptersTool : public BuiltInTool {
     Project& project_;
 public:
