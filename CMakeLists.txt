@@ -63,6 +63,13 @@ set(CORE_SOURCES
     src/prompt/PromptContextBuilder.h
     src/prompt/PromptContextBuilder.cpp
 
+    src/retrieval/VectorStore.h
+    src/retrieval/VectorStore.cpp
+    src/retrieval/EmbeddingGenerator.h
+    src/retrieval/EmbeddingGenerator.cpp
+    src/retrieval/NovelChunker.h
+    src/retrieval/NovelChunker.cpp
+
     src/cli/IOutputChannel.h
     src/cli/ConsoleOutput.h
 

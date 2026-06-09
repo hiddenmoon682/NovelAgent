@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.20)
 # ── 仅依赖 core 的测试 ──
 set(CORE_ONLY_TESTS test_main test_models test_project_io test_prompt_context
                     test_token_counter test_sse_parser test_llm_client
-                    test_context_manager)
+                    test_context_manager test_retrieval)
 
 foreach(name ${CORE_ONLY_TESTS})
     add_executable(${name} ${name}.cpp)

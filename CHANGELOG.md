@@ -1,5 +1,29 @@
 # Changelog
 
+## [2026-06-09] Phase 4 — 上下文管理与语义检索 (9步)
+
+- **新增** — `ContextManager` Phase 4 完整版:
+  - 对话历史摘要 `summarizeConversation()`：规则提取角色名/章节引用/剧情点/任务
+  - 章节摘要缓存：`.novelagent/summaries.json` 读写，支持按章节 ID 索引
+  - 预算分配 `allocateBudget()`：50/30/20 规则（章节/对话/摘要）
+  - 多级降级（L1-L5）：截断章节→移除角色详情→移除相邻章节→截断对话→全文压缩
+  - 会话持久化 `saveSession()`/`loadSession()`/`archiveSession()`
+- **新增** — `VectorStore` (JSON 后端 + 暴力余弦相似度):
+  - CRUD: insert/insertBatch/remove/update + 持久化到 JSON 文件
+  - 搜索: `search()` Top-K 余弦相似度排序，< 10ms @ 万级向量
+  - API 兼容 sqlite-vec（后续仅需替换 .cpp 内部实现）
+- **新增** — `EmbeddingGenerator`:
+  - 调用 OpenAI 兼容 `/v1/embeddings` API
+  - 支持单条/批量嵌入，自动分批（max_batch_size=100）
+  - 指数退避重试（3 次）+ 文本截断预处理
+- **新增** — `NovelChunker`:
+  - 章节切分：优先按 Scene 边界，退化为段落边界（500-2000字/chunk, 15% 重叠）
+  - 实体拼接：`chunkCharacter()`/`chunkSetting()`/`chunkWorldRule()` 生成可嵌入文本
+- **新增** — `tests/test_retrieval.cpp`：15 个检索模块测试
+- **修改** — `tests/test_context_manager.cpp`：扩展至 22 个测试（Phase 4.1-4.4）
+- **修改** — `CMakeLists.txt`：新增 `src/retrieval/` 模块到 novelagent_core
+- 测试统计: **14/14** (新增 1 个测试目标，test_context_manager 扩增 16 子测试)
+
 ## [2026-06-09] Phase 3.5 — 多Agent并行编排 (9步)
 
 - **新增** — `SubAgent`: 独立对话上下文 + 受限工具集(std::async) + 120s超时

@@ -1,6 +1,6 @@
 # NovelAgent CLI -- 细化实现计划
 
-> 版本: 3.5 | 更新时间: 2026-06-09 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 ✓ | Phase 3 ✓ (核心完成) | Phase 5 新增 3 步
+> 版本: 4.0 | 更新时间: 2026-06-09 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 ✓ | Phase 3 ✓ (核心完成) | Phase 3.5 ✓ | Phase 4 ✓ | Phase 5 待实施
 
 ## 背景
 
@@ -818,7 +818,7 @@ struct SubTask {
 
 ### Phase 4: 上下文管理与语义检索
 
-> 状态: **待实施** | 预计: 9 个步骤 | 依赖: Phase 2 + Phase 3
+> 状态: **已完成** ✅ | 9 个步骤 | 依赖: Phase 2 + Phase 3
 > 注：PromptContextBuilder 已在 Phase 1 提前落地，Phase 4 包含上下文预算/降级（Step 4.1-4.5）和语义检索管线（Step 4.6-4.9）
 
 #### Step 4.1: 实现对话历史摘要
@@ -1057,7 +1057,8 @@ Phase 0 (骨架) ✓ 完成
 | Phase 0 | — | ✓ 完成 |
 | Phase 1 | — | ✓ 完成（超规格） |
 | Phase 2 | 8 steps | ✓ 已完成 |
-| Phase 3 | 12 steps | ○ 待实施 |
-| Phase 4 | 9 steps | ○ 待实施（PromptContextBuilder 已提前落地） |
-| Phase 5 | 6 steps | ○ 待实施 |
-| **总计** | **35 steps** | Phase 0-1 done, 35 remaining |
+| Phase 3 | 12 steps | ✓ 核心完成 |
+| Phase 3.5 | 9 steps | ✓ 已完成 |
+| Phase 4 | 9 steps | ✓ 已完成 |
+| Phase 5 | 9 steps | ○ 待实施 |
+| **总计** | **35+ steps** | Phase 0-4 done, Phase 5 remaining |
