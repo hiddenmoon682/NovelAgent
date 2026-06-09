@@ -14,6 +14,7 @@
 #include "agent/ToolRegistry.h"
 #include "agent/tools/ChapterTools.h"
 #include "config/AppConfig.h"
+#include "llm/LLMClient.h"
 #include "project/ProjectIO.h"
 
 #include <cstdio>

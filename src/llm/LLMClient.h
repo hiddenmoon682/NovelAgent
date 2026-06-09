@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config/AppConfig.h"
+#include "llm/ILLMClient.h"
 #include "llm/Message.h"
 
 #include <functional>
@@ -9,33 +10,14 @@
 
 namespace llm {
 
-/// 流式调用的实时回调接口。
-/// 调用方（Agent / StreamDisplay）通过这些回调获得逐 token 的输出。
-struct StreamCallbacks {
-    /// 文本内容增量（每次收到 content delta 时触发）
-    std::function<void(const std::string& delta)> on_content;
-
-    /// 思维链增量（DeepSeek reasoning_content）
-    std::function<void(const std::string& delta)> on_reasoning;
-
-    /// 首次检测到 tool_call delta 时触发（用于显示"正在调用工具..."等提示）
-    std::function<void()> on_tool_call_start;
-
-    /// 流式完成后触发，携带完整 LLMResponse（与 chat() 返回值相同）
-    std::function<void(const LLMResponse& response)> on_complete;
-
-    /// 流式过程中发生错误时触发
-    std::function<void(const std::string& error)> on_error;
-};
-
-/// LLM Chat Completion 客户端。
+/// LLM Chat Completion 客户端 — HTTP + SSE 实现。
 /// 封装 OpenAI 兼容格式的 HTTP POST 请求，支持流式和非流式两种模式。
 ///
 /// 生命周期：由 Agent 持有，每次对话轮次调用 chat()。
 /// LLMClient 自身不维护对话历史——历史由 Agent 维护。
 ///
 /// 线程安全：不安全。同一实例不应并发调用。
-class LLMClient {
+class LLMClient : public ILLMClient {
 public:
     /// 构造函数接收 ProviderConfig，拷贝保存。
     /// 不发起网络请求。API Key 有效性在第一次 chat() 调用时验证。

@@ -35,6 +35,9 @@ find_package(OpenSSL REQUIRED)
 
 # 不含 main.cpp（其 main() 与测试的 main() 冲突）
 set(LIB_SOURCES
+    src/NovelAgentApp.h
+    src/NovelAgentApp.cpp
+
     src/config/AppConfig.h
     src/config/AppConfig.cpp
 
@@ -51,6 +54,7 @@ set(LIB_SOURCES
     src/project/ProjectManager.cpp
 
     src/llm/Message.h
+    src/llm/ILLMClient.h
     src/llm/StreamingTypes.h
     src/llm/TokenCounter.h
     src/llm/TokenCounter.cpp
@@ -72,6 +76,7 @@ set(LIB_SOURCES
     src/cli/StreamDisplay.cpp
 
     src/agent/AgentSetup.h
+    src/agent/AgentSetup.cpp
     src/agent/tools/BuiltInTool.h
     src/agent/tools/ChapterTools.h
     src/agent/tools/ChapterTools.cpp

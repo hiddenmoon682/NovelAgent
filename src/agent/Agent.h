@@ -2,7 +2,7 @@
 
 #include "agent/ToolRegistry.h"
 #include "llm/Conversation.h"
-#include "llm/LLMClient.h"
+#include "llm/ILLMClient.h"
 
 #include <string>
 
@@ -32,7 +32,7 @@ class Agent {
 public:
     /// @param client    LLM 客户端引用（外部管理生命周期）
     /// @param registry  工具注册中心引用（外部管理生命周期）
-    Agent(llm::LLMClient& client, ToolRegistry& registry);
+    Agent(llm::ILLMClient& client, ToolRegistry& registry);
 
     // ================================================================
     // 配置
@@ -95,7 +95,7 @@ public:
     void clearConversation();
 
 private:
-    llm::LLMClient& client_;
+    llm::ILLMClient& client_;
     ToolRegistry& registry_;
     llm::Conversation conversation_;
     std::string system_prompt_;

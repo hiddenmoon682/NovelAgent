@@ -1,5 +1,6 @@
 #include "agent/Agent.h"
 #include "agent/ToolRegistry.h"
+#include "llm/LLMClient.h"
 #include "test_sse_helpers.h"
 #include "utils/SchemaUtils.h"
 

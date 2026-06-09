@@ -9,7 +9,7 @@ namespace agent {
 // 构造 / 配置
 // ===========================================================================
 
-Agent::Agent(llm::LLMClient& client, ToolRegistry& registry)
+Agent::Agent(llm::ILLMClient& client, ToolRegistry& registry)
     : client_(client)
     , registry_(registry)
 {
