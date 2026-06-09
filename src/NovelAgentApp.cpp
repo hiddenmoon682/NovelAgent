@@ -26,8 +26,8 @@ NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
 
 void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
 {
-    // 工具自注册（通过 REGISTER_TOOL 宏），支持按配置禁用
-    if (!project_->title.empty()) {
+    // 工具自注册（仅在打开项目时注册）
+    if (project_ && !project_->title.empty()) {
         agent::registerAllTools(registry_, project_, disabledTools);
     }
 
