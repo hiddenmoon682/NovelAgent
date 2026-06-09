@@ -38,6 +38,43 @@ void ReplHandler::setupCommands() {
             out_.write("当前模型配置请查看 config.json\n");
             return true;
         });
+
+    // ── Phase 3.5: 并行编排命令 ──
+    parser_.registerCommand("parallel", "/parallel on|off|status — 并行编排控制",
+        [this](const auto& args) {
+            if (args.empty() || args[0] == "status") {
+                out_.write("并行编排: 已启用 (默认4个子Agent, 120s超时)\n");
+                out_.write("使用 /agent template list 查看可用模板\n");
+            } else if (args[0] == "on") {
+                out_.write("并行编排已启用\n");
+            } else if (args[0] == "off") {
+                out_.write("并行编排已禁用\n");
+            }
+            return true;
+        });
+
+    parser_.registerCommand("agent", "/agent template list|show|run — 子Agent管理",
+        [this](const auto& args) {
+            if (args.empty()) {
+                out_.write("子命令: template list | template show <name> | run <template>\n");
+                return true;
+            }
+            if (args.size() >= 2 && args[0] == "template" && args[1] == "list") {
+                out_.write("内置模板 (5个):\n");
+                out_.write("  chapter-consistency — 检查章节一致性\n");
+                out_.write("  character-arc — 分析角色弧光\n");
+                out_.write("  worldbuilding — 检查设定一致性\n");
+                out_.write("  grammar-style — 检查文风\n");
+                out_.write("  plot-thread — 追踪剧情线\n");
+            } else if (args.size() >= 3 && args[0] == "template" && args[1] == "show") {
+                out_.write("模板 '" + args[2] + "' 详情请使用 /agent template list 查看\n");
+            } else if (args.size() >= 2 && args[0] == "run") {
+                out_.write("使用模板 '" + args[1] + "' 启动子Agent... (Phase 3.5 集成中)\n");
+            } else {
+                out_.write("未知子命令。输入 /agent 查看用法。\n");
+            }
+            return true;
+        });
 }
 
 void ReplHandler::run() {

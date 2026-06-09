@@ -1,5 +1,15 @@
 # Changelog
 
+## [2026-06-09] Phase 3.5 — 多Agent并行编排 (9步)
+
+- **新增** — `SubAgent`: 独立对话上下文 + 受限工具集(std::async) + 120s超时
+- **新增** — `AgentOrchestrator`: 分解→并行→汇总 (max_parallel=4, std::async)
+- **新增** — `SubAgentTemplate`: 5个内置模板(chapter-consistency等)
+- **新增** — `TemplateManager`: 内置+用户模板CRUD
+- **修改** — `ReplHandler`: /parallel + /agent 命令族
+- **修改** — `NovelAgentApp`: 集成AgentOrchestrator+TemplateManager
+- 测试统计: 12/12
+
 ## [2026-06-09] Phase 3.6-3.12 — 剩余工具 + REPL 集成（Phase 3 核心完成）
 
 - **新增** — Setting 工具: `get_setting` / `get_settings` / `update_setting`

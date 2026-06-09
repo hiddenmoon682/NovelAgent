@@ -82,6 +82,13 @@ set(LIB_SOURCES
 
     src/agent/AgentSetup.h
     src/agent/AgentSetup.cpp
+    src/agent/SubAgent.h
+    src/agent/SubAgent.cpp
+    src/agent/AgentOrchestrator.h
+    src/agent/AgentOrchestrator.cpp
+    src/agent/SubAgentTemplate.h
+    src/agent/TemplateManager.h
+    src/agent/TemplateManager.cpp
     src/agent/ToolPipeline.h
     src/agent/ToolPipeline.cpp
     src/agent/PromptComposer.h

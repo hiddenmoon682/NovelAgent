@@ -1,7 +1,9 @@
 #pragma once
 
 #include "agent/Agent.h"
+#include "agent/AgentOrchestrator.h"
 #include "agent/ContextManager.h"
+#include "agent/TemplateManager.h"
 #include "agent/ToolRegistry.h"
 #include "config/AppConfig.h"
 #include "llm/LLMClient.h"
@@ -27,16 +29,20 @@ public:
 
     agent::Agent& agent() { return agent_; }
     agent::ToolRegistry& registry() { return registry_; }
+    agent::AgentOrchestrator& orchestrator() { return *orchestrator_; }
+    agent::TemplateManager& templateManager() { return template_mgr_; }
     Project& project() { return project_; }
 
 private:
-    std::unique_ptr<IOutputChannel> ownedOutput_; // 默认控制台输出
+    std::unique_ptr<IOutputChannel> ownedOutput_;
     IOutputChannel& out_;
     llm::LLMClient client_;
     agent::ToolRegistry registry_;
     agent::Agent agent_;
     agent::ContextManager cm_;
     Project project_;
+    agent::TemplateManager template_mgr_;
+    std::unique_ptr<agent::AgentOrchestrator> orchestrator_;
 
     void setupAgent(const std::vector<std::string>& disabledTools);
     void saveConversationIfNeeded(const llm::LLMResponse& response);
