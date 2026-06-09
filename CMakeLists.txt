@@ -66,12 +66,25 @@ set(LIB_SOURCES
 
     src/cli/ReplHandler.h
     src/cli/ReplHandler.cpp
+    src/cli/CommandParser.h
+    src/cli/CommandParser.cpp
+    src/cli/StreamDisplay.h
+    src/cli/StreamDisplay.cpp
 
+    src/agent/AgentSetup.h
     src/agent/tools/BuiltInTool.h
     src/agent/tools/ChapterTools.h
     src/agent/tools/ChapterTools.cpp
     src/agent/tools/CharacterTools.h
     src/agent/tools/CharacterTools.cpp
+    src/agent/tools/SettingTools.h
+    src/agent/tools/SettingTools.cpp
+    src/agent/tools/WorldRuleTools.h
+    src/agent/tools/WorldRuleTools.cpp
+    src/agent/tools/OutlineTools.h
+    src/agent/tools/OutlineTools.cpp
+    src/agent/tools/ShellTools.h
+    src/agent/tools/ShellTools.cpp
     src/agent/ToolRegistry.h
     src/agent/ToolRegistry.cpp
     src/agent/Agent.h

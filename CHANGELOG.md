@@ -1,5 +1,21 @@
 # Changelog
 
+## [2026-06-09] Phase 3.6-3.12 — 剩余工具 + REPL 集成（Phase 3 核心完成）
+
+- **新增** — Setting 工具: `get_setting` / `get_settings` / `update_setting`
+- **新增** — WorldRule 工具: `get_world_rule` / `get_world_rules` / `update_world_rule`
+- **新增** — Outline 工具: `get_outline`
+- **新增** — Project 工具: `get_project_status`
+- **新增** — Shell 工具: `run_powershell`（`_popen` 捕获 stdout + exit_code）
+- **新增** — `AgentSetup.h`: `registerAllTools()` 一键注册全部 17 个工具
+- **新增** — `CommandParser`: 斜杠命令解析（/help /exit /clear /tools /model）
+- **新增** — `StreamDisplay`: 流式输出包装（内容/思维链/工具调用/token 统计）
+- **新增** — `ReplHandler`（完整版）: REPL 主循环 + 流式显示 + 命令拦截
+- **修改** — `main.cpp`: 完整集成 CLI（-p 项目 -e 单次 --provider -v）
+- 工具总数: **17 个** (Chapter 5 + Character 4 + Setting 3 + WorldRule 3 + Outline 1 + Project 1 + Shell 1)
+- 测试统计: 12/12 全部通过
+- CLI 验证: `novelagent -p test -e "..."` --exec 模式端到端跑通
+
 ## [2026-06-09] Phase 3.5 — Character 工具（4 个）
 
 - **新增** — `src/agent/tools/CharacterTools.h/.cpp`：4 个角色管理工具类
