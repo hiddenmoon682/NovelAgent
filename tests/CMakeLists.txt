@@ -108,3 +108,11 @@ add_executable(test_deepseek_smoke
 )
 target_link_libraries(test_deepseek_smoke PRIVATE novelagent_lib)
 target_precompile_headers(test_deepseek_smoke REUSE_FROM novelagent_lib)
+
+# ── 端到端集成测试 — Agent + Chapter 工具 + DeepSeek API ──
+# 手动执行：./build/tests/test_e2e_chapter.exe（需 config.json 或环境变量）
+add_executable(test_e2e_chapter
+    test_e2e_chapter.cpp
+)
+target_link_libraries(test_e2e_chapter PRIVATE novelagent_lib)
+target_precompile_headers(test_e2e_chapter REUSE_FROM novelagent_lib)
