@@ -1,5 +1,14 @@
 #pragma once
 
+/// 多 Agent 并行编排器。
+///
+/// P1 架构改进：
+/// - ISynthesisStrategy 接口解耦汇总逻辑（LLM/拼接/模板可替换）
+/// - SubTask 从 AgentOrchestratorTypes.h 导入（共享类型）
+/// - SubAgent 通过 IToolProvider 受限视图访问工具
+
+#include "agent/AgentOrchestratorTypes.h"
+#include "agent/ISynthesisStrategy.h"
 #include "agent/SubAgent.h"
 #include "llm/ILLMClient.h"
 
@@ -10,31 +19,20 @@
 
 namespace agent {
 
+class IToolProvider;
 class ToolRegistry;
 class TemplateManager;
-
-// ============================================================================
-// 子任务数据模型
-// ============================================================================
-
-struct SubTask {
-    std::string id, description, system_prompt;
-    std::vector<std::string> allowed_tools;
-    std::string result, status, error;  // status: pending|running|completed|failed|timed_out
-};
 
 // ============================================================================
 // 策略接口
 // ============================================================================
 
-/// 并行检测策略 — 判断用户输入是否应该触发并行编排。
 class IParallelDetector {
 public:
     virtual ~IParallelDetector() = default;
     virtual bool shouldParallelize(const std::string& input) const = 0;
 };
 
-/// 关键词启发式检测器（默认）。
 class KeywordParallelDetector : public IParallelDetector {
 public:
     bool shouldParallelize(const std::string& input) const override {
@@ -44,7 +42,6 @@ public:
     }
 };
 
-/// 任务分解策略 — 将用户输入拆分为子任务列表。
 class IDecompositionStrategy {
 public:
     virtual ~IDecompositionStrategy() = default;
@@ -52,7 +49,6 @@ public:
                                             const std::string& mainPrompt) = 0;
 };
 
-/// 模板驱动分解（当前默认）。
 class TemplateDecomposition : public IDecompositionStrategy {
     TemplateManager* template_mgr_;
 public:
@@ -61,13 +57,12 @@ public:
                                     const std::string& mainPrompt) override;
 };
 
-/// SubAgent 工厂 — 创建子 Agent 实例（可注入 Mock 用于测试）。
 using SubAgentFactory = std::function<std::unique_ptr<SubAgent>(
-    llm::ILLMClient&, ToolRegistry&)>;
+    llm::ILLMClient&, IToolProvider&)>;
 
 inline auto defaultSubAgentFactory() {
-    return [](llm::ILLMClient& c, ToolRegistry& r) {
-        return std::make_unique<SubAgent>(c, r);
+    return [](llm::ILLMClient& c, IToolProvider& t) {
+        return std::make_unique<SubAgent>(c, t);
     };
 }
 
@@ -90,9 +85,10 @@ public:
 
     void setTemplateManager(TemplateManager* tm);
 
-    /// 注入自定义策略（默认使用 KeywordParallelDetector + TemplateDecomposition）
+    /// 注入自定义策略
     void setParallelDetector(std::unique_ptr<IParallelDetector> detector);
     void setDecompositionStrategy(std::unique_ptr<IDecompositionStrategy> strategy);
+    void setSynthesisStrategy(std::unique_ptr<ISynthesisStrategy> strategy);
     void setSubAgentFactory(SubAgentFactory factory);
 
 private:
@@ -105,10 +101,12 @@ private:
     TemplateManager* template_mgr_ = nullptr;
     std::unique_ptr<IParallelDetector> detector_;
     std::unique_ptr<IDecompositionStrategy> decomposition_;
+    std::unique_ptr<ISynthesisStrategy> synthesis_;
     SubAgentFactory agent_factory_ = defaultSubAgentFactory();
 
     IParallelDetector& getDetector();
     IDecompositionStrategy& getDecomposition();
+    ISynthesisStrategy& getSynthesis();
 
     std::vector<SubTask> decompose(const std::string& input);
     void executeParallel(std::vector<SubTask>& tasks);

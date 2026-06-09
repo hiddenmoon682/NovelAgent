@@ -46,7 +46,7 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
 
     agent_.setContextManager(&cm_);
     agent_.setContextWindow(client_.config().context_window);
-    agent_.enableParallel(&template_mgr_);
+    agent_.useParallelProcessor(&template_mgr_);
 }
 
 void NovelAgentApp::saveConversationIfNeeded(const llm::LLMResponse& /*response*/)

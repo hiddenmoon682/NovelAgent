@@ -1,3 +1,4 @@
+#include "agent/IToolProvider.h"
 #include "agent/SubAgent.h"
 #include "agent/TemplateManager.h"
 #include "agent/ToolRegistry.h"
@@ -44,7 +45,8 @@ void test_sub_agent_basic() {
     TEST("SubAgent 基本执行 — 返回 LLM 响应文本");
     MockLLMClient mock("子任务执行完成");
     agent::ToolRegistry registry;
-    agent::SubAgent sub(mock, registry);
+    agent::RestrictedToolProvider tools(registry, {});
+    agent::SubAgent sub(mock, tools);
 
     agent::SubAgentConfig config;
     config.task = "分析 ch-001 的剧情";
@@ -80,7 +82,8 @@ void test_sub_agent_tool_filter() {
         agent::ToolCategory::Content,
         [](const nlohmann::json&) { return nlohmann::json::object(); });
 
-    agent::SubAgent sub(mock, registry);
+    agent::RestrictedToolProvider tools(registry, {"read"});
+    agent::SubAgent sub(mock, tools);
     agent::SubAgentConfig config;
     config.task = "test";
     config.system_prompt = "test";

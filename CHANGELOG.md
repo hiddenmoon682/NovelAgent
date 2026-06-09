@@ -1,5 +1,25 @@
 # Changelog
 
+## [2026-06-10] 架构深层重构 — 依赖倒置+策略模式+安全约束 (P0-P3)
+
+- **P0** — `ToolCallLoop`: 提取 Agent/SubAgent 中 ~90 行重复 tool call 循环为独立引擎
+  - 支持超时控制、首轮流式/非流式配置、统一错误处理
+  - Agent::runToolLoop 和 SubAgent::execute 均委托 ToolCallLoop
+- **P0** — `IToolProvider` + `RestrictedToolProvider`: 工具访问安全约束
+  - SubAgent 不再持有完整 ToolRegistry&，改为持有 IToolProvider&
+  - RestrictedToolProvider 白名单机制在类型系统层面保证安全
+  - O(n*m) 过滤优化为 O(n)
+- **P1** — `ISynthesisStrategy`: AgentOrchestrator 汇总策略接口
+  - LlmSynthesis（LLM汇总）、ConcatSynthesis（简单拼接）、CustomSynthesis（注入函数）
+  - AgentOrchestrator::synthesize() 不再硬编码 LLM 调用
+- **P1** — `IMessageProcessor`: 消除 Agent 硬编码串行/并行分支
+  - SerialProcessor（tool call 循环）、ParallelProcessor（委托 Orchestrator）
+  - 新增 PlanThenExecute 模式只需实现接口并注入
+- **P1** — `AgentOrchestratorTypes.h`: 分离 SubTask 类型到独立头文件
+- **新增** — 10 个文件: ToolCallLoop, IToolProvider, IMessageProcessor, ISynthesisStrategy, AgentOrchestratorTypes
+- **修改** — Agent(重写-策略模式), SubAgent(IToolProvider), AgentOrchestrator(ISynthesisStrategy), NovelAgentApp(适配)
+- 测试统计: **14/14** 全部通过
+
 ## [2026-06-10] Phase 4 架构重构 — 审查问题修复 (P0-P3)
 
 - **P0** — `HttpClient`: 提取共享 HTTP 基础设施（URL解析/认证/重试/错误处理）

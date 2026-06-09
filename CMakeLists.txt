@@ -81,6 +81,9 @@ set(CORE_SOURCES
 
     src/agent/ToolRegistry.h
     src/agent/ToolRegistry.cpp
+    src/agent/IToolProvider.h
+    src/agent/IToolProvider.cpp
+    src/agent/AgentOrchestratorTypes.h
     src/agent/ContextManagerTypes.h
     src/agent/ConversationSummarizer.h
     src/agent/ConversationSummarizer.cpp
@@ -90,6 +93,12 @@ set(CORE_SOURCES
     src/agent/DegradationPipeline.cpp
     src/agent/SessionPersistence.h
     src/agent/SessionPersistence.cpp
+    src/agent/ToolCallLoop.h
+    src/agent/ToolCallLoop.cpp
+    src/agent/IMessageProcessor.h
+    src/agent/IMessageProcessor.cpp
+    src/agent/ISynthesisStrategy.h
+    src/agent/ISynthesisStrategy.cpp
     src/agent/ContextManager.h
     src/agent/ContextManager.cpp
     src/agent/Agent.h

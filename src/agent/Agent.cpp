@@ -1,7 +1,10 @@
+/// Agent 实现 — P1 重构版（IMessageProcessor 策略）。
+
 #include "agent/Agent.h"
 #include "agent/AgentOrchestrator.h"
 #include "agent/ContextManager.h"
 #include "agent/PromptComposer.h"
+#include "agent/ToolCallLoop.h"
 #include "agent/ToolPipeline.h"
 #include "agent/ToolRegistry.h"
 
@@ -14,16 +17,24 @@ namespace agent {
 // ===========================================================================
 
 Agent::Agent(llm::ILLMClient& client, ToolRegistry& registry)
-    : client_(client)
-    , registry_(registry)
+    : client_(client), registry_(registry)
 {
+    useSerialProcessor();  // 默认串行模式
 }
 
-Agent::~Agent() = default;  // 在 .cpp 中定义（orchestrator_ 需要完整类型）
+Agent::~Agent() = default;
 
 void Agent::setSystemPrompt(std::string prompt)
 {
     system_prompt_ = std::move(prompt);
+    // 同步更新处理器中的 prompt
+    if (processor_) {
+        auto* sp = dynamic_cast<SerialProcessor*>(processor_.get());
+        if (sp) {
+            // SerialProcessor 在构造时已持有 prompt 副本，重建
+            useSerialProcessor();
+        }
+    }
 }
 
 void Agent::setMaxToolRounds(int n)
@@ -31,57 +42,56 @@ void Agent::setMaxToolRounds(int n)
     max_tool_rounds_ = (n >= 1) ? n : 1;
 }
 
-void Agent::clearConversation()
+void Agent::setContextManager(ContextManager* cm) { context_manager_ = cm; }
+void Agent::setContextWindow(int window) { context_window_ = window; }
+
+void Agent::clearConversation() { conversation_.clear(); }
+
+// ===========================================================================
+// 处理器策略（P1）
+// ===========================================================================
+
+void Agent::useSerialProcessor()
 {
-    conversation_.clear();
+    auto sp = std::make_unique<SerialProcessor>(client_, registry_, system_prompt_);
+    sp->setContextManager(context_manager_);
+    sp->setContextWindow(context_window_);
+    sp->setMaxToolRounds(max_tool_rounds_);
+    processor_ = std::move(sp);
+}
+
+void Agent::useParallelProcessor(TemplateManager* templateMgr)
+{
+    auto pp = std::make_unique<ParallelProcessor>(client_, registry_, system_prompt_);
+    if (templateMgr) pp->setTemplateManager(templateMgr);
+    processor_ = std::move(pp);
+    spdlog::info("[Agent] 切换到并行处理器");
+}
+
+void Agent::setProcessor(std::unique_ptr<IMessageProcessor> processor)
+{
+    processor_ = std::move(processor);
+}
+
+bool Agent::isParallelEnabled() const
+{
+    return dynamic_cast<ParallelProcessor*>(processor_.get()) != nullptr;
 }
 
 // ===========================================================================
-// processUserMessage — 用户消息入口
+// processUserMessage — 委托 IMessageProcessor
 // ===========================================================================
 
 llm::LLMResponse Agent::processUserMessage(const std::string& input,
                                             llm::StreamCallbacks callbacks)
 {
     if (input.empty()) {
-        spdlog::warn("[Agent] 收到空输入");
-        return llm::LLMResponse{};
+        spdlog::warn("[Agent] 空输入");
+        return {};
     }
 
-    // 并行编排：由 Orchestrator 内部策略判断
-    if (orchestrator_ && orchestrator_->isParallelEnabled()) {
-        auto result = orchestrator_->processMessage(input);
-        llm::LLMResponse resp;
-        resp.content = result;
-        conversation_.addUser(input);
-        conversation_.addAssistant(result);
-        return resp;
-    }
-
-    conversation_.addUser(input);
-    auto response = runToolLoop(std::move(callbacks));
-
-    if (!response.content.empty() || !response.tool_calls.empty()) {
-        conversation_.add(makeAssistantMessage(response));
-    }
-
-    return response;
-}
-
-void Agent::enableParallel(TemplateManager* templateMgr) {
-    orchestrator_ = std::make_unique<AgentOrchestrator>(
-        client_, registry_, system_prompt_);
-    if (templateMgr) orchestrator_->setTemplateManager(templateMgr);
-    spdlog::info("[Agent] 并行编排已启用");
-}
-
-void Agent::disableParallel() {
-    orchestrator_.reset();
-    spdlog::info("[Agent] 并行编排已禁用");
-}
-
-bool Agent::isParallelEnabled() const {
-    return orchestrator_ != nullptr && orchestrator_->isParallelEnabled();
+    auto result = processor_->process(input, conversation_, std::move(callbacks));
+    return result.raw_response;
 }
 
 // ===========================================================================
@@ -94,7 +104,6 @@ llm::LLMResponse Agent::execute(const std::string& command,
     std::vector<llm::Message> messages = { llm::Message::user(command) };
     auto tools = registry_.getToolDefinitions();
 
-    // --exec 模式也使用 ContextManager（如果已设置）
     std::string effective_prompt = system_prompt_;
     if (context_manager_) {
         llm::Conversation tempConv;
@@ -106,77 +115,6 @@ llm::LLMResponse Agent::execute(const std::string& command,
     }
 
     return client_.chat(messages, tools, effective_prompt, std::move(callbacks));
-}
-
-// ===========================================================================
-// runToolLoop — tool call 循环
-// ===========================================================================
-
-llm::LLMResponse Agent::runToolLoop(llm::StreamCallbacks callbacks)
-{
-    auto tools = registry_.getToolDefinitions();
-    ToolPipeline pipeline(registry_, conversation_);
-
-    // 首轮：流式调用
-    std::vector<llm::Message> effective_messages;
-    auto effective_prompt = buildEffectivePrompt(effective_messages);
-    auto response = client_.chat(
-        effective_messages, tools, effective_prompt, std::move(callbacks));
-
-    // 后续轮次：非流式 + tool call 循环
-    for (int round = 0; round < max_tool_rounds_; ++round) {
-        if (response.tool_calls.empty()) {
-            spdlog::debug("[Agent] 循环结束 (round={})", round);
-            return response;
-        }
-
-        spdlog::info("[Agent] {} 个工具调用 (round={})",
-                     response.tool_calls.size(), round);
-
-        conversation_.add(makeAssistantMessage(response));
-        pipeline.executeAndAppend(response.tool_calls); // 使用 ToolPipeline
-
-        effective_prompt = buildEffectivePrompt(effective_messages);
-        response = client_.chatNonStreaming(
-            effective_messages, tools, effective_prompt);
-    }
-
-    spdlog::warn("[Agent] 达到最大轮数 ({})", max_tool_rounds_);
-    return response;
-}
-
-// ===========================================================================
-// buildEffectivePrompt — 使用 PromptComposer 显式组装
-// ===========================================================================
-
-std::string Agent::buildEffectivePrompt(std::vector<llm::Message>& out_messages)
-{
-    if (!context_manager_) {
-        out_messages = conversation_.messages();
-        return system_prompt_;
-    }
-
-    auto assembly = context_manager_->assemble(
-        conversation_, context_window_);
-    out_messages = std::move(assembly.messages);
-
-    PromptComponents pc;
-    pc.personality = system_prompt_;
-    pc.context = assembly.system_prompt;
-    return PromptComposer::compose(pc);
-}
-
-// ===========================================================================
-// 辅助方法
-// ===========================================================================
-
-llm::Message Agent::makeAssistantMessage(const llm::LLMResponse& response)
-{
-    llm::Message msg;
-    msg.role = llm::MessageRole::Assistant;
-    msg.content = response.content;
-    msg.tool_calls = response.tool_calls;
-    return msg;
 }
 
 } // namespace agent

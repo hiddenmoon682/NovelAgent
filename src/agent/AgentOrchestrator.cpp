@@ -1,4 +1,7 @@
+/// AgentOrchestrator 实现 — P1 重构版（ISynthesisStrategy + RestrictedToolProvider）。
+
 #include "agent/AgentOrchestrator.h"
+#include "agent/IToolProvider.h"
 #include "agent/TemplateManager.h"
 #include "agent/ToolRegistry.h"
 
@@ -35,7 +38,6 @@ std::vector<SubTask> TemplateDecomposition::decompose(
         }
     }
 
-    // Fallback: 单任务
     std::vector<SubTask> tasks;
     SubTask st;
     st.id = "sub-1";
@@ -56,6 +58,7 @@ AgentOrchestrator::AgentOrchestrator(
     : client_(client), registry_(registry), main_prompt_(std::move(mainPrompt))
 {
     detector_ = std::make_unique<KeywordParallelDetector>();
+    synthesis_ = std::make_unique<LlmSynthesis>(client_, main_prompt_);
 }
 
 void AgentOrchestrator::setTemplateManager(TemplateManager* tm) {
@@ -73,6 +76,11 @@ void AgentOrchestrator::setDecompositionStrategy(
     decomposition_ = std::move(strategy);
 }
 
+void AgentOrchestrator::setSynthesisStrategy(
+    std::unique_ptr<ISynthesisStrategy> strategy) {
+    synthesis_ = std::move(strategy);
+}
+
 void AgentOrchestrator::setSubAgentFactory(SubAgentFactory factory) {
     agent_factory_ = std::move(factory);
 }
@@ -83,6 +91,10 @@ IDecompositionStrategy& AgentOrchestrator::getDecomposition() {
     if (!decomposition_)
         decomposition_ = std::make_unique<TemplateDecomposition>(template_mgr_);
     return *decomposition_;
+}
+
+ISynthesisStrategy& AgentOrchestrator::getSynthesis() {
+    return *synthesis_;
 }
 
 std::string AgentOrchestrator::processMessage(const std::string& input)
@@ -98,8 +110,7 @@ std::string AgentOrchestrator::processMessage(const std::string& input)
     auto tasks = decompose(input);
     if (tasks.empty()) {
         std::vector<llm::Message> msgs = { llm::Message::user(input) };
-        auto resp = client_.chatNonStreaming(msgs, {}, main_prompt_);
-        return resp.content;
+        return client_.chatNonStreaming(msgs, {}, main_prompt_).content;
     }
 
     spdlog::info("[Orchestrator] {} 个子任务", tasks.size());
@@ -135,7 +146,9 @@ void AgentOrchestrator::executeParallel(std::vector<SubTask>& tasks)
             config.timeout = std::chrono::seconds(120);
             config.max_tool_rounds = 3;
 
-            auto agent = agent_factory_(client_, registry_);
+            // P0 改进：SubAgent 通过 RestrictedToolProvider 受限视图访问工具
+            RestrictedToolProvider tools(registry_, task.allowed_tools);
+            auto agent = agent_factory_(client_, tools);
             return agent->execute(config);
         });
         ++running;
@@ -153,21 +166,8 @@ void AgentOrchestrator::executeParallel(std::vector<SubTask>& tasks)
 
 std::string AgentOrchestrator::synthesize(const std::vector<SubTask>& tasks)
 {
-    std::ostringstream summary;
-    summary << "子任务执行结果汇总:\n\n";
-    for (const auto& t : tasks) {
-        summary << "## " << t.id << " [" << t.status << "]\n";
-        if (!t.error.empty()) summary << "错误: " << t.error << "\n";
-        if (!t.result.empty()) {
-            std::string r = t.result;
-            if (r.size() > 800) r = r.substr(0, 800) + "...(已截断)";
-            summary << r << "\n\n";
-        }
-    }
-    summary << "请用中文汇总以上子任务的执行结果。";
-    std::vector<llm::Message> msgs = { llm::Message::user(summary.str()) };
-    auto resp = client_.chatNonStreaming(msgs, {}, main_prompt_);
-    return resp.content;
+    // P1 改进：委托 ISynthesisStrategy，可替换汇总方式
+    return getSynthesis().synthesize(tasks, "");
 }
 
 } // namespace agent
