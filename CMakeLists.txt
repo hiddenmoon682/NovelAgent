@@ -72,6 +72,8 @@ set(LIB_SOURCES
     src/agent/ToolRegistry.cpp
     src/agent/Agent.h
     src/agent/Agent.cpp
+    src/agent/ContextManager.h
+    src/agent/ContextManager.cpp
 )
 
 add_library(novelagent_lib OBJECT ${LIB_SOURCES})

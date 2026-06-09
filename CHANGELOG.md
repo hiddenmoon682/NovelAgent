@@ -1,5 +1,16 @@
 # Changelog
 
+## [2026-06-08] Phase 3.3 — ContextManager（基础版）
+
+- **新增** — `src/agent/ContextManager.h/.cpp`：上下文管理器，负责 token 预算计算 + 消息截断 + 系统提示词构建
+- **新增** — `ContextAssembly` 结构体：截断后消息 + 系统提示词 + 预算统计 + 截断元信息
+- **新增** — `calculateBudget()`：80/20 规则（80% 输入 + 20% 输出预留）
+- **新增** — `truncateMessages()`：从旧到新移除超出预算的消息，保证最新消息不丢失
+- **新增** — `buildSystemPrompt()`：委托 PromptContextBuilder 按章节构建系统提示词
+- **新增** — `tests/test_context_manager.cpp`：6 个测试（预算计算、不截断、截断触发、无 Project、有/无章节）
+- 影响范围：`src/agent/ContextManager.h`、`src/agent/ContextManager.cpp`、`tests/test_context_manager.cpp`
+- 测试统计：10/10 全部通过（新增 1 个测试目标）
+
 ## [2026-06-08] Phase 3.2 — Agent 核心循环
 
 - **新增** — `src/agent/Agent.h/.cpp`：核心 Agent 类，实现 `processUserMessage()` 和 `execute()` 两种入口
