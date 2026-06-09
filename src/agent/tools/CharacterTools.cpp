@@ -232,3 +232,8 @@ json UpdateCharacterTool::execute(const json& args) {
 }
 
 } // namespace agent
+
+REGISTER_TOOL(agent::GetCharacterTool, "get_character", get_character)
+REGISTER_TOOL(agent::ListCharactersTool, "get_characters", get_characters)
+REGISTER_TOOL(agent::CreateCharacterTool, "create_character", create_character)
+REGISTER_TOOL(agent::UpdateCharacterTool, "update_character", update_character)

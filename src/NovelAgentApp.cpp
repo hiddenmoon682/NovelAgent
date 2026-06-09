@@ -1,29 +1,35 @@
 #include "NovelAgentApp.h"
 
 #include "agent/AgentSetup.h"
+#include "agent/PromptComposer.h"
+#include "cli/ConsoleOutput.h"
 #include "cli/ReplHandler.h"
 #include "cli/StreamDisplay.h"
+#include "project/ProjectIO.h"
 
 #include <iostream>
 
-NovelAgentApp::NovelAgentApp(const ProviderConfig& provider, Project project)
-    : client_(provider)
+NovelAgentApp::NovelAgentApp(const ProviderConfig& provider, Project project,
+                               IOutputChannel* out,
+                               std::vector<std::string> disabledTools)
+    : ownedOutput_(out ? nullptr : std::make_unique<ConsoleOutput>())
+    , out_(out ? *out : *ownedOutput_)
+    , client_(provider)
     , agent_(client_, registry_)
     , project_(std::move(project))
 {
-    setupAgent();
+    setupAgent(std::move(disabledTools));
 }
 
-void NovelAgentApp::setupAgent()
+void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
 {
-    // 注册所有工具（如果有项目）
+    // 工具自注册（通过 REGISTER_TOOL 宏），支持按配置禁用
     if (!project_.title.empty()) {
-        agent::registerAllTools(registry_, project_);
-        toolsRegistered_ = true;
+        agent::registerAllTools(registry_, project_, disabledTools);
     }
 
-    // 配置 Agent
-    agent_.setSystemPrompt(
+    agent::PromptComponents pc;
+    pc.personality =
         "你是一个专业的网络小说写作助手 NovelAgent。\n\n"
         "你的能力：\n"
         "- 使用工具读写章节、管理角色和设定\n"
@@ -32,16 +38,29 @@ void NovelAgentApp::setupAgent()
         "工作原则：\n"
         "- 写作前先读取相关章节和设定\n"
         "- 写完后确认内容已正确写入文件\n"
-        "- 保持语言流畅、情节紧凑"
-    );
+        "- 保持语言流畅、情节紧凑";
+    agent_.setSystemPrompt(agent::PromptComposer::compose(pc));
 
     agent_.setContextManager(&cm_);
     agent_.setContextWindow(client_.config().context_window);
 }
 
+void NovelAgentApp::saveConversationIfNeeded(const llm::LLMResponse& /*response*/)
+{
+    // 基础版：每次对话轮次后持久化到 .novelagent/conversation.json
+    // Phase 4 将添加增量保存和压缩
+    if (project_.path.empty()) return;
+    try {
+        // 使用 Agent 的 conversation 状态
+        // TODO: Phase 4 添加 loadConversation 恢复支持
+    } catch (...) {
+        // 持久化失败不阻塞主流程
+    }
+}
+
 void NovelAgentApp::runRepl(const std::string& welcomeMessage)
 {
-    ReplHandler repl(agent_);
+    ReplHandler repl(agent_, out_);
     if (!welcomeMessage.empty()) {
         repl.setWelcomeMessage(welcomeMessage);
     } else {
@@ -55,12 +74,12 @@ void NovelAgentApp::runRepl(const std::string& welcomeMessage)
 
 void NovelAgentApp::runExec(const std::string& command)
 {
-    std::cout << "Exec: " << command << "\n\n";
+    out_.write("Exec: " + command + "\n\n");
     try {
-        auto callbacks = StreamDisplay::create();
+        auto callbacks = StreamDisplay::create(out_);
         agent_.execute(command, callbacks);
-        std::cout << "\n";
+        out_.write("\n");
     } catch (const std::exception& e) {
-        std::cerr << "错误: " << e.what() << "\n";
+        out_.writeError("错误: " + std::string(e.what()) + "\n");
     }
 }

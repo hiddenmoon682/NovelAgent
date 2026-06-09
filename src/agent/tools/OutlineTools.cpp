@@ -48,3 +48,6 @@ json GetProjectStatusTool::execute(const json&) {
 }
 
 } // namespace agent
+
+REGISTER_TOOL(agent::GetOutlineTool, "get_outline", get_outline)
+REGISTER_TOOL(agent::GetProjectStatusTool, "get_project_status", get_project_status)

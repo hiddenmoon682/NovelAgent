@@ -208,3 +208,9 @@ json CreateChapterTool::execute(const json& args) {
 }
 
 } // namespace agent
+
+REGISTER_TOOL(agent::ReadChapterTool, "read_chapter", read_chapter)
+REGISTER_TOOL(agent::WriteChapterTool, "write_chapter", write_chapter)
+REGISTER_TOOL(agent::AppendChapterTool, "append_to_chapter", append_to_chapter)
+REGISTER_TOOL(agent::ListChaptersTool, "list_chapters", list_chapters)
+REGISTER_TOOL(agent::CreateChapterTool, "create_chapter", create_chapter)

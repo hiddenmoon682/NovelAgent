@@ -1,12 +1,15 @@
 #pragma once
 
-/// 工具注册辅助 — 声明与实现分离，避免编译时瓶颈。
-/// 声明只需前向声明，实现放在 AgentSetup.cpp 中。
-/// 修改任意工具头文件不会触发 main.cpp 重新编译。
+#include <string>
+#include <vector>
 
 struct Project;
 
 namespace agent {
 class ToolRegistry;
-void registerAllTools(ToolRegistry& registry, Project& project);
+
+/// 将所有已注册工具实例化到 ToolRegistry。
+/// @param disabled  禁用的工具名列表（空=全部启用）
+void registerAllTools(ToolRegistry& registry, Project& project,
+                      const std::vector<std::string>& disabled = {});
 } // namespace agent

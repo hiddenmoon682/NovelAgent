@@ -60,3 +60,7 @@ json UpdateWorldRuleTool::execute(const json& args) {
 }
 
 } // namespace agent
+
+REGISTER_TOOL(agent::GetWorldRuleTool, "get_world_rule", get_world_rule)
+REGISTER_TOOL(agent::ListWorldRulesTool, "get_world_rules", get_world_rules)
+REGISTER_TOOL(agent::UpdateWorldRuleTool, "update_world_rule", update_world_rule)

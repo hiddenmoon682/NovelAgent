@@ -2,25 +2,23 @@
 
 #include "llm/Message.h"
 #include <nlohmann/json.hpp>
+#include <functional>
+#include <memory>
 #include <string>
+#include <vector>
+
+struct Project; // 全局 Project 前向声明
 
 namespace agent {
 
 // ============================================================================
-// ToolCategory — 工具类别（用于分组展示和 /help 命令）
+// ToolCategory — 工具类别
 // ============================================================================
 
 enum class ToolCategory {
-    Project,    // 项目管理（创建/打开/保存）
-    Content,    // 内容读写（章节读写）
-    Character,  // 角色管理
-    Setting,    // 设定管理
-    Outline,    // 大纲管理
-    WorldRule,  // 世界规则
-    System      // 系统操作（Shell、文件）
+    Project, Character, Content, Setting, Outline, WorldRule, System
 };
 
-/// 工具类别 → 中文名称（供 /help 展示）
 inline const char* toolCategoryName(ToolCategory cat) {
     switch (cat) {
         case ToolCategory::Project:   return "项目管理";
@@ -35,38 +33,56 @@ inline const char* toolCategoryName(ToolCategory cat) {
 }
 
 // ============================================================================
-// BuiltInTool — 内置工具抽象基类
+// BuiltInTool — 内置工具抽象基类（含自注册机制）
 // ============================================================================
 
-/// 每个具体工具继承此类，实现 5 个纯虚方法。
-/// ToolRegistry 同时支持两种注册方式：
-///   1. registerTool() — 函数式（轻量、无状态工具）
-///   2. registerBuiltInTool() — 类式（复杂、有状态工具，继承此类）
 class BuiltInTool {
 public:
     virtual ~BuiltInTool() = default;
 
-    /// 工具名称（与 LLM function calling 中的 name 一致）
     virtual std::string name() const = 0;
-
-    /// 工具功能描述（告诉 LLM 何时调用此工具）
     virtual std::string description() const = 0;
-
-    /// 参数 JSON Schema（OpenAI function calling 格式的 parameters 字段）
     virtual nlohmann::json parameters() const = 0;
-
-    /// 执行工具。
-    /// @param args  LLM 传来的参数 JSON（对应 schema 中定义的字段）
-    /// @return      结果 JSON（可以是任意结构，LLM 会自行解读）
     virtual nlohmann::json execute(const nlohmann::json& args) = 0;
-
-    /// 工具所属类别
     virtual ToolCategory category() const = 0;
 
-    /// 转换为 ToolDefinition，供 LLMClient::chat() 作为 tools 参数传入。
     llm::ToolDefinition toDefinition() const {
         return llm::ToolDefinition{name(), description(), parameters()};
     }
+
+    // ================================================================
+    // 自注册机制 — 工具只需在 .cpp 中调用 REGISTER_TOOL 宏
+    // ================================================================
+
+    using Factory = std::function<std::unique_ptr<BuiltInTool>(::Project&)>;
+
+    /// 注册工具工厂（由 REGISTER_TOOL 宏调用）
+    static void registerFactory(std::string name, Factory factory);
+
+    /// 将所有已注册工具实例化并添加到 ToolRegistry
+    static void registerAllTo(class ToolRegistry& registry, Project& project,
+                               const std::vector<std::string>& disabled = {});
+
+    /// 列出所有已注册的工具名
+    static const std::vector<std::string>& registeredToolNames();
+
+private:
+    struct Entry { std::string name; Factory factory; };
+    static std::vector<Entry>& factories();
 };
 
 } // namespace agent
+
+/// 在工具 .cpp 文件中使用此宏实现自注册。
+/// 示例: REGISTER_TOOL(ReadChapterTool, "read_chapter", read_chapter)
+#define REGISTER_TOOL(ToolClass, toolName, varSuffix) \
+    namespace { \
+        static const bool _reg_##varSuffix = []() { \
+            agent::BuiltInTool::registerFactory( \
+                toolName, \
+                [](::Project& p) -> std::unique_ptr<agent::BuiltInTool> { \
+                    return std::make_unique<ToolClass>(p); \
+                }); \
+            return true; \
+        }(); \
+    }

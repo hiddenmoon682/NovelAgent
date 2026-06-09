@@ -1,6 +1,4 @@
 #include "cli/CommandParser.h"
-#include <algorithm>
-#include <iostream>
 #include <sstream>
 
 void CommandParser::registerCommand(const std::string& name, std::string help,
@@ -13,29 +11,26 @@ bool CommandParser::isCommand(const std::string& input) {
 }
 
 bool CommandParser::execute(const std::string& input) {
-    // 去掉开头的 '/'
     std::string cmd_line = input.substr(1);
     std::istringstream ss(cmd_line);
     std::string cmd_name;
     ss >> cmd_name;
 
-    // 收集参数
     std::vector<std::string> args;
     std::string arg;
     while (ss >> arg) args.push_back(arg);
 
-    // 大小写不敏感匹配
     auto lower_cmd = cmd_name;
     for (char& ch : lower_cmd) ch = static_cast<char>(std::tolower(ch));
     auto it = std::find_if(commands_.begin(), commands_.end(),
         [&](const Command& c) {
-            std::string lower_name = c.name;
-            for (char& ch : lower_name) ch = static_cast<char>(std::tolower(ch));
-            return lower_name == lower_cmd;
+            std::string n = c.name;
+            for (char& ch : n) ch = static_cast<char>(std::tolower(ch));
+            return n == lower_cmd;
         });
 
     if (it == commands_.end()) {
-        std::cout << "未知命令: /" << cmd_name << "（输入 /help 查看可用命令）\n";
+        out_.write("未知命令: /" + cmd_name + "（输入 /help 查看可用命令）\n");
         return true;
     }
 
@@ -43,13 +38,13 @@ bool CommandParser::execute(const std::string& input) {
 }
 
 void CommandParser::printHelp() const {
-    std::cout << "\n可用命令:\n";
+    std::string help = "\n可用命令:\n";
     for (const auto& cmd : commands_) {
-        std::cout << "  /" << cmd.name;
-        // 对齐
+        help += "  /" + cmd.name;
         int pad = 20 - static_cast<int>(cmd.name.size());
-        if (pad > 0) std::cout << std::string(pad, ' ');
-        std::cout << cmd.help << "\n";
+        if (pad > 0) help += std::string(pad, ' ');
+        help += cmd.help + "\n";
     }
-    std::cout << "\n";
+    help += "\n";
+    out_.write(help);
 }

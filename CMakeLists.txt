@@ -71,6 +71,8 @@ set(LIB_SOURCES
     src/prompt/PromptContextBuilder.h
     src/prompt/PromptContextBuilder.cpp
 
+    src/cli/IOutputChannel.h
+    src/cli/ConsoleOutput.h
     src/cli/ReplHandler.h
     src/cli/ReplHandler.cpp
     src/cli/CommandParser.h
@@ -83,6 +85,7 @@ set(LIB_SOURCES
     src/agent/ToolPipeline.h
     src/agent/PromptComposer.h
     src/agent/tools/BuiltInTool.h
+    src/agent/tools/BuiltInTool.cpp
     src/agent/tools/ChapterTools.h
     src/agent/tools/ChapterTools.cpp
     src/agent/tools/CharacterTools.h

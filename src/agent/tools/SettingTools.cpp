@@ -62,3 +62,7 @@ json UpdateSettingTool::execute(const json& args) {
 }
 
 } // namespace agent
+
+REGISTER_TOOL(agent::GetSettingTool, "get_setting", get_setting)
+REGISTER_TOOL(agent::ListSettingsTool, "get_settings", get_settings)
+REGISTER_TOOL(agent::UpdateSettingTool, "update_setting", update_setting)

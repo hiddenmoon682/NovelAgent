@@ -1,5 +1,4 @@
 #include "cli/StreamDisplay.h"
-#include <iostream>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -11,33 +10,32 @@ namespace {
         if (!GetConsoleMode(hOut, &mode)) return false;
         return SetConsoleMode(hOut, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
     }();
-} // namespace
+}
 #endif
 
-llm::StreamCallbacks StreamDisplay::create() {
+llm::StreamCallbacks StreamDisplay::create(IOutputChannel& out) {
     llm::StreamCallbacks cb;
 
-    cb.on_content = [](const std::string& delta) {
-        std::cout << delta << std::flush;
+    cb.on_content = [&out](const std::string& delta) {
+        out.write(delta);
     };
 
-    cb.on_reasoning = [](const std::string& delta) {
-        // 思维链以暗色显示
-        std::cout << "\033[90m" << delta << "\033[0m" << std::flush;
+    cb.on_reasoning = [&out](const std::string& delta) {
+        out.write("\033[90m" + delta + "\033[0m");
     };
 
-    cb.on_tool_call_start = []() {
-        std::cout << "\n  \033[90m[工具调用...]\033[0m " << std::flush;
+    cb.on_tool_call_start = [&out]() {
+        out.write("\n  \033[90m[工具调用...]\033[0m ");
     };
 
-    cb.on_complete = [](const llm::LLMResponse& resp) {
+    cb.on_complete = [&out](const llm::LLMResponse& resp) {
         if (resp.total_tokens > 0) {
-            std::cout << "\n  \033[90m(" << resp.total_tokens << " tokens)\033[0m";
+            out.write("\n  \033[90m(" + std::to_string(resp.total_tokens) + " tokens)\033[0m");
         }
     };
 
-    cb.on_error = [](const std::string& err) {
-        std::cerr << "\n  \033[31m错误: " << err << "\033[0m\n";
+    cb.on_error = [&out](const std::string& err) {
+        out.writeError("\n  \033[31m错误: " + err + "\033[0m\n");
     };
 
     return cb;
