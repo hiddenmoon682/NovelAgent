@@ -87,32 +87,24 @@ public:
     const std::vector<Message>& all() const { return messages_; }
 
     // ================================================================
-    // 容器操作
+    // 容器操作（只读，修改通过 add*() 方法保证一致性）
     // ================================================================
 
     bool empty() const { return messages_.empty(); }
     size_t size() const { return messages_.size(); }
 
-    Message& back() { return messages_.back(); }
     const Message& back() const { return messages_.back(); }
-
-    Message& front() { return messages_.front(); }
     const Message& front() const { return messages_.front(); }
-
-    Message& operator[](size_t i) { return messages_[i]; }
     const Message& operator[](size_t i) const { return messages_[i]; }
 
     void clear() { messages_.clear(); }
     void popBack() { messages_.pop_back(); }
-
     void reserve(size_t n) { messages_.reserve(n); }
 
     // ================================================================
-    // 迭代器
+    // 迭代器（只读）
     // ================================================================
 
-    auto begin()       { return messages_.begin(); }
-    auto end()         { return messages_.end(); }
     auto begin() const { return messages_.begin(); }
     auto end()   const { return messages_.end(); }
 

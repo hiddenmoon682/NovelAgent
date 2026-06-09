@@ -40,7 +40,7 @@ public:
     /// @param fn           执行回调：接收 args JSON，返回 result JSON
     void registerTool(std::string name,
                       std::string description,
-                      nlohmann::json parameters,
+                      const nlohmann::json& parameters,
                       ToolCategory category,
                       std::function<nlohmann::json(const nlohmann::json&)> fn);
 

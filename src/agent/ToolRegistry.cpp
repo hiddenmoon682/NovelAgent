@@ -12,14 +12,14 @@ namespace agent {
 void ToolRegistry::registerTool(
     std::string name,
     std::string description,
-    nlohmann::json parameters,
+    const nlohmann::json& parameters,
     ToolCategory category,
     std::function<nlohmann::json(const nlohmann::json&)> fn)
 {
     tools_.push_back({
         std::move(name),
         std::move(description),
-        std::move(parameters),
+        parameters,  // 拷贝一次（注册阶段非热路径）
         category,
         std::move(fn)
     });
