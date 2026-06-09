@@ -1,6 +1,5 @@
 #pragma once
 
-#include "agent/ToolRegistry.h"
 #include "llm/Conversation.h"
 #include "llm/ILLMClient.h"
 
@@ -8,10 +7,9 @@
 
 namespace agent {
 
-// 前向声明
+// 前向声明（避免拉入 ToolRegistry → BuiltInTool → nlohmann/json_fwd 链）
+class ToolRegistry;
 class ContextManager;
-
-/// 核心 Agent — 接收用户输入，编排 LLM 调用与工具执行。
 ///
 /// 职责：
 /// - 维护对话历史（Conversation）

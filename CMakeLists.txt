@@ -83,6 +83,7 @@ set(LIB_SOURCES
     src/agent/AgentSetup.h
     src/agent/AgentSetup.cpp
     src/agent/ToolPipeline.h
+    src/agent/ToolPipeline.cpp
     src/agent/PromptComposer.h
     src/agent/tools/BuiltInTool.h
     src/agent/tools/BuiltInTool.cpp

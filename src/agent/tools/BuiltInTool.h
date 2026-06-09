@@ -1,7 +1,7 @@
 #pragma once
 
 #include "llm/Message.h"
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>  // 仅前向声明，避免拉入 ~25K 行模板
 #include <functional>
 #include <memory>
 #include <string>
