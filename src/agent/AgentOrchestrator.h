@@ -13,41 +13,87 @@ namespace agent {
 class ToolRegistry;
 class TemplateManager;
 
-/// 子任务数据模型。
+// ============================================================================
+// 子任务数据模型
+// ============================================================================
+
 struct SubTask {
-    std::string id;
-    std::string description;
-    std::string system_prompt;
+    std::string id, description, system_prompt;
     std::vector<std::string> allowed_tools;
-    std::string result;       // 执行结果文本
-    std::string status;       // pending | running | completed | failed | timed_out
-    std::string error;
+    std::string result, status, error;  // status: pending|running|completed|failed|timed_out
 };
 
-/// 多 Agent 并行编排器。
-///
-/// 接收复杂任务 → 拆分为子任务 → 并行执行 → 汇总结果。
-/// 支持模板驱动的子 Agent 配置和运行时 /parallel 开关。
+// ============================================================================
+// 策略接口
+// ============================================================================
+
+/// 并行检测策略 — 判断用户输入是否应该触发并行编排。
+class IParallelDetector {
+public:
+    virtual ~IParallelDetector() = default;
+    virtual bool shouldParallelize(const std::string& input) const = 0;
+};
+
+/// 关键词启发式检测器（默认）。
+class KeywordParallelDetector : public IParallelDetector {
+public:
+    bool shouldParallelize(const std::string& input) const override {
+        return input.find("所有") != std::string::npos ||
+               input.find("检查") != std::string::npos ||
+               input.find("分析") != std::string::npos;
+    }
+};
+
+/// 任务分解策略 — 将用户输入拆分为子任务列表。
+class IDecompositionStrategy {
+public:
+    virtual ~IDecompositionStrategy() = default;
+    virtual std::vector<SubTask> decompose(const std::string& input,
+                                            const std::string& mainPrompt) = 0;
+};
+
+/// 模板驱动分解（当前默认）。
+class TemplateDecomposition : public IDecompositionStrategy {
+    TemplateManager* template_mgr_;
+public:
+    explicit TemplateDecomposition(TemplateManager* tm) : template_mgr_(tm) {}
+    std::vector<SubTask> decompose(const std::string& input,
+                                    const std::string& mainPrompt) override;
+};
+
+/// SubAgent 工厂 — 创建子 Agent 实例（可注入 Mock 用于测试）。
+using SubAgentFactory = std::function<std::unique_ptr<SubAgent>(
+    llm::ILLMClient&, ToolRegistry&)>;
+
+inline auto defaultSubAgentFactory() {
+    return [](llm::ILLMClient& c, ToolRegistry& r) {
+        return std::make_unique<SubAgent>(c, r);
+    };
+}
+
+// ============================================================================
+// AgentOrchestrator
+// ============================================================================
+
 class AgentOrchestrator {
 public:
-    /// @param client      LLM 客户端（主 Agent 和子 Agent 共享）
-    /// @param registry    工具注册中心
-    /// @param mainPrompt  主 Agent 的 system prompt（用于任务分解和结果汇总）
     AgentOrchestrator(llm::ILLMClient& client, ToolRegistry& registry,
                       std::string mainPrompt = "");
 
-    /// 处理用户消息：判断是否需要并行，是则拆解执行。
     std::string processMessage(const std::string& input);
 
     // ── 配置 ──
-
     void setParallelEnabled(bool on) { parallel_enabled_ = on; }
     bool isParallelEnabled() const { return parallel_enabled_; }
     void setMaxParallel(int n) { max_parallel_ = n; }
     int maxParallel() const { return max_parallel_; }
 
-    /// 设置模板管理器（可选，用于模板感知的任务分解）。
-    void setTemplateManager(TemplateManager* tm) { template_mgr_ = tm; }
+    void setTemplateManager(TemplateManager* tm);
+
+    /// 注入自定义策略（默认使用 KeywordParallelDetector + TemplateDecomposition）
+    void setParallelDetector(std::unique_ptr<IParallelDetector> detector);
+    void setDecompositionStrategy(std::unique_ptr<IDecompositionStrategy> strategy);
+    void setSubAgentFactory(SubAgentFactory factory);
 
 private:
     llm::ILLMClient& client_;
@@ -55,15 +101,17 @@ private:
     std::string main_prompt_;
     bool parallel_enabled_ = true;
     int max_parallel_ = 4;
+
     TemplateManager* template_mgr_ = nullptr;
+    std::unique_ptr<IParallelDetector> detector_;
+    std::unique_ptr<IDecompositionStrategy> decomposition_;
+    SubAgentFactory agent_factory_ = defaultSubAgentFactory();
 
-    /// 让 LLM 判断是否需要并行 + 拆解子任务
+    IParallelDetector& getDetector();
+    IDecompositionStrategy& getDecomposition();
+
     std::vector<SubTask> decompose(const std::string& input);
-
-    /// 并行执行所有子任务（std::async）
     void executeParallel(std::vector<SubTask>& tasks);
-
-    /// 让 LLM 汇总子任务结果
     std::string synthesize(const std::vector<SubTask>& tasks);
 };
 

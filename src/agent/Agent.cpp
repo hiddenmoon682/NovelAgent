@@ -48,10 +48,8 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
         return llm::LLMResponse{};
     }
 
-    // 并行编排：检测到并行关键词时，由 Orchestrator 处理
-    if (orchestrator_ && orchestrator_->isParallelEnabled() &&
-        (input.find("所有") != std::string::npos ||
-         input.find("检查") != std::string::npos)) {
+    // 并行编排：由 Orchestrator 内部策略判断
+    if (orchestrator_ && orchestrator_->isParallelEnabled()) {
         auto result = orchestrator_->processMessage(input);
         llm::LLMResponse resp;
         resp.content = result;
