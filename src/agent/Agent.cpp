@@ -1,5 +1,7 @@
 #include "agent/Agent.h"
 #include "agent/ContextManager.h"
+#include "agent/PromptComposer.h"
+#include "agent/ToolPipeline.h"
 
 #include <spdlog/spdlog.h>
 
@@ -42,13 +44,9 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
         return llm::LLMResponse{};
     }
 
-    // 1. 将用户消息加入对话历史
     conversation_.addUser(input);
-
-    // 2. 调用 LLM + tool call 循环（异常向上抛出，对话历史中保留用户消息）
     auto response = runToolLoop(std::move(callbacks));
 
-    // 3. 将最终 assistant 回复加入对话历史
     if (!response.content.empty() || !response.tool_calls.empty()) {
         conversation_.add(makeAssistantMessage(response));
     }
@@ -63,52 +61,51 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
 llm::LLMResponse Agent::execute(const std::string& command,
                                  llm::StreamCallbacks callbacks)
 {
-    // 不修改内部 conversation_，构造临时消息列表
     std::vector<llm::Message> messages = { llm::Message::user(command) };
     auto tools = registry_.getToolDefinitions();
-
     return client_.chat(messages, tools, system_prompt_, std::move(callbacks));
 }
 
 // ===========================================================================
 // runToolLoop — tool call 循环
-//
-// 首轮使用流式调用（用户实时看到输出），后续轮次使用非流式调用
-//（工具执行期间不需要实时显示，且非流式更简单、更快）。
 // ===========================================================================
 
 llm::LLMResponse Agent::runToolLoop(llm::StreamCallbacks callbacks)
 {
     auto tools = registry_.getToolDefinitions();
+    ToolPipeline pipeline(registry_, conversation_);
 
-    // 首轮：流式调用（用户看到实时 token 输出）
+    // 首轮：流式调用
     std::vector<llm::Message> effective_messages;
     auto effective_prompt = buildEffectivePrompt(effective_messages);
     auto response = client_.chat(
         effective_messages, tools, effective_prompt, std::move(callbacks));
 
-    // 后续轮次：非流式调用 + 工具执行循环
+    // 后续轮次：非流式 + tool call 循环
     for (int round = 0; round < max_tool_rounds_; ++round) {
         if (response.tool_calls.empty()) {
-            spdlog::debug("[Agent] LLM 返回纯文本（无 tool_calls），循环结束 (round={})", round);
+            spdlog::debug("[Agent] 循环结束 (round={})", round);
             return response;
         }
 
-        spdlog::info("[Agent] LLM 请求 {} 个工具调用 (round={})",
+        spdlog::info("[Agent] {} 个工具调用 (round={})",
                      response.tool_calls.size(), round);
 
         conversation_.add(makeAssistantMessage(response));
-        executeToolCallsAndAppend(response.tool_calls);
+        pipeline.executeAndAppend(response.tool_calls); // 使用 ToolPipeline
 
-        // 工具结果后再次做预算截断（对话已增长）
         effective_prompt = buildEffectivePrompt(effective_messages);
         response = client_.chatNonStreaming(
             effective_messages, tools, effective_prompt);
     }
 
-    spdlog::warn("[Agent] 达到最大 tool call 轮数 ({})，强制退出", max_tool_rounds_);
+    spdlog::warn("[Agent] 达到最大轮数 ({})", max_tool_rounds_);
     return response;
 }
+
+// ===========================================================================
+// buildEffectivePrompt — 使用 PromptComposer 显式组装
+// ===========================================================================
 
 std::string Agent::buildEffectivePrompt(std::vector<llm::Message>& out_messages)
 {
@@ -117,13 +114,14 @@ std::string Agent::buildEffectivePrompt(std::vector<llm::Message>& out_messages)
         return system_prompt_;
     }
 
-    // ContextManager 内部处理截断，避免提前拷贝全部消息
     auto assembly = context_manager_->assemble(
         conversation_, context_window_);
     out_messages = std::move(assembly.messages);
 
-    if (assembly.system_prompt.empty()) return system_prompt_;
-    return system_prompt_ + "\n\n" + assembly.system_prompt;
+    PromptComponents pc;
+    pc.personality = system_prompt_;
+    pc.context = assembly.system_prompt;
+    return PromptComposer::compose(pc);
 }
 
 // ===========================================================================
@@ -137,41 +135,6 @@ llm::Message Agent::makeAssistantMessage(const llm::LLMResponse& response)
     msg.content = response.content;
     msg.tool_calls = response.tool_calls;
     return msg;
-}
-
-void Agent::executeToolCallsAndAppend(
-    const std::vector<llm::ToolCall>& tool_calls)
-{
-    for (const auto& tc : tool_calls) {
-        spdlog::info("[Agent] 执行工具: {} (id={})", tc.function_name, tc.id);
-
-        nlohmann::json args;
-        if (!tc.arguments.empty()) {
-            try {
-                args = nlohmann::json::parse(tc.arguments);
-            } catch (const nlohmann::json::parse_error& e) {
-                spdlog::error("[Agent] 工具参数 JSON 解析失败: {} — args='{}'",
-                              e.what(), tc.arguments);
-                nlohmann::json err = {
-                    {"error", std::string("参数 JSON 解析失败: ") + e.what()}
-                };
-                conversation_.addToolResult(tc.id, err.dump());
-                continue;
-            }
-        }
-
-        auto result = registry_.executeTool(tc.function_name, args);
-
-        // 工具结果截断：防止单条消息过大（如 read_chapter 返回全文）
-        // LLM 在后续轮次中不需要完整原文，截断后的摘要信息足够
-        constexpr size_t kMaxResultChars = 4000;
-        std::string result_str = result.dump();
-        if (result_str.size() > kMaxResultChars) {
-            result_str = result_str.substr(0, kMaxResultChars)
-                       + "\n...(已截断，共 " + std::to_string(result_str.size()) + " 字符)";
-        }
-        conversation_.addToolResult(tc.id, std::move(result_str));
-    }
 }
 
 } // namespace agent

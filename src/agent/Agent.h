@@ -110,10 +110,7 @@ private:
     /// 构造 Assistant 消息（含 tool_calls 列表）。
     static llm::Message makeAssistantMessage(const llm::LLMResponse& response);
 
-    /// 处理单轮 tool call：执行所有工具调用，将结果加入对话。
-    void executeToolCallsAndAppend(const std::vector<llm::ToolCall>& tool_calls);
-
-    /// 组装 system prompt（人格提示词 + ContextManager 产出的上下文提示词）。
+    /// 组装 system prompt（使用 PromptComposer 显式组合各组件）。
     std::string buildEffectivePrompt(std::vector<llm::Message>& out_messages);
 };
 

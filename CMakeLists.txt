@@ -48,6 +48,9 @@ set(LIB_SOURCES
     src/utils/SchemaUtils.h
 
     src/project/Models.h
+    src/project/IProjectAccess.h
+    src/project/ProjectAccess.h
+    src/project/IStorageBackend.h
     src/project/ProjectIO.h
     src/project/ProjectIO.cpp
     src/project/ProjectManager.h
@@ -77,6 +80,8 @@ set(LIB_SOURCES
 
     src/agent/AgentSetup.h
     src/agent/AgentSetup.cpp
+    src/agent/ToolPipeline.h
+    src/agent/PromptComposer.h
     src/agent/tools/BuiltInTool.h
     src/agent/tools/ChapterTools.h
     src/agent/tools/ChapterTools.cpp
