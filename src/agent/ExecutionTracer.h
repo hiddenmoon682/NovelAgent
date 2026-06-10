@@ -10,7 +10,7 @@
 ///   tracer.record({.event_type="llm_call", .tokens_used=1500, .duration_ms=3200});
 ///   tracer.dump(".novelagent/traces/");
 
-#include <nlohmann/json_fwd.hpp>
+#include <nlohmann/json.hpp>
 
 #include <string>
 #include <vector>

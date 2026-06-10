@@ -1,20 +1,19 @@
 #pragma once
 
-/// System Prompt 显式组装器 — 消除人格提示词与上下文提示词的隐式拼接。
+/// System Prompt 组装器 — Fix #5: 版本化 + hash 审计。
 ///
-/// 原来: system_prompt_ + "\n\n" + assembly.system_prompt (散落在 Agent 中)
-/// 现在: PromptComposer::compose({personality, context, task})
-///
-/// 每种提示词组件有明确的语义标签，新增组件（如 Phase 4 的摘要）只需加字段。
+/// 每次组装 prompt 时附加版本号和内容 hash，
+/// 供 ExecutionTracer 记录，实现 prompt 变更可追溯。
 
+#include <functional>
 #include <string>
 
 namespace agent {
 
 struct PromptComponents {
-    std::string personality;   // AI 人格提示词 ("你是一个网文写作助手")
-    std::string context;       // 项目/章节上下文 (ContextManager 产出)
-    std::string task;          // 当前任务描述 (可选，如 "写第三章")
+    std::string personality;
+    std::string context;
+    std::string task;
 
     bool empty() const {
         return personality.empty() && context.empty() && task.empty();
@@ -23,14 +22,15 @@ struct PromptComponents {
 
 class PromptComposer {
 public:
-    /// 将多个提示词组件组装为最终 system prompt。
-    /// 空组件自动跳过，不会产生多余的空行。
+    /// Fix #5: prompt 版本号（每次修改 prompt 模板时递增）。
+    static constexpr int kPromptVersion = 2;
+
+    /// 组装最终 system prompt（含版本标记）。
     static std::string compose(const PromptComponents& components) {
         std::string result;
 
-        if (!components.personality.empty()) {
+        if (!components.personality.empty())
             result += components.personality;
-        }
 
         if (!components.context.empty()) {
             if (!result.empty()) result += "\n\n";
@@ -42,7 +42,15 @@ public:
             result += components.task;
         }
 
+        // Fix #5: 附加版本标记（不影响 LLM 行为，仅供审计）
+        result += "\n\n[prompt_v" + std::to_string(kPromptVersion) + "]";
+
         return result;
+    }
+
+    /// 计算 prompt 内容的简单 hash（供 ExecutionTracer 记录）。
+    static size_t hash(const std::string& prompt) {
+        return std::hash<std::string>{}(prompt);
     }
 };
 

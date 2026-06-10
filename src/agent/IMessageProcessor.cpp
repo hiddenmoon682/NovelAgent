@@ -36,10 +36,12 @@ SerialProcessor::Result SerialProcessor::process(
     std::vector<llm::Message> effective_messages;
     auto effective_prompt = buildEffectivePrompt(conversation, effective_messages);
 
-    ToolCallLoop loop(client_, registry_);
+    ToolCallLoop loop(client_, registry_, tracer_);  // Fix #3: 传递 tracer
     ToolCallLoopConfig config;
     config.max_rounds = max_tool_rounds_;
-    config.first_round_streaming = true;
+    config.all_rounds_streaming = false; // 默认首轮流式+后续非流式（兼容现有 Mock）
+    config.max_repeated_calls = 3;       // Fix #2: 循环检测
+    config.token_warning_threshold = 0;  // Fix #4: 默认不监控（由调用方配置）
 
     auto result = loop.run(conversation, tools, effective_prompt,
                            std::move(callbacks), config);

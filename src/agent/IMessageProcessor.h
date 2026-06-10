@@ -53,6 +53,9 @@ public:
     void setContextWindow(int window) { context_window_ = window; }
     void setMaxToolRounds(int n) { max_tool_rounds_ = n; }
 
+    /// Fix #3: 传递 ExecutionTracer 供 ToolCallLoop 使用。
+    void setTracer(class ExecutionTracer* t) { tracer_ = t; }
+
 private:
     llm::ILLMClient& client_;
     ToolRegistry& registry_;
@@ -60,6 +63,7 @@ private:
     class ContextManager* context_manager_ = nullptr;
     int context_window_ = 65536;
     int max_tool_rounds_ = 10;
+    class ExecutionTracer* tracer_ = nullptr;  // Fix #3
 
     std::string buildEffectivePrompt(
         const llm::Conversation& conversation,
