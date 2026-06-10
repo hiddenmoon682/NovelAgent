@@ -95,23 +95,28 @@ static std::string findNodeExe() {
     return "";
 }
 
-// ── 启动 TUI 子进程 ──
-static bool launchTui(const std::string& nodeExe, const std::string& projectPath,
-                      int port, const std::string& tuiDir) {
-    std::string tsxEntry = tuiDir + "\\src\\main.tsx";
-    std::string cmdLine =
-        "\"" + nodeExe + "\" " +
-        "\"" + tuiDir + "\\node_modules\\tsx\\dist\\cli.mjs\" " +
-        "\"" + tsxEntry + "\" " +
-        "-p \"" + projectPath + "\" " +
-        "--port " + std::to_string(port);
+// ── 启动桌面窗口（Edge --app 模式）──
+static bool launchDesktop(const std::string& projectPath, int port) {
+    // 找 Edge 浏览器
+    std::string edge;
+    const char* paths[] = {
+        "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+    };
+    for (auto* p : paths) {
+        if (GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES) { edge = p; break; }
+    }
+    if (edge.empty()) return false;
+
+    std::string url = "http://localhost:" + std::to_string(port) + "/";
+    std::string cmdLine = "\"" + edge + "\" --app=\"" + url + "\" --window-size=900,700";
 
     STARTUPINFOA si = {};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi = {};
 
     if (!CreateProcessA(nullptr, cmdLine.data(), nullptr, nullptr,
-                        FALSE, 0, nullptr, tuiDir.c_str(), &si, &pi)) {
+                        FALSE, 0, nullptr, nullptr, &si, &pi)) {
         return false;
     }
 
@@ -249,100 +254,52 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        // ── TUI 模式：无参数双击启动时自动拉起前端 ──
+        // ── 桌面模式：双击启动时自动弹出桌面窗口 ──
         if (tuiMode || (projectPath.empty() && execCommand.empty())) {
-#ifdef _WIN32
-            std::string nodeExe = findNodeExe();
-            if (!nodeExe.empty()) {
-                // 默认项目路径
-                std::string tuiProjectPath = projectPath.empty() ? ".\\my_novel" : projectPath;
+            std::string appProjectPath = projectPath.empty() ? ".\\my_novel" : projectPath;
 
-                // 日志写入文件，避免干扰 TUI 终端渲染
-                auto logPath = tuiProjectPath + "\\.novelagent\\backend.log";
+            // 日志写文件
+            auto logPath = appProjectPath + "\\.novelagent\\backend.log";
+            try {
+                auto fileLogger = spdlog::basic_logger_mt("file", logPath);
+                spdlog::set_default_logger(fileLogger);
+                spdlog::flush_on(spdlog::level::info);
+            } catch (...) {}
+            std::cout.setstate(std::ios::failbit);
+
+            { ProjectManager pm; pm.openOrCreate(appProjectPath); }
+
+            int appPort = 18899;
+
+            // 后端线程
+            std::atomic<bool> backendReady{false};
+            std::thread backendThread([&]() {
                 try {
-                    auto fileLogger = spdlog::basic_logger_mt("file", logPath);
-                    spdlog::set_default_logger(fileLogger);
-                    spdlog::flush_on(spdlog::level::info);
-                } catch (...) {}
-                std::cout.setstate(std::ios::failbit);
-                // TUI 目录（相对 exe 位置：build/novelagent.exe → ../tui/）
-                std::string tuiDir = argToUtf8(
-                    []() -> std::string {
-                        char buf[MAX_PATH];
-                        GetModuleFileNameA(nullptr, buf, MAX_PATH);
-                        std::string exe(buf);
-                        auto pos = exe.rfind('\\');
-                        if (pos != std::string::npos) exe = exe.substr(0, pos);
-                        pos = exe.rfind('\\');
-                        if (pos != std::string::npos) exe = exe.substr(0, pos);
-                        return exe + "\\tui";
-                    }());
-
-                // 确保默认项目存在
-                {
                     ProjectManager pm;
-                    pm.openOrCreate(tuiProjectPath);
+                    Project project = pm.openOrCreate(appProjectPath);
+                    auto projectPtr = std::make_shared<Project>(std::move(project));
+                    llm::LLMClient llmClient(*provider);
+                    agent::ToolRegistry registry;
+                    agent::registerAllTools(registry, projectPtr);
+                    server::ServerConfig cfg;
+                    cfg.port = appPort;
+                    cfg.project_path = appProjectPath;
+                    server::BackendServer backend(llmClient, registry, projectPtr, cfg);
+                    backendReady = true;
+                    backend.run();
+                } catch (const std::exception& e) {
+                    spdlog::error("[Desktop] 后端异常: {}", e.what());
                 }
+            });
 
-                int tuiPort = 18899;
+            while (!backendReady) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-                // 启动后端（在后台线程）
-                std::atomic<bool> backendReady{false};
-                std::thread backendThread([&]() {
-                    try {
-                        ProjectManager pm;
-                        Project project = pm.openOrCreate(tuiProjectPath);
-                        auto projectPtr = std::make_shared<Project>(std::move(project));
-                        llm::LLMClient llmClient(*provider);
-                        agent::ToolRegistry registry;
-                        agent::registerAllTools(registry, projectPtr);
-                        server::ServerConfig cfg;
-                        cfg.port = tuiPort;
-                        cfg.project_path = tuiProjectPath;
-                        server::BackendServer backend(llmClient, registry, projectPtr, cfg);
-                        backendReady = true;
-                        backend.run();
-                    } catch (const std::exception& e) {
-                        spdlog::error("[TUI] 后端异常: {}", e.what());
-                    }
-                });
+            // 启动桌面窗口（阻塞直到用户关闭）
+            launchDesktop(appProjectPath, appPort);
 
-                // 等待后端就绪
-                while (!backendReady) std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-                // 清屏后短暂恢复 cout 输出清屏码，然后再次关闭
-                std::cout.clear();
-                std::cout << Ansi::clearScreen() << std::flush;
-                std::cout.setstate(std::ios::failbit);
-
-                std::cout << Ansi::title() << "NovelAgent" << Ansi::reset()
-                          << " | " << Ansi::dim() << "后端 localhost:" << tuiPort
-                          << " | 项目: " << tuiProjectPath << Ansi::reset() << "\n";
-
-                // 启动 TUI 前端（阻塞，等待用户退出）
-                if (launchTui(nodeExe, tuiProjectPath, tuiPort, tuiDir)) {
-                    std::cout << Ansi::dim() << "TUI 已退出。\n" << Ansi::reset();
-                } else {
-                    std::cout << Ansi::warning()
-                              << "无法启动 TUI 前端，请确保已运行 npm install。\n"
-                              << Ansi::reset()
-                              << Ansi::dim()
-                              << "cd tui && npm install\n"
-                              << Ansi::reset();
-                }
-
-                // TUI 退出 → detach 后端线程 → 进程正常退出
-                // BackendServer 在 lambda 栈上，进程退出时 OS 回收
-                backendThread.detach();
-                return 0;
-            }
-#endif
-            // Node.js 未找到 → 回退到 REPL
-            std::cout << Ansi::dim()
-                      << "未找到 Node.js，使用文本界面模式。\n"
-                      << "安装 Node.js 后可获得更好的视觉体验。\n"
-                      << Ansi::reset() << "\n";
+            backendThread.detach();
+            return 0;
         }
 
         novelAgent.runRepl();

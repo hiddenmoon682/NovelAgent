@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NovelAgent</title>
+<style>
+  :root {
+    --bg: #1e1e2e;
+    --surface: #2a2a3c;
+    --text: #cdd6f4;
+    --dim: #6c7086;
+    --blue: #89b4fa;
+    --green: #a6e3a1;
+    --red: #f38ba8;
+    --yellow: #f9e2af;
+    --border: #45475a;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .header .title { font-weight: 700; font-size: 15px; color: #fff; }
+  .header .status {
+    font-size: 12px;
+    background: var(--blue);
+    color: #1e1e2e;
+    padding: 2px 10px;
+    border-radius: 10px;
+    font-weight: 600;
+  }
+  .header .info { font-size: 12px; color: var(--dim); margin-left: auto; }
+  .msgs {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .msg { max-width: 85%; padding: 8px 14px; border-radius: 14px; line-height: 1.5; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: var(--blue); color: #1e1e2e; }
+  .msg.assistant { align-self: flex-start; background: var(--surface); }
+  .msg.error { align-self: flex-start; background: var(--red); color: #1e1e2e; font-size: 13px; }
+  .msg.tool { align-self: flex-start; font-size: 12px; color: var(--dim); padding: 2px 8px; }
+  .input-bar {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .input-bar input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+  }
+  .input-bar input:focus { border-color: var(--blue); }
+  .input-bar button {
+    background: var(--blue);
+    color: #1e1e2e;
+    border: none;
+    border-radius: 8px;
+    padding: 0 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .input-bar button:disabled { opacity: 0.5; cursor: default; }
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--dim); border-top-color: var(--blue); border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <span class="title">NovelAgent</span>
+  <span class="status" id="status">连接中...</span>
+  <span class="info" id="info"></span>
+</div>
+
+<div class="msgs" id="msgs"></div>
+
+<div class="input-bar">
+  <input id="input" type="text" placeholder="输入消息..." autofocus>
+  <button id="sendBtn" onclick="send()">发送</button>
+</div>
+
+<script>
+const PORT = 18899;
+const BASE = `http://localhost:${PORT}`;
+
+let sessionId = '';
+const msgsEl = document.getElementById('msgs');
+const inputEl = document.getElementById('input');
+const sendBtn = document.getElementById('sendBtn');
+const statusEl = document.getElementById('status');
+const infoEl = document.getElementById('info');
+
+(async function init() {
+  try {
+    const r = await fetch(`${BASE}/api/session/create`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+    const j = await r.json();
+    sessionId = j.session_id;
+
+    try {
+      const s = await fetch(`${BASE}/api/project/status`);
+      const p = await s.json();
+      if (p.title) infoEl.textContent = `${p.title} | ${p.chapters}章 ${p.characters}角色`;
+    } catch {}
+
+    statusEl.textContent = '就绪';
+    inputEl.disabled = false;
+    sendBtn.disabled = false;
+  } catch (e) {
+    statusEl.textContent = '无法连接后端';
+    statusEl.style.background = 'var(--red)';
+    addMsg('error', '无法连接后端: ' + e.message);
+  }
+})();
+
+function addMsg(role, content) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = content;
+  msgsEl.appendChild(div);
+  msgsEl.scrollTop = msgsEl.scrollHeight;
+}
+
+async function send() {
+  const msg = inputEl.value.trim();
+  if (!msg || !sessionId) return;
+  inputEl.value = '';
+  sendBtn.disabled = true;
+  statusEl.textContent = '思考中...';
+  addMsg('user', msg);
+
+  const asstDiv = document.createElement('div');
+  asstDiv.className = 'msg assistant';
+  asstDiv.textContent = '';
+  msgsEl.appendChild(asstDiv);
+
+  try {
+    const r = await fetch(`${BASE}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, message: msg })
+    });
+
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        if (line === 'data: [DONE]') { statusEl.textContent = '就绪'; sendBtn.disabled = false; return; }
+        try {
+          const evt = JSON.parse(line.slice(6));
+          if (evt.type === 'content') {
+            asstDiv.textContent += evt.delta;
+            msgsEl.scrollTop = msgsEl.scrollHeight;
+          } else if (evt.type === 'tool_call') {
+            addMsg('tool', `[工具] ${evt.name}`);
+          } else if (evt.type === 'tool_result') {
+            addMsg('tool', `  ${(evt.summary||'完成').substring(0,100)}`);
+          } else if (evt.type === 'done') {
+            statusEl.textContent = `就绪 | ${evt.tokens} tokens`;
+          } else if (evt.type === 'error') {
+            addMsg('error', evt.message);
+            statusEl.textContent = '错误';
+            statusEl.style.background = 'var(--red)';
+          }
+        } catch {}
+      }
+    }
+  } catch (e) {
+    addMsg('error', '连接错误: ' + e.message);
+    statusEl.textContent = '连接断开';
+    statusEl.style.background = 'var(--red)';
+  }
+  sendBtn.disabled = false;
+}
+
+inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+</script>
+</body>
+</html>

@@ -81,6 +81,18 @@ void BackendServer::removePortFile() const {
 }
 
 void BackendServer::setupRoutes() {
+    // ── 桌面窗口前端页面 ──
+    server_->Get("/", [](const httplib::Request&, httplib::Response& res) {
+        char buf[MAX_PATH];
+        GetModuleFileNameA(nullptr, buf, MAX_PATH);
+        std::string dir(buf);
+        auto pos = dir.rfind('\\'); if (pos != std::string::npos) dir = dir.substr(0, pos);
+        pos = dir.rfind('\\'); if (pos != std::string::npos) dir = dir.substr(0, pos);
+        std::ifstream f(dir + "\\tui-web\\index.html");
+        if (f) { std::stringstream ss; ss << f.rdbuf(); res.set_content(ss.str(), "text/html; charset=utf-8"); }
+        else { res.status = 404; res.set_content("frontend not found", "text/plain"); }
+    });
+
     server_->Get("/api/health", [this](const httplib::Request&, httplib::Response& res) {
         json r;
         r["status"] = "ok";
