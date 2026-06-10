@@ -14,7 +14,7 @@
 #include "project/FileStorageBackend.h"
 #include "project/IStorageBackend.h"
 #include "project/Models.h"
-#include "prompt/PromptContextBuilder.h"
+#include "agent/PromptContextBuilder.h"
 
 #include <spdlog/spdlog.h>
 #include <algorithm>
