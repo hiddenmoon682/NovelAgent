@@ -1,8 +1,0 @@
-set(UTILS_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/FileUtils.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/FileUtils.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/StringUtils.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/JsonUtils.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/SchemaUtils.h
-    PARENT_SCOPE
-)

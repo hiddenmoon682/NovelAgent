@@ -1,10 +1,11 @@
-/// NovelAgent Ink TUI 主应用（审查修复版）。
+/// NovelAgent Ink TUI — readline 输入 + Ink 渲染。
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Box, Text, useInput, useApp } from "ink";
+import { Box, Text, useApp } from "ink";
 import Spinner from "ink-spinner";
 import { ApiClient } from "./client/api";
 import { ServerEvent } from "./client/protocol";
+import * as readline from "readline";
 
 interface Message {
   role: "user" | "assistant" | "tool" | "thinking" | "error";
@@ -23,8 +24,10 @@ export const App: React.FC<Props> = ({ api, projectPath }) => {
   const [statusLine, setStatusLine] = useState("连接中...");
   const [projectInfo, setProjectInfo] = useState("");
 
-  // Fix #3: 使用 ref 跟踪当前消息索引，避免闭包竞态
   const msgCountRef = useRef(0);
+  const rlRef = useRef<readline.Interface | null>(null);
+  const inputRef = useRef("");      // 累积输入（IME 组合后的字符）
+  const sendRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     (async () => {
@@ -44,16 +47,16 @@ export const App: React.FC<Props> = ({ api, projectPath }) => {
   }, []);
 
   const sendMessage = useCallback(() => {
-    if (!input.trim() || !sessionId) return;
-    const msg = input.trim();
+    const msg = inputRef.current.trim();
+    if (!msg || !sessionId) return;
+    inputRef.current = "";
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: msg }]);
     setLoading(true);
     setStatusLine("思考中...");
 
-    // Fix #3: 使用函数式 setState + ref 保证索引正确
     setMessages((prev) => {
-      msgCountRef.current = prev.length + 1;
+      msgCountRef.current = prev.length;
       return [...prev, { role: "assistant", content: "" }];
     });
 
@@ -62,7 +65,6 @@ export const App: React.FC<Props> = ({ api, projectPath }) => {
       (event: ServerEvent) => {
         switch (event.type) {
           case "content":
-            // Fix #3: 使用函数式 setState，prev 始终是最新值
             setMessages((prev) => {
               const idx = msgCountRef.current;
               if (idx < prev.length && prev[idx]) {
@@ -78,9 +80,6 @@ export const App: React.FC<Props> = ({ api, projectPath }) => {
             break;
           case "tool_result":
             setMessages((prev) => [...prev, { role: "tool", content: `  ${event.summary?.substring(0, 100) || "完成"}` }]);
-            break;
-          case "tool_call_start":
-            setStatusLine("执行工具...");
             break;
           case "done":
             setStatusLine(`就绪 | ${event.tokens} tokens`);
@@ -100,34 +99,106 @@ export const App: React.FC<Props> = ({ api, projectPath }) => {
         setStatusLine("连接断开");
       }
     );
-  }, [input, sessionId, api]);
+  }, [sessionId, api]);
 
-  useInput((inputChar, key) => {
-    if (key.return) sendMessage();
-    else if (key.backspace || key.delete) setInput((prev) => prev.slice(0, -1));
-    else if (inputChar && !key.ctrl && !key.meta) setInput((prev) => prev + inputChar);
-    if (key.ctrl && inputChar === "c") exit();
+  // 保持 sendRef 最新
+  sendRef.current = sendMessage;
+
+  // ── readline 输入（替代 useInput，IME 兼容）──
+  useEffect(() => {
+    // 关闭 Ink 的 raw mode，让 readline 接管
+    if (process.stdin.isTTY) {
+      try { process.stdin.setRawMode(false); } catch {}
+    }
+
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      prompt: "",
+      terminal: true,
+    });
+    rlRef.current = rl;
+
+    // 逐字符更新输入显示（readline 已处理 IME 组合）
+    process.stdin.on("keypress", (_char: any, key: any) => {
+      if (!key) return;
+      if (key.name === "return") {
+        inputRef.current = (rl as any).line || "";
+        rl.close();
+        sendRef.current();
+        // 重新创建 readline
+        setTimeout(() => restartReadline(), 50);
+      } else if (key.name === "backspace") {
+        inputRef.current = inputRef.current.slice(0, -1);
+        setInput(inputRef.current);
+      } else if (key.ctrl && key.name === "c") {
+        exit();
+      } else if (key.sequence && !key.ctrl && !key.meta && key.name !== "return") {
+        inputRef.current = inputRef.current + key.sequence;
+        setInput(inputRef.current);
+      }
+    });
+
+    readline.emitKeypressEvents(process.stdin);
+    if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    rl.prompt();
+
+    return () => {
+      try { process.stdin.setRawMode(false); } catch {}
+      rl.close();
+    };
+  }, []);
+
+  function restartReadline() {
+    if (rlRef.current) {
+      try { rlRef.current.close(); } catch {}
+    }
+    if (process.stdin.isTTY) {
+      try { process.stdin.setRawMode(false); } catch {}
+    }
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      prompt: "",
+      terminal: true,
+    });
+    rlRef.current = rl;
+    readline.emitKeypressEvents(process.stdin);
+    if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    // 光标移到底部，显示当前输入
+    process.stdout.write("\x1b[999B\x1b[999D> " + inputRef.current);
+    rl.prompt();
+  }
+
+  // ── 每次渲染后光标回到底部 ──
+  useEffect(() => {
+    if (process.platform === "win32") {
+      process.stdout.write("\x1b[999B\x1b[999D");
+    }
   });
 
+  const truncate = (s: string, max: number) =>
+    s.length > max ? s.substring(0, max) + "..." : s;
+
   return (
-    <Box flexDirection="column" height="100%">
-      <Box borderStyle="round" borderColor="blue" paddingX={1}>
+    <Box flexDirection="column">
+      <Box borderStyle="single" borderColor="blue" paddingX={1}>
         <Text bold color="white">NovelAgent v0.3.0</Text>
-        <Text dimColor> — AI 写小说助手</Text>
+        <Text dimColor> - AI Writing Assistant</Text>
       </Box>
       <Box>
-        <Text backgroundColor="blue" color="white"> {statusLine} </Text>
-        {projectInfo ? <Text dimColor> {projectInfo}</Text> : null}
+        <Text backgroundColor="blue" color="white"> {truncate(statusLine, 60)} </Text>
+        {projectInfo ? <Text dimColor> {truncate(projectInfo, 40)}</Text> : null}
       </Box>
-      <Box flexDirection="column" flexGrow={1} marginTop={1}>
-        {messages.slice(-20).map((msg, i) => (
+      <Box flexDirection="column" marginTop={1}>
+        {messages.slice(-15).map((msg, i) => (
           <Box key={i} flexDirection="column">
             {msg.role === "user" && (
-              <Text><Text bold color="blue">{"> "}</Text><Text>{msg.content}</Text></Text>
+              <Text><Text bold color="blue">{"> "}</Text><Text>{truncate(msg.content, 200)}</Text></Text>
             )}
-            {msg.role === "assistant" && <Text color="green">{msg.content}</Text>}
-            {msg.role === "tool" && <Text dimColor>{msg.content}</Text>}
-            {msg.role === "error" && <Text color="red">{msg.content}</Text>}
+            {msg.role === "assistant" && <Text color="green">{truncate(msg.content, 500)}</Text>}
+            {msg.role === "tool" && <Text dimColor>{truncate(msg.content, 120)}</Text>}
+            {msg.role === "error" && <Text color="red">{truncate(msg.content, 150)}</Text>}
           </Box>
         ))}
       </Box>
@@ -136,7 +207,6 @@ export const App: React.FC<Props> = ({ api, projectPath }) => {
          : <Text bold color="blue">{"> "}</Text>}
         <Text>{input}</Text>
       </Box>
-      <Box><Text dimColor>Ctrl+C 退出 | 输入消息开始写作</Text></Box>
     </Box>
   );
 };

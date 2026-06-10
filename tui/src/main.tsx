@@ -26,25 +26,24 @@ const projectPath: string = path.resolve(opts.project);
 const port: number = parseInt(opts.port);
 
 async function main() {
-  // 1. 检测后端是否已在运行
+  // 1. 清屏（CMD 不支持交替缓冲，先手动清）
+  process.stdout.write("\x1b[2J\x1b[H");
+
+  // 2. 检测后端是否已在运行（静默模式）
   const running = await isBackendRunning(projectPath);
   let backendPort = port;
 
   if (running) {
     backendPort = getBackendPort(projectPath);
-    process.stderr.write(`后端已在运行 → localhost:${backendPort}\n`);
   } else {
-    // 2. 启动后端
-    process.stderr.write(`启动后端...\n`);
     spawnBackend(projectPath, port);
-    // 等待后端就绪
     await new Promise((r) => setTimeout(r, 1500));
     backendPort = port;
   }
 
-  // 3. 启动 TUI
+  // 4. 启动 TUI
   const api = new ApiClient(backendPort);
-  render(React.createElement(App, { api, projectPath }));
+  render(React.createElement(App, { api, projectPath }), { patchConsole: false });
 }
 
 main().catch((e) => {

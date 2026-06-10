@@ -52,7 +52,7 @@ export function spawnBackend(
   projectPath: string,
   port: number = DEFAULT_PORT
 ): ChildProcess {
-  const exePath = path.join(__dirname, "..", "..", "build", "novelagent.exe");
+  const exePath = path.join(__dirname, "..", "..", "..", "build", "novelagent.exe");
   const args = ["backend", "-p", projectPath, "--port", String(port)];
 
   const child = spawn(exePath, args, {

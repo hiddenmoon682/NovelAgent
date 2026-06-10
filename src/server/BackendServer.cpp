@@ -119,7 +119,7 @@ void BackendServer::setupRoutes() {
         res.set_content(r.dump(), "application/json");
     });
 
-    // ── 聊天（SSE 流式，Fix #2/#6/#7 全部修复）──
+    // ── 聊天（SSE 流式）──
     server_->Post("/api/chat", [this](const httplib::Request& req, httplib::Response& res) {
         if (!checkBodySize(req.body, res)) return;
 
@@ -147,11 +147,11 @@ void BackendServer::setupRoutes() {
         auto llm_thread = std::make_shared<std::thread>(
             [session, message, queue, done_flag]() {
                 llm::StreamCallbacks cb;
+                bool cb_error_called = false;
 
                 cb.on_content = [queue](const std::string& delta) {
                     json e;
                     e["type"] = "content";
-                    // Fix #6: delta 换行转义，保护 SSE 帧边界
                     e["delta"] = jsonEscapeNewlines(delta);
                     queue->push(sseLine(e.dump()));
                 };
@@ -173,16 +173,34 @@ void BackendServer::setupRoutes() {
                     e["finish_reason"] = resp.finish_reason;
                     queue->push(sseLine(e.dump()));
                 };
-                cb.on_error = [queue](const std::string& err) {
+                cb.on_error = [queue, &cb_error_called](const std::string& err) {
+                    cb_error_called = true;
                     json e;
                     e["type"] = "error";
                     e["message"] = jsonEscapeNewlines(err);
                     queue->push(sseLine(e.dump()));
                 };
 
-                // Fix #2: 检查 cancelled 标志，客户端断开时提前退出
-                if (!queue->cancelled.load())
-                    session->agent->processUserMessage(message, cb);
+                try {
+                    if (!queue->cancelled.load())
+                        session->agent->processUserMessage(message, cb);
+                } catch (const std::exception& e) {
+                    spdlog::error("[BackendServer] LLM异常: {}", e.what());
+                    if (!cb_error_called) {
+                        json err;
+                        err["type"] = "error";
+                        err["message"] = jsonEscapeNewlines(e.what());
+                        queue->push(sseLine(err.dump()));
+                    }
+                } catch (...) {
+                    spdlog::error("[BackendServer] LLM未知异常");
+                    if (!cb_error_called) {
+                        json err;
+                        err["type"] = "error";
+                        err["message"] = "AI 服务调用失败，请稍后重试。";
+                        queue->push(sseLine(err.dump()));
+                    }
+                }
                 done_flag->store(true);
             });
 
@@ -190,19 +208,28 @@ void BackendServer::setupRoutes() {
             "text/event-stream",
             [queue, done_flag, llm_thread](size_t /*offset*/, httplib::DataSink& sink) -> bool {
                 std::string data;
-                // Fix #7: 条件变量阻塞等待，替代忙等轮询（100ms 超时发心跳）
+                // 等待数据或完成信号
                 while (!done_flag->load() && !queue->pop_wait(data, 100)) {
-                    // 100ms 无数据 → 发送 SSE 心跳注释
                     sink.os << ": heartbeat\n\n";
+                    sink.os.flush();  // 确保心跳立即发送
                 }
 
-                if (queue->pop(data)) {
+                // pop_wait 成功 → 发送已获取的数据
+                if (!data.empty()) {
                     sink.os << data;
-                    return true;
+                    sink.os.flush();
                 }
 
+                // 非阻塞排空剩余事件
+                while (queue->pop(data)) {
+                    sink.os << data;
+                    sink.os.flush();
+                }
+
+                // LLM 线程完成且队列已空 → 发送结束信号
                 if (done_flag->load()) {
                     sink.os << "data: [DONE]\n\n";
+                    sink.os.flush();
                     if (llm_thread->joinable()) llm_thread->join();
                     return false;
                 }

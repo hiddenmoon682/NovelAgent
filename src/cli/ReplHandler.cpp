@@ -45,6 +45,8 @@ static std::string userFriendlyError(const std::string& raw) {
         return "请求过于频繁，请稍等几秒再试。";
     if (raw.find("500") != std::string::npos || raw.find("502") != std::string::npos || raw.find("503") != std::string::npos)
         return "AI 服务暂时不可用，请稍后再试。";
+    if (raw.find("json.exception") != std::string::npos || raw.find("解析") != std::string::npos)
+        return "API 响应解析失败，可能是 API Key 无效或网络异常。";
     return raw;
 }
 

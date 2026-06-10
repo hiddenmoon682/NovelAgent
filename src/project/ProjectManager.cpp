@@ -7,12 +7,24 @@
 
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <filesystem>
 
 namespace fu = utils::file;
 namespace su = utils::string;
+namespace fs = std::filesystem;
+
+/// 将路径解析为绝对路径（处理 MSYS2 /tmp→Windows Temp 等转换）。
+static std::string resolvePath(const std::string& raw) {
+    try {
+        return fs::absolute(fs::path(raw)).string();
+    } catch (...) {
+        return raw;  // 解析失败时保持原样
+    }
+}
 
 Project ProjectManager::create(const std::string& path, const std::string& title) {
-    spdlog::info("Creating project '{}' at {}", title, path);
+    std::string absolute = resolvePath(path);
+    spdlog::info("创建项目 '{}' 于 {}", title, absolute);
 
     // 先创建目录结构，再立即回读为完整 Project 对象。
     ProjectIO::createProjectDir(path, title);
@@ -22,7 +34,7 @@ Project ProjectManager::create(const std::string& path, const std::string& title
 
 Project ProjectManager::open(const std::string& path) {
     if (!isValid(path)) {
-        spdlog::error("Invalid project directory: {}", path);
+        spdlog::error("无效项目目录: {}", path);
         return {};
     }
     return ProjectIO::load(path);
@@ -36,9 +48,10 @@ Project ProjectManager::openOrCreate(const std::string& path) {
 
 Project ProjectManager::openOrCreate(const std::string& path, const std::string& title) {
     if (isValid(path)) {
-        spdlog::info("Opening existing project at {}", path);
+        spdlog::info("打开已有项目: {}", resolvePath(path));
         return ProjectIO::load(path);
     }
+    spdlog::info("项目不存在，将在 {} 创建新项目", resolvePath(path));
     return create(path, title);
 }
 

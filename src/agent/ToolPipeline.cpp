@@ -33,6 +33,21 @@ std::string ToolPipeline::executeOne(const llm::ToolCall& tc)
         }
     }
 
+    // 参数 Schema 校验（通过 IToolProvider 获取工具定义）
+    auto tool_defs = tools_.getDefinitions();
+    for (const auto& def : tool_defs) {
+        if (def.name == tc.function_name) {
+            auto validation = ParameterValidator::validate(def.parameters, args);
+            if (!validation.valid) {
+                nlohmann::json err = validation.toJson();
+                err["retryable"] = true;
+                err["suggestion"] = "请根据 details 中的提示修正参数后重试";
+                return err.dump();
+            }
+            break;
+        }
+    }
+
     // 通过 IToolProvider 执行（支持 RestrictedToolProvider 安全约束）
     auto result = tools_.execute(tc.function_name, args);
 

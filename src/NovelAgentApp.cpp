@@ -46,7 +46,9 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
 
     agent_.setContextManager(&cm_);
     agent_.setContextWindow(client_.config().context_window);
-    agent_.useParallelProcessor(&template_mgr_);
+    // 默认使用串行处理器（支持完整 ToolCallLoop + 工具集）。
+    // Agent 构造函数已调用 useSerialProcessor()，无需再次设置。
+    // 用户可通过 REPL 中 /parallel on 切换到并行编排模式。
 }
 
 void NovelAgentApp::saveConversationIfNeeded(const llm::LLMResponse& /*response*/)
@@ -78,12 +80,21 @@ void NovelAgentApp::runRepl(const std::string& welcomeMessage)
 
 void NovelAgentApp::runExec(const std::string& command)
 {
-    out_.write("Exec: " + command + "\n\n");
+    out_.write("执行: " + command + "\n\n");
     try {
         auto callbacks = StreamDisplay::create(out_);
         agent_.execute(command, callbacks);
         out_.write("\n");
     } catch (const std::exception& e) {
-        out_.writeError("错误: " + std::string(e.what()) + "\n");
+        std::string err = e.what();
+        // 友好错误提示
+        if (err.find("401") != std::string::npos || err.find("API Key") != std::string::npos)
+            out_.writeError("错误: API Key 无效，请检查 config.json 中的密钥配置。\n");
+        else if (err.find("Connection") != std::string::npos || err.find("连接") != std::string::npos)
+            out_.writeError("错误: 网络连接失败，请检查网络后重试。\n");
+        else if (err.find("json.exception") != std::string::npos)
+            out_.writeError("错误: API 响应解析失败，请检查 API 密钥和网络连接。\n");
+        else
+            out_.writeError("错误: " + err + "\n");
     }
 }

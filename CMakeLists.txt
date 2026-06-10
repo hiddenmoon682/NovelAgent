@@ -61,5 +61,22 @@ target_precompile_headers(novelagent_app REUSE_FROM novelagent_core)
 add_executable(novelagent src/main.cpp)
 target_link_libraries(novelagent PRIVATE novelagent_core novelagent_tools novelagent_app)
 
+# ── 自动复制 MSYS2 DLL（双击 exe 无需配置 PATH）──
+if(WIN32 AND EXISTS "D:/SoftWare/msys2/mingw64/bin")
+    set(MSYS2_BIN "D:/SoftWare/msys2/mingw64/bin")
+    set(NEEDED_DLLS
+        libssl-3-x64.dll libcrypto-3-x64.dll
+        libspdlog-1.17.dll libwinpthread-1.dll
+        libgcc_s_seh-1.dll libstdc++-6.dll
+    )
+    foreach(dll ${NEEDED_DLLS})
+        add_custom_command(TARGET novelagent POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${MSYS2_BIN}/${dll}" "$<TARGET_FILE_DIR:novelagent>"
+            COMMENT "Copy ${dll} -> build/"
+        )
+    endforeach()
+endif()
+
 enable_testing()
 add_subdirectory(tests)

@@ -20,13 +20,15 @@ HttpClient::HttpClient(const HttpConfig& config)
     : config_(config)
 {
     parseUrl();
-    client_ = std::make_unique<httplib::Client>(host_);
+    // 构造完整 scheme+host，httplib 需要 "https://host" 格式才能启用 SSL
+    client_ = std::make_unique<httplib::Client>(scheme_ + "://" + host_);
+    client_->set_follow_location(true);
     client_->set_connection_timeout(config_.connect_timeout, 0);
     client_->set_read_timeout(config_.read_timeout, 0);
     client_->set_keep_alive(true);
 
-    spdlog::debug("[HttpClient] 初始化 → {} (host={}, prefix={})",
-                  config_.base_url, host_, path_prefix_);
+    spdlog::debug("[HttpClient] 初始化 → {}://{} (prefix={})",
+                  scheme_, host_, path_prefix_);
 }
 
 HttpClient::~HttpClient() = default;
@@ -247,6 +249,8 @@ std::string HttpClient::parseApiError(int http_status, const std::string& respon
         case 500: return "LLM 服务端内部错误 (500)";
         case 502: return "LLM 服务暂时不可用 (502)";
         case 503: return "LLM 服务正在维护中 (503)";
+        case 302:
+        case 301: return "API 地址已变更，请检查 base_url 配置 (HTTP " + std::to_string(http_status) + ")";
         default:  return "HTTP " + std::to_string(http_status);
     }
 }

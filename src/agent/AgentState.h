@@ -40,7 +40,7 @@ inline const char* agentStateName(AgentState s) {
 ///   sm.transition(AgentState::Idle);      // Thinking → Idle
 class StateMachine {
 public:
-    StateMachine() = default;
+    StateMachine() : state_(AgentState::Idle) {}
 
     /// 当前状态。
     AgentState current() const { return state_; }
