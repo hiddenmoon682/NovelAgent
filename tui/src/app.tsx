@@ -1,7 +1,7 @@
 /// NovelAgent Ink TUI — 光标 + IME 修正版。
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Box, Text, useInput, useApp, useStdout } from "ink";
+import { Box, Text, useInput, useApp } from "ink";
 import Spinner from "ink-spinner";
 import { ApiClient } from "./client/api";
 import { ServerEvent } from "./client/protocol";
@@ -16,7 +16,6 @@ interface Props { api: ApiClient; projectPath: string }
 
 export const App: React.FC<Props> = ({ api, projectPath }) => {
   const { exit } = useApp();
-  const { stdout } = useStdout();
   const [sessionId, setSessionId] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -26,7 +25,6 @@ export const App: React.FC<Props> = ({ api, projectPath }) => {
   const [showCursor, setShowCursor] = useState(true);
 
   const msgCountRef = useRef(0);
-  const inputFocused = useRef(true);
 
   // ── 闪烁光标 ──
   useEffect(() => {
@@ -109,18 +107,10 @@ export const App: React.FC<Props> = ({ api, projectPath }) => {
 
   // ── 键盘输入 ──
   useInput((inputChar, key) => {
-    inputFocused.current = true;
     if (key.return) sendMessage();
     else if (key.backspace || key.delete) setInput((prev) => prev.slice(0, -1));
     else if (inputChar && !key.ctrl && !key.meta) setInput((prev) => prev + inputChar);
     if (key.ctrl && inputChar === "c") exit();
-  });
-
-  // ── 每次渲染后将终端光标移到底部，帮助 IME 定位 ──
-  useEffect(() => {
-    if (inputFocused.current) {
-      stdout.write("\x1b[999B\x1b[999D");
-    }
   });
 
   const truncate = (s: string, max: number) =>
