@@ -1,0 +1,18 @@
+{
+  "act_summaries": [],
+  "chapters": [],
+  "generation": {
+    "blocked_tags": [],
+    "enabled": true,
+    "exclude_fields": [],
+    "include_fields": [],
+    "prompt_hint": "",
+    "required_tags": []
+  },
+  "metadata": {},
+  "plot_threads": [],
+  "premise": "",
+  "story_structure": "",
+  "tags": [],
+  "volumes": []
+}
