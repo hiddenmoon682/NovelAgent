@@ -76,6 +76,11 @@ set(CORE_SOURCES
     src/retrieval/NovelChunker.h
     src/retrieval/NovelChunker.cpp
 
+    src/server/SessionManager.h
+    src/server/SessionManager.cpp
+    src/server/BackendServer.h
+    src/server/BackendServer.cpp
+
     src/cli/AnsiTerminal.h
     src/cli/IOutputChannel.h
     src/cli/ConsoleOutput.h
