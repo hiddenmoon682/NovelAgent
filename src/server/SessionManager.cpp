@@ -1,7 +1,6 @@
 /// SessionManager 实现。
 
 #include "server/SessionManager.h"
-#include "agent/AgentSetup.h"
 #include "project/Models.h"
 
 #include <spdlog/spdlog.h>
@@ -41,23 +40,18 @@ SessionManager::SessionManager(
 std::string SessionManager::createSession() {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    auto session = std::make_unique<Session>();
+    auto session = std::make_shared<Session>();
     session->id = uuid4();
     session->agent = std::make_unique<agent::Agent>(client_, registry_);
-
-    // 配置 Agent
     session->agent->setSystemPrompt(
         "你是一个专业的网络小说写作助手 NovelAgent。");
     session->agent->useSerialProcessor();
-
-    // 工具注册由调用方在创建 SessionManager 之前完成
-
     session->state = std::make_unique<agent::StateMachine>();
     session->created = std::chrono::steady_clock::now();
     session->last_active = session->created;
 
     std::string id = session->id;
-    sessions_[id] = std::move(session);
+    sessions_[id] = session;
 
     spdlog::info("[SessionManager] 创建会话: {} (总数: {})", id, sessions_.size());
     return id;
@@ -72,12 +66,12 @@ void SessionManager::destroySession(const std::string& id) {
     }
 }
 
-agent::Agent* SessionManager::getAgent(const std::string& id) {
+std::shared_ptr<Session> SessionManager::getSession(const std::string& id) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = sessions_.find(id);
     if (it != sessions_.end()) {
         it->second->last_active = std::chrono::steady_clock::now();
-        return it->second->agent.get();
+        return it->second; // shared_ptr 确保调用方持有期间不被销毁
     }
     return nullptr;
 }

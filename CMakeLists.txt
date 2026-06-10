@@ -76,6 +76,7 @@ set(CORE_SOURCES
     src/retrieval/NovelChunker.h
     src/retrieval/NovelChunker.cpp
 
+    src/server/SSEQueue.h
     src/server/SessionManager.h
     src/server/SessionManager.cpp
     src/server/BackendServer.h

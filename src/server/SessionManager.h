@@ -1,9 +1,7 @@
 #pragma once
 
 /// 多会话管理器 — 管理多个独立的 Agent 会话实例。
-///
-/// 每个前端连接（终端窗口）对应一个 Session，拥有独立的 Agent + Conversation。
-/// 所有 Session 共享同一个 Project 和 ToolRegistry（通过 shared_ptr）。
+/// 每个前端连接对应一个 Session，拥有独立的 Agent + Conversation。
 
 #include "agent/Agent.h"
 #include "agent/AgentState.h"
@@ -23,7 +21,7 @@ struct Project;
 
 namespace server {
 
-/// 单个会话。
+/// 单个会话（使用 shared_ptr 管理生命周期，防止 use-after-free）。
 struct Session {
     std::string id;
     std::unique_ptr<agent::Agent> agent;
@@ -36,9 +34,6 @@ struct Session {
 /// 多会话管理器（线程安全）。
 class SessionManager {
 public:
-    /// @param client    LLM 客户端（所有 Session 共享）
-    /// @param registry  工具注册中心（所有 Session 共享）
-    /// @param project   小说项目（所有 Session 共享，可为空）
     SessionManager(llm::ILLMClient& client, agent::ToolRegistry& registry,
                    std::shared_ptr<Project> project);
 
@@ -48,8 +43,8 @@ public:
     /// 销毁指定会话。
     void destroySession(const std::string& id);
 
-    /// 获取指定会话的 Agent（不存在返回 nullptr）。
-    agent::Agent* getAgent(const std::string& id);
+    /// 获取会话的 shared_ptr（持有引用，防止并发销毁）。
+    std::shared_ptr<Session> getSession(const std::string& id);
 
     /// 获取所有活跃会话 ID 列表。
     std::vector<std::string> activeSessions() const;
@@ -69,7 +64,7 @@ private:
     std::shared_ptr<Project> project_;
 
     mutable std::mutex mutex_;
-    std::unordered_map<std::string, std::unique_ptr<Session>> sessions_;
+    std::unordered_map<std::string, std::shared_ptr<Session>> sessions_;
 
     std::string generateId() const;
 };
