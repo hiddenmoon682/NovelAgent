@@ -27,3 +27,4 @@ config.json
 # Example novels are user data
 examples/
 .claude/settings.local.json
+tui/my_novel/
