@@ -119,25 +119,31 @@ const statusEl = document.getElementById('status');
 const infoEl = document.getElementById('info');
 
 (async function init() {
-  try {
-    const r = await fetch(`${BASE}/api/session/create`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
-    const j = await r.json();
-    sessionId = j.session_id;
-
+  // 重试直到后端就绪（最多 10 次，每次 1 秒）
+  for (let attempt = 0; attempt < 10; attempt++) {
     try {
-      const s = await fetch(`${BASE}/api/project/status`);
-      const p = await s.json();
-      if (p.title) infoEl.textContent = `${p.title} | ${p.chapters}章 ${p.characters}角色`;
-    } catch {}
+      const r = await fetch(`${BASE}/api/session/create`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+      const j = await r.json();
+      sessionId = j.session_id;
 
-    statusEl.textContent = '就绪';
-    inputEl.disabled = false;
-    sendBtn.disabled = false;
-  } catch (e) {
-    statusEl.textContent = '无法连接后端';
-    statusEl.style.background = 'var(--red)';
-    addMsg('error', '无法连接后端: ' + e.message);
+      try {
+        const s = await fetch(`${BASE}/api/project/status`);
+        const p = await s.json();
+        if (p.title) infoEl.textContent = `${p.title} | ${p.chapters}章 ${p.characters}角色`;
+      } catch {}
+
+      statusEl.textContent = '就绪';
+      inputEl.disabled = false;
+      sendBtn.disabled = false;
+      return;
+    } catch (e) {
+      statusEl.textContent = `连接中... (${attempt + 1}/10)`;
+      await new Promise(r => setTimeout(r, 1000));
+    }
   }
+  statusEl.textContent = '无法连接后端';
+  statusEl.style.background = 'var(--red)';
+  addMsg('error', '无法连接后端，请确认程序已启动');
 })();
 
 function addMsg(role, content) {

@@ -17,6 +17,7 @@
 #include <thread>
 
 #ifdef _WIN32
+#include <winsock2.h>
 #include <windows.h>
 
 /// 将命令行参数从系统代码页转换为 UTF-8（修复 MinGW 中文乱码）。
@@ -45,54 +46,6 @@ static std::string argToUtf8(const std::string& input) {
                         &utf8[0], utf8_len, nullptr, nullptr);
     if (!utf8.empty() && utf8.back() == '\0') utf8.pop_back();
     return utf8;
-}
-
-// ── 查找 Node.js 安装位置 ──
-static std::string findNodeExe() {
-    // 1. PATH 中搜索
-    if (const char* pathEnv = std::getenv("PATH")) {
-        std::string pathStr(pathEnv);
-        size_t start = 0;
-        while (start < pathStr.size()) {
-            size_t end = pathStr.find(';', start);
-            if (end == std::string::npos) end = pathStr.size();
-            std::string dir = pathStr.substr(start, end - start);
-            if (!dir.empty() && dir.back() != '\\') dir += '\\';
-            std::string candidate = dir + "node.exe";
-            if (GetFileAttributesA(candidate.c_str()) != INVALID_FILE_ATTRIBUTES)
-                return candidate;
-            start = end + 1;
-        }
-    }
-    // 2. 常见安装位置
-    const char* known[] = {
-        "D:\\SoftWare\\NodeJs", "D:\\SoftWare\\nodejs",
-        "C:\\Program Files\\nodejs", "C:\\Program Files (x86)\\nodejs",
-    };
-    for (auto* base : known) {
-        std::string search = std::string(base) + "\\node.exe";
-        if (GetFileAttributesA(search.c_str()) != INVALID_FILE_ATTRIBUTES)
-            return search;
-        // 也搜索一层子目录（版本化安装）
-        std::string pattern = std::string(base) + "\\*";
-        WIN32_FIND_DATAA fd;
-        HANDLE h = FindFirstFileA(pattern.c_str(), &fd);
-        if (h != INVALID_HANDLE_VALUE) {
-            do {
-                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                    if (fd.cFileName[0] != '.') {
-                        std::string sub = std::string(base) + "\\" + fd.cFileName + "\\node.exe";
-                        if (GetFileAttributesA(sub.c_str()) != INVALID_FILE_ATTRIBUTES) {
-                            FindClose(h);
-                            return sub;
-                        }
-                    }
-                }
-            } while (FindNextFileA(h, &fd));
-            FindClose(h);
-        }
-    }
-    return "";
 }
 
 // ── 启动桌面窗口（Edge --app 模式）──
@@ -293,9 +246,25 @@ int main(int argc, char** argv) {
             });
 
             while (!backendReady) std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-            // 启动桌面窗口（阻塞直到用户关闭）
+            // 轮询后端直到真正就绪（能响应 HTTP 请求）
+            for (int i = 0; i < 30; ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                // 用简单 socket 连接检测端口是否在监听
+                SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                if (s != INVALID_SOCKET) {
+                    sockaddr_in addr = {};
+                    addr.sin_family = AF_INET;
+                    addr.sin_port = htons(static_cast<u_short>(appPort));
+                    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+                    if (connect(s, (sockaddr*)&addr, sizeof(addr)) == 0) {
+                        closesocket(s);
+                        break;
+                    }
+                    closesocket(s);
+                }
+            }
+
             launchDesktop(appProjectPath, appPort);
 
             backendThread.detach();
