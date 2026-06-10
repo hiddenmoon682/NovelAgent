@@ -1,4 +1,4 @@
-/// BackendServer 实现 — HTTP+SSE 多会话服务器。
+/// BackendServer 实现 — HTTP+SSE 多会话服务器（流式修复版）。
 
 #include "server/BackendServer.h"
 
@@ -11,7 +11,10 @@
 #include <spdlog/spdlog.h>
 
 #include <fstream>
+#include <mutex>
+#include <queue>
 #include <sstream>
+#include <thread>
 
 using json = nlohmann::json;
 
@@ -55,19 +58,32 @@ void BackendServer::removePortFile() const {
     utils::file::removeFile(path);
 }
 
-// ============================================================================
-// SSE 辅助
-// ============================================================================
-
-void BackendServer::sendSSE(httplib::Response& res, const std::string& type,
-                             const std::string& data) {
-    std::string line = "data: {\"type\":\"" + type + "\"";
-    if (!data.empty()) {
-        // data 已经是 JSON 键值对，直接追加
-        line += "," + data;
+/// 线程安全的 SSE 事件队列。
+class SSEQueue {
+public:
+    void push(const std::string& data) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        queue_.push(data);
     }
-    line += "}\n\n";
-    res.body += line;
+    bool pop(std::string& out) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (queue_.empty()) return false;
+        out = queue_.front();
+        queue_.pop();
+        return true;
+    }
+    void close() {
+        std::lock_guard<std::mutex> lock(mtx_);
+        queue_.push("__DONE__");
+    }
+private:
+    std::mutex mtx_;
+    std::queue<std::string> queue_;
+};
+
+/// 构造 SSE data 行。
+static std::string sseLine(const std::string& jsonStr) {
+    return "data: " + jsonStr + "\n\n";
 }
 
 // ============================================================================
@@ -99,9 +115,7 @@ void BackendServer::setupRoutes() {
         std::string sid = j.value("session_id", "");
         session_mgr_.destroySession(sid);
         active_clients_--;
-        json r;
-        r["status"] = "ok";
-        res.set_content(r.dump(), "application/json");
+        res.set_content("{\"status\":\"ok\"}", "application/json");
     });
 
     // ── 会话列表 ──
@@ -112,7 +126,7 @@ void BackendServer::setupRoutes() {
         res.set_content(r.dump(), "application/json");
     });
 
-    // ── 聊天（流式 SSE）──
+    // ── 聊天（SSE 流式，使用 chunked_content_provider）──
     server_->Post("/api/chat", [this](const httplib::Request& req, httplib::Response& res) {
         auto j = json::parse(req.body);
         std::string sid = j.value("session_id", "");
@@ -120,74 +134,107 @@ void BackendServer::setupRoutes() {
 
         if (sid.empty() || message.empty()) {
             res.status = 400;
-            json err;
-            err["error"] = "缺少 session_id 或 message";
-            res.set_content(err.dump(), "application/json");
+            res.set_content("{\"error\":\"缺少 session_id 或 message\"}", "application/json");
             return;
         }
 
         auto* agent = session_mgr_.getAgent(sid);
         if (!agent) {
             res.status = 404;
-            json err;
-            err["error"] = "会话不存在: " + sid;
-            res.set_content(err.dump(), "application/json");
+            res.set_content("{\"error\":\"会话不存在\"}", "application/json");
             return;
         }
 
-        // SSE 流式响应
-        res.set_header("Content-Type", "text/event-stream");
-        res.set_header("Cache-Control", "no-cache");
-        res.set_header("Connection", "keep-alive");
+        // SSE 流式 — 使用 chunked content provider
+        auto queue = std::make_shared<SSEQueue>();
+        auto done_flag = std::make_shared<bool>(false);
 
-        // 设置流式回调 → 映射为 SSE 事件
-        llm::StreamCallbacks cb;
-        cb.on_content = [&res](const std::string& delta) {
-            json d;
-            d["delta"] = delta;
-            sendSSE(res, "content", "\"delta\":\"" +
-                json(delta).dump().substr(1, json(delta).dump().size() - 2) + "\"");
-        };
-        cb.on_reasoning = [&res](const std::string& delta) {
-            sendSSE(res, "reasoning", "\"delta\":\"" + delta + "\"");
-        };
-        cb.on_tool_call_start = [&res]() {
-            sendSSE(res, "tool_call_start", "");
-        };
-        cb.on_complete = [&res](const llm::LLMResponse& resp) {
-            json d;
-            d["tokens"] = resp.total_tokens;
-            d["finish_reason"] = resp.finish_reason;
-            sendSSE(res, "done", "\"tokens\":" + std::to_string(resp.total_tokens) +
-                    ",\"finish_reason\":\"" + resp.finish_reason + "\"");
-        };
-        cb.on_error = [&res](const std::string& err) {
-            sendSSE(res, "error", "\"message\":\"" + err + "\"");
-        };
+        // 在独立线程中执行 LLM 调用（因为 content_provider 在主线程中轮询）
+        auto llm_thread = std::make_shared<std::thread>([agent, message, queue, done_flag]() {
+            llm::StreamCallbacks cb;
 
-        // 执行（会触发回调，逐块填充 res.body）
-        agent->processUserMessage(message, cb);
+            cb.on_content = [queue](const std::string& delta) {
+                json e;
+                e["type"] = "content";
+                e["delta"] = delta;
+                queue->push(sseLine(e.dump()));
+            };
+            cb.on_reasoning = [queue](const std::string& delta) {
+                json e;
+                e["type"] = "reasoning";
+                e["delta"] = delta;
+                queue->push(sseLine(e.dump()));
+            };
+            cb.on_tool_call_start = [queue]() {
+                json e;
+                e["type"] = "tool_call_start";
+                queue->push(sseLine(e.dump()));
+            };
+            cb.on_complete = [queue](const llm::LLMResponse& resp) {
+                json e;
+                e["type"] = "done";
+                e["tokens"] = resp.total_tokens;
+                e["finish_reason"] = resp.finish_reason;
+                queue->push(sseLine(e.dump()));
+            };
+            cb.on_error = [queue](const std::string& err) {
+                json e;
+                e["type"] = "error";
+                e["message"] = err;
+                queue->push(sseLine(e.dump()));
+            };
+
+            agent->processUserMessage(message, cb);
+            *done_flag = true;
+        });
+
+        // chunked content provider: httplib 反复调用此函数获取数据块
+        res.set_chunked_content_provider(
+            "text/event-stream",
+            [queue, done_flag, llm_thread](size_t /*offset*/, httplib::DataSink& sink) -> bool {
+                // 轮询队列，有数据就通过 os 流式写入
+                std::string data;
+                int waited = 0;
+                while (!*done_flag && !queue->pop(data)) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    waited += 10;
+                    if (waited > 100) {
+                        sink.os << ": heartbeat\n\n";
+                        waited = 0;
+                    }
+                }
+
+                if (queue->pop(data)) {
+                    sink.os << data;
+                    return true;
+                }
+
+                if (*done_flag) {
+                    sink.os << "data: [DONE]\n\n";
+                    if (llm_thread->joinable()) llm_thread->join();
+                    return false;
+                }
+
+                return true;
+            });
+
+        res.set_header("Access-Control-Allow-Origin", "*");
     });
 
-    // ── 单次执行（非流式）──
+    // ── 单次执行 ──
     server_->Post("/api/execute", [this](const httplib::Request& req, httplib::Response& res) {
         auto j = json::parse(req.body);
         std::string command = j.value("command", "");
-
         if (command.empty()) {
             res.status = 400;
             res.set_content("{\"error\":\"缺少 command\"}", "application/json");
             return;
         }
-
-        // 使用临时 Agent 执行单次命令
         agent::Agent tempAgent(client_, registry_);
         auto response = tempAgent.execute(command);
-
         json r;
         r["content"] = response.content;
         r["tokens"] = response.total_tokens;
-        r["finish_reason"] = response.finish_reason;
         res.set_content(r.dump(), "application/json");
     });
 
@@ -200,8 +247,6 @@ void BackendServer::setupRoutes() {
             r["characters"] = project_->characters.size();
             r["settings"] = project_->settings.size();
             r["status"] = project_->status;
-            r["word_count"] = project_->current_word_count;
-            r["target_words"] = project_->target_word_count;
         } else {
             r["error"] = "未打开项目";
         }
@@ -214,7 +259,6 @@ void BackendServer::setupRoutes() {
             res.set_content("{\"error\":\"未打开项目\"}", "application/json");
             return;
         }
-
         std::ostringstream book;
         book << "# " << project_->title << "\n\n";
         int count = 0;
@@ -225,19 +269,10 @@ void BackendServer::setupRoutes() {
             book << "## " << ch.title << "\n\n" << content << "\n\n---\n\n";
             ++count;
         }
-
         json r;
         r["content"] = book.str();
         r["chapters"] = count;
         res.set_content(r.dump(), "application/json");
-    });
-
-    // ── CORS（允许前端跨域访问）──
-    server_->Options("/api/.*", [](const httplib::Request&, httplib::Response& res) {
-        res.set_header("Access-Control-Allow-Origin", "*");
-        res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        res.set_header("Access-Control-Allow-Headers", "Content-Type");
-        res.status = 204;
     });
 }
 
@@ -248,15 +283,10 @@ void BackendServer::setupRoutes() {
 void BackendServer::run() {
     server_ = std::make_unique<httplib::Server>();
     setupRoutes();
-
     writePortFile();
-
     running_ = true;
     spdlog::info("[BackendServer] 启动 HTTP+SSE 服务器 → http://localhost:{}", config_.port);
-
     server_->listen("localhost", config_.port);
-
-    // listen() 返回后（调用了 stop()）
     running_ = false;
     removePortFile();
     spdlog::info("[BackendServer] 服务器已停止");

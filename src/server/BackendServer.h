@@ -43,8 +43,6 @@ private:
     std::atomic<int> active_clients_{0};
 
     void setupRoutes();
-    static void sendSSE(httplib::Response& res, const std::string& type,
-                         const std::string& data);
     void writePortFile() const;
     void removePortFile() const;
     std::string portFilePath() const;
