@@ -17,8 +17,8 @@
 #include <thread>
 
 #ifdef _WIN32
-#include <winsock2.h>
 #include <windows.h>
+#include <shellapi.h>
 
 /// 将命令行参数从系统代码页转换为 UTF-8（修复 MinGW 中文乱码）。
 /// 仅在字符串不是有效 UTF-8 时才进行转换。
@@ -246,26 +246,18 @@ int main(int argc, char** argv) {
             });
 
             while (!backendReady) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            // 等 HTTP 服务真正开始监听
+            std::this_thread::sleep_for(std::chrono::seconds(2));
 
-            // 轮询后端直到真正就绪（能响应 HTTP 请求）
-            for (int i = 0; i < 30; ++i) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                // 用简单 socket 连接检测端口是否在监听
-                SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-                if (s != INVALID_SOCKET) {
-                    sockaddr_in addr = {};
-                    addr.sin_family = AF_INET;
-                    addr.sin_port = htons(static_cast<u_short>(appPort));
-                    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-                    if (connect(s, (sockaddr*)&addr, sizeof(addr)) == 0) {
-                        closesocket(s);
-                        break;
-                    }
-                    closesocket(s);
-                }
+            // 恢复 cout 用于错误输出
+            std::cout.clear();
+
+            if (!launchDesktop(appProjectPath, appPort)) {
+                // Edge 没找到，用默认浏览器打开
+                std::string url = "http://localhost:" + std::to_string(appPort) + "/";
+                ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOW);
+                std::cout << "已打开浏览器窗口，按 Ctrl+C 退出。\n";
             }
-
-            launchDesktop(appProjectPath, appPort);
 
             backendThread.detach();
             return 0;
