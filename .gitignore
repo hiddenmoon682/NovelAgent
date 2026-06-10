@@ -13,6 +13,9 @@ cmake-build-*/
 .DS_Store
 Thumbs.db
 
+# MSYS2 DLLs (copied for standalone execution)
+*.dll
+
 # NovelAgent config (contains API keys)
 .novelagent/
 novelagent.json
