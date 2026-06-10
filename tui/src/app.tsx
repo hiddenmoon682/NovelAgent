@@ -1,4 +1,4 @@
-/// NovelAgent Ink TUI — 输入法光标修正版。
+/// NovelAgent Ink TUI — 光标 + IME 修正版。
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Box, Text, useInput, useApp, useStdout } from "ink";
@@ -23,9 +23,18 @@ export const App: React.FC<Props> = ({ api, projectPath }) => {
   const [loading, setLoading] = useState(false);
   const [statusLine, setStatusLine] = useState("连接中...");
   const [projectInfo, setProjectInfo] = useState("");
+  const [showCursor, setShowCursor] = useState(true);
 
   const msgCountRef = useRef(0);
+  const inputFocused = useRef(true);
 
+  // ── 闪烁光标 ──
+  useEffect(() => {
+    const timer = setInterval(() => setShowCursor((v) => !v), 530);
+    return () => clearInterval(timer);
+  }, []);
+
+  // ── 连接后端 ──
   useEffect(() => {
     (async () => {
       try {
@@ -43,6 +52,7 @@ export const App: React.FC<Props> = ({ api, projectPath }) => {
     return () => { if (sessionId) api.destroySession(sessionId); };
   }, []);
 
+  // ── 发送消息 ──
   const sendMessage = useCallback(() => {
     if (!input.trim() || !sessionId) return;
     const msg = input.trim();
@@ -97,20 +107,26 @@ export const App: React.FC<Props> = ({ api, projectPath }) => {
     );
   }, [input, sessionId, api]);
 
+  // ── 键盘输入 ──
   useInput((inputChar, key) => {
+    inputFocused.current = true;
     if (key.return) sendMessage();
     else if (key.backspace || key.delete) setInput((prev) => prev.slice(0, -1));
     else if (inputChar && !key.ctrl && !key.meta) setInput((prev) => prev + inputChar);
     if (key.ctrl && inputChar === "c") exit();
   });
 
-  // ── 每次渲染后将终端光标移到底部，帮助 IME 定位候选窗 ──
+  // ── 每次渲染后将终端光标移到底部，帮助 IME 定位 ──
   useEffect(() => {
-    stdout.write("\x1b[999B\x1b[999D");
-  }, [messages, input, loading, statusLine]);
+    if (inputFocused.current) {
+      stdout.write("\x1b[999B\x1b[999D");
+    }
+  });
 
   const truncate = (s: string, max: number) =>
     s.length > max ? s.substring(0, max) + "..." : s;
+
+  const cursor = showCursor ? "|" : " ";
 
   return (
     <Box flexDirection="column">
@@ -138,6 +154,7 @@ export const App: React.FC<Props> = ({ api, projectPath }) => {
         {loading ? <Text color="yellow"><Spinner type="dots" /> </Text>
          : <Text bold color="blue">{"> "}</Text>}
         <Text>{input}</Text>
+        <Text color="blue">{cursor}</Text>
       </Box>
     </Box>
   );
