@@ -1,4 +1,4 @@
-/// BackendServer 实现 — HTTP+SSE 多会话服务器（审查修复版）。
+/// BackendServer 实现 — 网络审查修复版（#1~#7全部修复）。
 
 #include "server/BackendServer.h"
 #include "server/SSEQueue.h"
@@ -35,6 +35,26 @@ void BackendServer::stop() {
     removePortFile();
 }
 
+// Fix #4: 连接上限检查
+bool BackendServer::checkClientLimit(httplib::Response& res) {
+    if (active_clients_.load() >= config_.max_clients) {
+        res.status = 503;
+        res.set_content("{\"error\":\"服务器繁忙，请稍后再试\"}", "application/json");
+        return false;
+    }
+    return true;
+}
+
+// Fix #5: 请求体大小检查
+bool BackendServer::checkBodySize(const std::string& body, httplib::Response& res) const {
+    if (body.size() > config_.max_body_bytes) {
+        res.status = 413;
+        res.set_content("{\"error\":\"请求体过大\"}", "application/json");
+        return false;
+    }
+    return true;
+}
+
 std::string BackendServer::portFilePath() const {
     if (project_ && !project_->path.empty()) {
         return utils::file::joinPath(
@@ -47,17 +67,11 @@ void BackendServer::writePortFile() const {
     std::string path = portFilePath();
     if (path.empty()) return;
     std::ofstream f(path);
-    if (!f) {
-        spdlog::error("[BackendServer] 无法写入端口文件: {}", path);
-        return;
-    }
+    if (!f) { spdlog::error("[BackendServer] 无法写入端口文件: {}", path); return; }
     f << config_.port << "\n";
     f.close();
-    if (!f.good()) {
-        spdlog::error("[BackendServer] 端口文件写入失败: {}", path);
-    } else {
-        spdlog::info("[BackendServer] 端口文件: {} (port={})", path, config_.port);
-    }
+    if (!f.good()) spdlog::error("[BackendServer] 端口文件写入失败: {}", path);
+    else spdlog::info("[BackendServer] 端口文件: {} (port={})", path, config_.port);
 }
 
 void BackendServer::removePortFile() const {
@@ -65,10 +79,6 @@ void BackendServer::removePortFile() const {
     if (path.empty()) return;
     utils::file::removeFile(path);
 }
-
-// ============================================================================
-// 路由设置
-// ============================================================================
 
 void BackendServer::setupRoutes() {
     server_->Get("/api/health", [this](const httplib::Request&, httplib::Response& res) {
@@ -79,7 +89,13 @@ void BackendServer::setupRoutes() {
         res.set_content(r.dump(), "application/json");
     });
 
-    server_->Post("/api/session/create", [this](const httplib::Request&, httplib::Response& res) {
+    server_->Post("/api/session/create", [this](const httplib::Request& req, httplib::Response& res) {
+        // Fix #4: 并发上限
+        if (!checkClientLimit(res)) return;
+
+        // Fix #5: body 大小检查
+        if (!checkBodySize(req.body, res)) return;
+
         std::string sid = session_mgr_.createSession();
         json r;
         r["session_id"] = sid;
@@ -88,6 +104,7 @@ void BackendServer::setupRoutes() {
     });
 
     server_->Post("/api/session/destroy", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!checkBodySize(req.body, res)) return;
         auto j = json::parse(req.body);
         std::string sid = j.value("session_id", "");
         session_mgr_.destroySession(sid);
@@ -102,8 +119,10 @@ void BackendServer::setupRoutes() {
         res.set_content(r.dump(), "application/json");
     });
 
-    // ── 聊天（SSE 流式，使用 shared_ptr<Session> 防止 use-after-free）──
+    // ── 聊天（SSE 流式，Fix #2/#6/#7 全部修复）──
     server_->Post("/api/chat", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!checkBodySize(req.body, res)) return;
+
         auto j = json::parse(req.body);
         std::string sid = j.value("session_id", "");
         std::string message = j.value("message", "");
@@ -114,7 +133,6 @@ void BackendServer::setupRoutes() {
             return;
         }
 
-        // Fix #1: 使用 shared_ptr<Session> 防止在 LLM 调用期间被销毁
         auto session = session_mgr_.getSession(sid);
         if (!session || !session->agent) {
             res.status = 404;
@@ -122,10 +140,10 @@ void BackendServer::setupRoutes() {
             return;
         }
 
+        // Fix #2: 带取消检测的有界队列
         auto queue = std::make_shared<SSEQueue>();
-        auto done_flag = std::make_shared<bool>(false);
+        auto done_flag = std::make_shared<std::atomic<bool>>(false);
 
-        // Lambda 持有 shared_ptr<Session>，确保 Agent 生命周期
         auto llm_thread = std::make_shared<std::thread>(
             [session, message, queue, done_flag]() {
                 llm::StreamCallbacks cb;
@@ -133,13 +151,14 @@ void BackendServer::setupRoutes() {
                 cb.on_content = [queue](const std::string& delta) {
                     json e;
                     e["type"] = "content";
-                    e["delta"] = delta;
+                    // Fix #6: delta 换行转义，保护 SSE 帧边界
+                    e["delta"] = jsonEscapeNewlines(delta);
                     queue->push(sseLine(e.dump()));
                 };
                 cb.on_reasoning = [queue](const std::string& delta) {
                     json e;
                     e["type"] = "reasoning";
-                    e["delta"] = delta;
+                    e["delta"] = jsonEscapeNewlines(delta);
                     queue->push(sseLine(e.dump()));
                 };
                 cb.on_tool_call_start = [queue]() {
@@ -157,26 +176,24 @@ void BackendServer::setupRoutes() {
                 cb.on_error = [queue](const std::string& err) {
                     json e;
                     e["type"] = "error";
-                    e["message"] = err;
+                    e["message"] = jsonEscapeNewlines(err);
                     queue->push(sseLine(e.dump()));
                 };
 
-                session->agent->processUserMessage(message, cb);
-                *done_flag = true;
+                // Fix #2: 检查 cancelled 标志，客户端断开时提前退出
+                if (!queue->cancelled.load())
+                    session->agent->processUserMessage(message, cb);
+                done_flag->store(true);
             });
 
         res.set_chunked_content_provider(
             "text/event-stream",
             [queue, done_flag, llm_thread](size_t /*offset*/, httplib::DataSink& sink) -> bool {
                 std::string data;
-                int waited = 0;
-                while (!*done_flag && !queue->pop(data)) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                    waited += 10;
-                    if (waited > 100) {
-                        sink.os << ": heartbeat\n\n";
-                        waited = 0;
-                    }
+                // Fix #7: 条件变量阻塞等待，替代忙等轮询（100ms 超时发心跳）
+                while (!done_flag->load() && !queue->pop_wait(data, 100)) {
+                    // 100ms 无数据 → 发送 SSE 心跳注释
+                    sink.os << ": heartbeat\n\n";
                 }
 
                 if (queue->pop(data)) {
@@ -184,13 +201,19 @@ void BackendServer::setupRoutes() {
                     return true;
                 }
 
-                if (*done_flag) {
+                if (done_flag->load()) {
                     sink.os << "data: [DONE]\n\n";
                     if (llm_thread->joinable()) llm_thread->join();
                     return false;
                 }
 
                 return true;
+            },
+            // Fix #2: 资源释放器 — 客户端断开时取消 LLM 线程
+            [queue, done_flag, llm_thread](bool /*success*/) {
+                queue->cancelled.store(true);
+                done_flag->store(true); // 唤醒 provider 线程
+                if (llm_thread->joinable()) llm_thread->join();
             });
 
         res.set_header("Access-Control-Allow-Origin", "*");
@@ -198,6 +221,7 @@ void BackendServer::setupRoutes() {
 
     // ── 单次执行 ──
     server_->Post("/api/execute", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!checkBodySize(req.body, res)) return;
         auto j = json::parse(req.body);
         std::string command = j.value("command", "");
         if (command.empty()) {
@@ -251,10 +275,22 @@ void BackendServer::setupRoutes() {
 
 void BackendServer::run() {
     server_ = std::make_unique<httplib::Server>();
+
+    // Fix #1: 网络层配置
+    server_->set_read_timeout(config_.read_timeout_sec, 0);
+    server_->set_write_timeout(config_.write_timeout_sec, 0);
+    server_->set_idle_interval(config_.idle_interval_sec, 0);
+    server_->set_keep_alive_timeout(config_.keep_alive_timeout_sec);
+    server_->set_keep_alive_max_count(config_.keep_alive_max_count);
+    server_->set_payload_max_length(config_.payload_max_bytes);
+
     setupRoutes();
     writePortFile();
     running_ = true;
-    spdlog::info("[BackendServer] 启动 HTTP+SSE 服务器 → http://localhost:{}", config_.port);
+    spdlog::info("[BackendServer] 启动 HTTP+SSE 服务器 → http://localhost:{} "
+                 "(read_to={}s write_to={}s keepalive={}s max_clients={})",
+                 config_.port, config_.read_timeout_sec, config_.write_timeout_sec,
+                 config_.keep_alive_timeout_sec, config_.max_clients);
     server_->listen("localhost", config_.port);
     running_ = false;
     removePortFile();
