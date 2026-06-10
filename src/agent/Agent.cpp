@@ -22,8 +22,7 @@ Agent::~Agent() = default;
 
 void Agent::setSystemPrompt(std::string prompt) {
     system_prompt_ = std::move(prompt);
-    auto* sp = dynamic_cast<SerialProcessor*>(processor_.get());
-    if (sp) useSerialProcessor();
+    if (processor_) processor_->setSystemPrompt(system_prompt_);  // Fix #3
 }
 void Agent::setMaxToolRounds(int n) { max_tool_rounds_ = (n >= 1) ? n : 1; }
 void Agent::setContextManager(ContextManager* cm) { context_manager_ = cm; }

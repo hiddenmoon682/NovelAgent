@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agent/IToolProvider.h"
 #include "agent/tools/BuiltInTool.h"
 #include "llm/Message.h"
 
@@ -10,7 +11,7 @@
 
 namespace agent {
 
-/// 工具注册中心 — 统一的工具注册、查询与执行调度器。
+/// 工具注册中心 — 实现 IToolProvider 接口。
 ///
 /// 支持两种注册方式：
 ///   1. registerTool() — 函数式（轻量、无状态工具），直接传入 lambda
@@ -23,7 +24,7 @@ namespace agent {
 ///
 ///   auto tools = registry.getToolDefinitions();  // 传给 LLMClient::chat()
 ///   auto result = registry.executeTool("echo", {{"msg", "hello"}});
-class ToolRegistry {
+class ToolRegistry : public IToolProvider {
 public:
     ToolRegistry() = default;
     ~ToolRegistry() = default;
@@ -83,6 +84,20 @@ public:
 
     /// 按类别获取工具名称列表。
     std::vector<std::string> toolNamesByCategory(ToolCategory category) const;
+
+    // ================================================================
+    // IToolProvider 接口实现
+    // ================================================================
+
+    std::vector<llm::ToolDefinition> getDefinitions() const override {
+        return getToolDefinitions();
+    }
+    nlohmann::json execute(const std::string& name, const nlohmann::json& args) override {
+        return executeTool(name, args);
+    }
+    bool has(const std::string& name) const override {
+        return hasTool(name);
+    }
 
 private:
     /// 内部统一的工具条目（函数式和类式最终都归为此结构）

@@ -85,12 +85,17 @@ std::string SerialProcessor::buildEffectivePrompt(
 
 ParallelProcessor::ParallelProcessor(
     llm::ILLMClient& client, ToolRegistry& registry, std::string system_prompt)
+    : client_(client), registry_(registry), system_prompt_(std::move(system_prompt))
 {
-    orchestrator_ = std::make_unique<AgentOrchestrator>(
-        client, registry, std::move(system_prompt));
+    orchestrator_ = std::make_unique<AgentOrchestrator>(client_, registry_, system_prompt_);
 }
 
 ParallelProcessor::~ParallelProcessor() = default;
+
+void ParallelProcessor::setSystemPrompt(const std::string& p) {
+    system_prompt_ = p;
+    orchestrator_ = std::make_unique<AgentOrchestrator>(client_, registry_, system_prompt_);
+}
 
 ParallelProcessor::Result ParallelProcessor::process(
     const std::string& input,
