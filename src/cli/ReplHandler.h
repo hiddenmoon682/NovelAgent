@@ -1,16 +1,51 @@
 #pragma once
 
-// REPL（读入-执行-输出循环）处理器。
-// Phase 0 仅提供占位实现。
-// Phase 3 会扩展为完整交互循环，支持历史记录、斜杠命令和流式输出。
-//   - 用户输入通过 std::getline 读取，保持简单且可移植。
-//   - /help、/save、/model 等斜杠命令会在本地拦截处理。
-//   - 其余输入再交给 Agent 做 LLM 处理。
+/// REPL 处理器 — Phase 5 增强版。
+///
+/// 支持 Claude Code 风格体验：
+/// - 直接输入 novelagent.exe 进入交互 GUI（无需 -p）
+/// - /new <name> 创建新项目
+/// - /load <path> 打开已有项目
+/// - 彩色状态栏 + ANSI 主题
 
+#include "agent/Agent.h"
+#include "cli/CommandParser.h"
+#include "cli/IOutputChannel.h"
+#include "cli/TerminalGUI.h"
+#include "project/Models.h"
+
+#include <memory>
 #include <string>
+#include <vector>
+
+struct Project;
 
 class ReplHandler {
 public:
-    explicit ReplHandler() = default;
+    ReplHandler(agent::Agent& agent, IOutputChannel& out,
+                std::shared_ptr<Project> project = nullptr);
+
     void run();
+    void setWelcomeMessage(std::string msg);
+
+    /// 切换当前项目（供 /load /new 使用）。
+    void setProject(std::shared_ptr<Project> p);
+
+private:
+    agent::Agent& agent_;
+    IOutputChannel& out_;
+    CommandParser parser_;
+    TerminalGUI gui_;
+    std::shared_ptr<Project> project_;
+    std::string welcome_;
+
+    void setupCommands();
+    void setupPhase5Commands();
+
+    /// 打开或创建项目并刷新 Agent 工具注册。
+    bool openProject(const std::string& path);
+
+    std::vector<std::string> getCompletions(const std::string& prefix) const;
+    void showCompletions(const std::vector<std::string>& completions) const;
+    void autoSaveOnError();
 };

@@ -1,10 +1,10 @@
 #include "llm/LLMClient.h"
+#include "test_sse_helpers.h"
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <cassert>
 #include <iostream>
 #include <thread>
-#include <chrono>
 #include <stdexcept>
 
 static int tests_run = 0;
@@ -51,22 +51,11 @@ static ProviderConfig makeConfig(int port) {
     return cfg;
 }
 
-// ── SSE 响应构造 ──
-
-static std::string sseContentChunk(const std::string& content) {
-    return "data: {\"id\":\"test-id\",\"model\":\"test\",\"created\":1234,"
-           "\"choices\":[{\"index\":0,\"delta\":{\"content\":\""
-           + content + "\"}}]}\n\n";
-}
-
-static std::string sseFinishChunk(const std::string& reason) {
-    return "data: {\"choices\":[{\"index\":0,\"delta\":{},"
-           "\"finish_reason\":\"" + reason + "\"}],"
-           "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,"
-           "\"total_tokens\":15}}\n\n";
-}
-
-static const char* sseDone = "data: [DONE]\n\n";
+// ── SSE 响应构造已抽取到 test_sse_helpers.h ──
+using llm::test::sseContentChunk;
+using llm::test::sseFinishChunk;
+using llm::test::sseDone;
+using llm::test::sseToolCallChunk;
 
 // =========================================================================
 // 测试 1: 流式 token 回调
@@ -95,7 +84,7 @@ void test_streaming_token_callback() {
     cb.on_content = [&](const std::string& delta) { collected += delta; };
     cb.on_complete = [&](const LLMResponse& r) { response = r; };
 
-    response = client.chat({{MessageRole::User, "Hi"}}, {}, "You are helpful.", cb);
+    response = client.chat({Message::user("Hi")}, {}, "You are helpful.", cb);
 
     CHECK(collected == "Hello World");
     CHECK(response.content == "Hello World");
@@ -117,51 +106,12 @@ void test_streaming_tool_call_callback() {
 
     server.svr.Post("/v1/chat/completions", [&](const httplib::Request&,
                                                  httplib::Response& res) {
-        // 使用 nlohmann::json 构造 SSE 数据以正确处理 JSON 转义
-        using json = nlohmann::json;
-
-        auto makeDelta = [](json tc) {
-            json j;
-            j["choices"] = json::array({{
-                {"index", 0},
-                {"delta", {{"tool_calls", json::array({tc})}}}
-            }});
-            return "data: " + j.dump() + "\n\n";
-        };
-
-        // chunk 1: id + name
-        json tc1;
-        tc1["index"] = 0;
-        tc1["id"] = "call_abc";
-        tc1["type"] = "function";
-        tc1["function"] = {{"name", "read_file"}, {"arguments", ""}};
-
-        // chunk 2: first argument fragment
-        json tc2;
-        tc2["index"] = 0;
-        tc2["function"] = {{"arguments", "{\"path\":\"/f"}};
-
-        // chunk 3: second argument fragment
-        json tc3;
-        tc3["index"] = 0;
-        tc3["function"] = {{"arguments", "oo.txt\"}"}};
-
-        // finish chunk
-        json finish;
-        finish["choices"] = json::array({{
-            {"index", 0},
-            {"delta", json::object()},
-            {"finish_reason", "tool_calls"}
-        }});
-        finish["usage"] = {
-            {"prompt_tokens", 10},
-            {"completion_tokens", 5},
-            {"total_tokens", 15}
-        };
-
-        std::string body = makeDelta(tc1) + makeDelta(tc2) + makeDelta(tc3) +
-                          "data: " + finish.dump() + "\n\n"
-                          "data: [DONE]\n\n";
+        std::string body =
+            sseToolCallChunk(0, "call_abc", "read_file", "") +           // id + name
+            sseToolCallChunk(0, "", "", R"({"path":"/f)") +             // arguments 片段 1
+            sseToolCallChunk(0, "", "", R"(oo.txt"})") +                // arguments 片段 2
+            sseFinishChunk("tool_calls") +
+            sseDone;
         res.set_content(body, "text/event-stream");
     });
     server.start();
@@ -174,7 +124,7 @@ void test_streaming_tool_call_callback() {
     cb.on_tool_call_start = [&]() { tool_started = true; };
     cb.on_complete = [&](const LLMResponse& r) { response = r; };
 
-    response = client.chat({{MessageRole::User, "Read a file"}}, {}, "", cb);
+    response = client.chat({Message::user("Read a file")}, {}, "", cb);
 
     CHECK(tool_started);
     CHECK(response.tool_calls.size() == 1);
@@ -223,7 +173,7 @@ void test_non_streaming() {
 
     LLMClient client(makeConfig(server.port));
     auto response = client.chatNonStreaming(
-        {{MessageRole::User, "Hello"}}, {}, "Be helpful.");
+        {Message::user("Hello")}, {}, "Be helpful.");
 
     CHECK(response.id == "chatcmpl-123");
     CHECK(response.content == "你好，我是 AI 助手。");
@@ -256,7 +206,7 @@ void test_http_401_error() {
 
     bool caught = false;
     try {
-        client.chatNonStreaming({{MessageRole::User, "Hi"}});
+        client.chatNonStreaming({Message::user("Hi")});
     } catch (const std::runtime_error& e) {
         caught = true;
         std::string msg = e.what();
@@ -284,7 +234,7 @@ void test_missing_api_key() {
     LLMClient client(cfg);
     bool caught = false;
     try {
-        client.chatNonStreaming({{MessageRole::User, "Hi"}});
+        client.chatNonStreaming({Message::user("Hi")});
     } catch (const std::runtime_error& e) {
         caught = true;
         std::string msg = e.what();

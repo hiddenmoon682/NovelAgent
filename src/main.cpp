@@ -1,104 +1,89 @@
-// NovelAgent 程序入口。
-// 当前支持两种运行模式：
-//   1. 单次命令：novelagent -p my-novel -e "写第三章"
-//   2. 交互式 REPL：novelagent -p my-novel
-//
-// API Key 的优先级为：环境变量 > config.json > 内置默认值。
-// 让环境变量优先，便于接入 CI 或 dotenv 工作流。
-
+// NovelAgent — AI 写小说助手。Phase 5 打磨版。
+// 直接运行 novelagent.exe 即可进入 Claude Code 风格的终端 GUI。
+#include "NovelAgentApp.h"
+#include "cli/AnsiTerminal.h"
 #include "config/AppConfig.h"
-#include "cli/ReplHandler.h"
 #include "project/ProjectManager.h"
 
 #include <CLI/CLI.hpp>
 #include <spdlog/spdlog.h>
 #include <algorithm>
-#include <iostream>
 #include <cstdlib>
+#include <iostream>
 
 int main(int argc, char** argv) {
-    CLI::App app{"NovelAgent - AI-Powered Novel Writing Assistant"};
+    Ansi::enableWindowsAnsi();
 
-    std::string projectPath;
-    std::string execCommand;
-    std::string providerName = "deepseek";
+    CLI::App app{"NovelAgent - AI-Powered Novel Writing Assistant"};
+    app.set_help_flag("-h,--help", "打印帮助信息");
+
+    std::string projectPath, execCommand, providerName = "deepseek";
     bool verbose = false;
 
-    app.add_option("-p,--project", projectPath, "项目目录路径");
+    // -p 和 -e 现在是可选参数
+    app.add_option("-p,--project", projectPath, "项目目录路径（可选，不指定则进入欢迎页）");
     app.add_option("-e,--exec", execCommand, "执行单次命令后退出");
     app.add_option("--provider", providerName, "LLM provider (deepseek, kimi, claude)");
     app.add_flag("-v,--verbose", verbose, "启用调试日志");
 
+    try { app.parse(argc, argv); }
+    catch (const CLI::ParseError& e) { return app.exit(e); }
+
+    if (verbose) spdlog::set_level(spdlog::level::debug);
+
     try {
-        app.parse(argc, argv);
-    } catch (const CLI::ParseError& e) {
-        return app.exit(e);
-    }
-
-    if (verbose) {
-        spdlog::set_level(spdlog::level::debug);
-    }
-
-    // 从 ~/.novelagent/config.json 加载配置，缺失时返回空配置。
-    AppConfig config = AppConfig::load();
-
-    // 用环境变量覆盖配置文件中的 API Key，
-    // 这样用户就不必把密钥明文写进磁盘。
-    for (const auto& envProvider : {"DEEPSEEK", "KIMI", "CLAUDE"}) {
-        std::string envName = std::string(envProvider) + "_API_KEY";
-        const char* envKey = std::getenv(envName.c_str());
-        if (envKey) {
-            std::string lower = envProvider;
-            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-            config.setApiKey(lower, envKey);
+        // 加载配置 + 环境变量覆盖
+        AppConfig config = AppConfig::load();
+        for (const auto& name : {"DEEPSEEK", "KIMI", "CLAUDE"}) {
+            if (const char* key = std::getenv((std::string(name) + "_API_KEY").c_str())) {
+                std::string lower = name;
+                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                config.setApiKey(lower, key);
+            }
         }
-    }
 
-    std::cout << "NovelAgent v0.1.0\n";
-
-    // 显示当前默认 provider 信息。
-    if (config.getDefaultProvider()) {
-        const auto* p = config.getDefaultProvider();
-        std::cout << "Provider: " << config.default_provider
-                  << " | Model: " << p->model << "\n";
-    } else {
-        std::cout << "尚未配置 LLM Provider。可通过环境变量设置：\n";
-        std::cout << "  DEEPSEEK_API_KEY, KIMI_API_KEY, CLAUDE_API_KEY\n";
-    }
-
-    // 按需打开或创建项目。
-    ProjectManager pm;
-    Project project;
-
-    if (!projectPath.empty()) {
-        project = pm.openOrCreate(projectPath);
-
-        if (project.title.empty()) {
-            std::cerr << "错误：无法打开或创建项目 " << projectPath << "\n";
+        auto* provider = config.getProvider(providerName);
+        if (!provider) {
+            std::cerr << Ansi::error() << "错误: 未找到 provider '"
+                      << providerName << "'\n" << Ansi::reset();
             return 1;
         }
 
-        // 显示项目摘要，方便进入 REPL 前快速确认状态。
-        std::cout << "\n项目: " << project.title << "\n";
-        std::cout << "状态: " << project.status
-                  << " | 字数: " << project.current_word_count
-                  << "/" << project.target_word_count << "\n";
-        std::cout << "章节: " << project.outline.chapters.size()
-                  << " | 角色: " << project.characters.size() << "\n\n";
-    }
+        // 打开/创建项目（可选）
+        std::shared_ptr<Project> projectPtr;
+        if (!projectPath.empty()) {
+            ProjectManager pm;
+            Project project = pm.openOrCreate(projectPath);
+            if (project.title.empty()) {
+                std::cerr << Ansi::error() << "错误: 无法打开/创建项目 "
+                          << projectPath << "\n" << Ansi::reset();
+                return 1;
+            }
+            projectPtr = std::make_shared<Project>(std::move(project));
+        }
 
-    // 单次命令模式。
-    if (!execCommand.empty()) {
-        std::cout << "Exec 模式: " << execCommand << "（Phase 3 实现）\n";
-        return 0;
-    }
+        // 创建应用
+        NovelAgentApp novelAgent(*provider, projectPtr);
 
-    // 交互式 REPL 模式。
-    if (!projectPath.empty()) {
-        std::cout << "输入 /help 查看可用命令。\n";
-        // ReplHandler(project).run();  // Phase 3 实现
-    } else {
-        std::cout << "使用 -p <目录> 指定项目后再进入 REPL。\n";
+        // --exec 单次命令模式
+        if (!execCommand.empty()) {
+            novelAgent.runExec(execCommand);
+            return 0;
+        }
+
+        // REPL 交互模式（有项目直接进入，无项目显示欢迎页+引导命令）
+        novelAgent.runRepl();
+
+    } catch (const std::exception& e) {
+        std::cerr << Ansi::error() << "\n致命错误: " << e.what()
+                  << Ansi::reset() << "\n";
+        std::cerr << Ansi::warning()
+                  << "程序将退出，项目文件未被修改。\n" << Ansi::reset();
+        return 1;
+    } catch (...) {
+        std::cerr << Ansi::error()
+                  << "\n发生未知错误，程序将退出。\n" << Ansi::reset();
+        return 1;
     }
 
     return 0;

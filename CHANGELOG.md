@@ -1,5 +1,264 @@
 # Changelog
 
+## [2026-06-10] Phase 5 — 打磨 + 终端 GUI (7步全部完成)
+
+- **5.1** — `AnsiTerminal.h`: 统一 ANSI 工具库（颜色/样式/光标/语义主题）
+  - Windows `SetConsoleMode` 自动启用 ANSI 支持
+  - 语义化颜色：assistant(绿)/userInput(蓝)/toolCall(灰)/thinking(暗)/error(红)/warning(黄)
+- **5.2** — Tab 补全 + 4 个新斜杠命令:
+  - `/status` — 项目统计（章节/角色/设定/字数/对话）
+  - `/config <key> <value>` — 运行时配置（context_window, max_tool_rounds）
+  - `/export` — 导出所有章节为单个 Markdown 文件
+  - `/save` — 手动保存项目
+  - `/trace` — 执行轨迹查询
+  - Tab 补全：输入 `/` 后自动补全命令名
+- **5.3** — 错误恢复:
+  - main.cpp 最外层 try/catch（全局异常兜底）
+  - ReplHandler 自动保存（崩溃前保存项目）
+  - 磁盘写入失败的友好提示
+- **5.4** — `AgentState.h`: 显式状态机
+  - `AgentState` 枚举（Idle/Thinking/AwaitingTool/WaitingUser/Error/Fatal）
+  - `StateMachine` 类：状态转换 + 合法性检查 + 日志
+  - 状态名中文化（"就绪"/"思考中"/"执行工具"等）
+- **5.5** — `ParameterValidator.h/.cpp`: 工具参数 Schema 校验
+  - 必填字段检查、类型匹配（string/integer/boolean/array/enum）
+  - additionalProperties 检测（记录 warning 不阻断）
+  - 校验失败返回结构化 JSON 错误 `{"error":"...","details":[...]}`
+  - 集成到 `ToolPipeline::executeOne()` 执行前
+- **5.6** — `ExecutionTracer.h/.cpp`: Agent 执行轨迹记录
+  - `TraceEntry` 结构（timestamp/step_index/event_type/payload/tokens/duration）
+  - `dump()` 保存为 JSONL 格式到 `.novelagent/traces/`
+  - `summary()` 汇总统计（总步数/token/LLM调用/工具调用/错误）
+  - `recentSummary(n)` 最近 N 步文本摘要
+- **终端 GUI** — `TerminalGUI.h/.cpp`: Claude Code CLI 风格界面
+  - 语义化颜色主题（角色区分）
+  - 状态栏渲染（模式 | 项目 | token 用量）
+  - Markdown 渲染（**粗体**/*斜体* → ANSI 转义码）
+  - 进度指示器（旋转动画）
+  - 命令历史管理
+  - 标题/分隔线渲染
+- **修改** — StreamDisplay(重写-ANSI主题), ReplHandler(重写-GUI+命令), ToolPipeline(校验), NovelAgentApp(项目传递), main(ANSI+错误恢复)
+- **新增** — 11 个文件: AnsiTerminal, TerminalGUI, AgentState, ParameterValidator, ExecutionTracer
+- 测试统计: **14/14** 全部通过
+- **版本**: v0.3.0
+
+## [2026-06-10] 架构深层重构 — 依赖倒置+策略模式+安全约束 (P0-P3)
+
+- **P0** — `ToolCallLoop`: 提取 Agent/SubAgent 中 ~90 行重复 tool call 循环为独立引擎
+  - 支持超时控制、首轮流式/非流式配置、统一错误处理
+  - Agent::runToolLoop 和 SubAgent::execute 均委托 ToolCallLoop
+- **P0** — `IToolProvider` + `RestrictedToolProvider`: 工具访问安全约束
+  - SubAgent 不再持有完整 ToolRegistry&，改为持有 IToolProvider&
+  - RestrictedToolProvider 白名单机制在类型系统层面保证安全
+  - O(n*m) 过滤优化为 O(n)
+- **P1** — `ISynthesisStrategy`: AgentOrchestrator 汇总策略接口
+  - LlmSynthesis（LLM汇总）、ConcatSynthesis（简单拼接）、CustomSynthesis（注入函数）
+  - AgentOrchestrator::synthesize() 不再硬编码 LLM 调用
+- **P1** — `IMessageProcessor`: 消除 Agent 硬编码串行/并行分支
+  - SerialProcessor（tool call 循环）、ParallelProcessor（委托 Orchestrator）
+  - 新增 PlanThenExecute 模式只需实现接口并注入
+- **P1** — `AgentOrchestratorTypes.h`: 分离 SubTask 类型到独立头文件
+- **新增** — 10 个文件: ToolCallLoop, IToolProvider, IMessageProcessor, ISynthesisStrategy, AgentOrchestratorTypes
+- **修改** — Agent(重写-策略模式), SubAgent(IToolProvider), AgentOrchestrator(ISynthesisStrategy), NovelAgentApp(适配)
+- 测试统计: **14/14** 全部通过
+
+## [2026-06-10] Phase 4 架构重构 — 审查问题修复 (P0-P3)
+
+- **P0** — `HttpClient`: 提取共享 HTTP 基础设施（URL解析/认证/重试/错误处理）
+  - LLMClient 和 EmbeddingGenerator 均通过组合持有 HttpClient，消除 ~150 行重复代码
+  - LLMClient.cpp: 从 363 行精简到 140 行（-61%）
+  - EmbeddingGenerator.cpp: 从 262 行精简到 155 行（-41%）
+- **P1** — 检索模块抽象接口: `IVectorStore` + `IEmbeddingGenerator`
+  - VectorStore 和 EmbeddingGenerator 改为实现纯虚接口
+  - 支持 Mock 测试，未来可替换为 sqlite-vec / ONNX 后端
+- **P1** — 拆分 ContextManager 上帝类（7→1 职责）:
+  - `ConversationSummarizer` — 对话摘要（规则提取+渲染）
+  - `ChapterSummaryCache` — 章节摘要缓存 CRUD（通过 IStorageBackend）
+  - `DegradationPipeline` — 策略模式降级管线（5个独立策略类）
+  - `SessionPersistence` — 会话保存/加载/归档
+  - ContextManager 精简为编排器（~150 行），组合 4 个子模块
+- **P2** — ContextManager 通过 IStorageBackend 访问存储:
+  - `FileStorageBackend` 适配 ProjectIO → IStorageBackend
+  - ContextManager 构造函数注入 `IStorageBackend&`，不再直接依赖 ProjectIO
+  - 符合 CLAUDE.md 架构规则
+- **P2** — 降级策略模式: `IDegradationStrategy` + 5 个具体策略类 + `DegradationPipeline`
+  - 新增降级等级只需实现接口并注册，符合开闭原则
+- **P3** — `SummaryKeywords` 配置化: 剧情/任务关键词可通过构造函数或 setter 定制
+- **新增** — 15 个文件: Http客户端、4个抽象接口、4个拆分类、FileStorageBackend、ContextManagerTypes
+- **修改** — ContextManager(重写)、LLMClient(瘦身)、EmbeddingGenerator(瘦身)、NovelAgentApp(适配)
+- 测试统计: **14/14** 全部通过
+
+## [2026-06-09] Phase 4 — 上下文管理与语义检索 (9步)
+
+- **新增** — `ContextManager` Phase 4 完整版:
+  - 对话历史摘要 `summarizeConversation()`：规则提取角色名/章节引用/剧情点/任务
+  - 章节摘要缓存：`.novelagent/summaries.json` 读写，支持按章节 ID 索引
+  - 预算分配 `allocateBudget()`：50/30/20 规则（章节/对话/摘要）
+  - 多级降级（L1-L5）：截断章节→移除角色详情→移除相邻章节→截断对话→全文压缩
+  - 会话持久化 `saveSession()`/`loadSession()`/`archiveSession()`
+- **新增** — `VectorStore` (JSON 后端 + 暴力余弦相似度):
+  - CRUD: insert/insertBatch/remove/update + 持久化到 JSON 文件
+  - 搜索: `search()` Top-K 余弦相似度排序，< 10ms @ 万级向量
+  - API 兼容 sqlite-vec（后续仅需替换 .cpp 内部实现）
+- **新增** — `EmbeddingGenerator`:
+  - 调用 OpenAI 兼容 `/v1/embeddings` API
+  - 支持单条/批量嵌入，自动分批（max_batch_size=100）
+  - 指数退避重试（3 次）+ 文本截断预处理
+- **新增** — `NovelChunker`:
+  - 章节切分：优先按 Scene 边界，退化为段落边界（500-2000字/chunk, 15% 重叠）
+  - 实体拼接：`chunkCharacter()`/`chunkSetting()`/`chunkWorldRule()` 生成可嵌入文本
+- **新增** — `tests/test_retrieval.cpp`：15 个检索模块测试
+- **修改** — `tests/test_context_manager.cpp`：扩展至 22 个测试（Phase 4.1-4.4）
+- **修改** — `CMakeLists.txt`：新增 `src/retrieval/` 模块到 novelagent_core
+- 测试统计: **14/14** (新增 1 个测试目标，test_context_manager 扩增 16 子测试)
+
+## [2026-06-09] Phase 3.5 — 多Agent并行编排 (9步)
+
+- **新增** — `SubAgent`: 独立对话上下文 + 受限工具集(std::async) + 120s超时
+- **新增** — `AgentOrchestrator`: 分解→并行→汇总 (max_parallel=4, std::async)
+- **新增** — `SubAgentTemplate`: 5个内置模板(chapter-consistency等)
+- **新增** — `TemplateManager`: 内置+用户模板CRUD
+- **修改** — `ReplHandler`: /parallel + /agent 命令族
+- **修改** — `NovelAgentApp`: 集成AgentOrchestrator+TemplateManager
+- 测试统计: 12/12
+
+## [2026-06-09] Phase 3.6-3.12 — 剩余工具 + REPL 集成（Phase 3 核心完成）
+
+- **新增** — Setting 工具: `get_setting` / `get_settings` / `update_setting`
+- **新增** — WorldRule 工具: `get_world_rule` / `get_world_rules` / `update_world_rule`
+- **新增** — Outline 工具: `get_outline`
+- **新增** — Project 工具: `get_project_status`
+- **新增** — Shell 工具: `run_powershell`（`_popen` 捕获 stdout + exit_code）
+- **新增** — `AgentSetup.h`: `registerAllTools()` 一键注册全部 17 个工具
+- **新增** — `CommandParser`: 斜杠命令解析（/help /exit /clear /tools /model）
+- **新增** — `StreamDisplay`: 流式输出包装（内容/思维链/工具调用/token 统计）
+- **新增** — `ReplHandler`（完整版）: REPL 主循环 + 流式显示 + 命令拦截
+- **修改** — `main.cpp`: 完整集成 CLI（-p 项目 -e 单次 --provider -v）
+- 工具总数: **17 个** (Chapter 5 + Character 4 + Setting 3 + WorldRule 3 + Outline 1 + Project 1 + Shell 1)
+- 测试统计: 12/12 全部通过
+- CLI 验证: `novelagent -p test -e "..."` --exec 模式端到端跑通
+
+## [2026-06-09] Phase 3.5 — Character 工具（4 个）
+
+- **新增** — `src/agent/tools/CharacterTools.h/.cpp`：4 个角色管理工具类
+  - `GetCharacterTool` — 按 ID 查询角色完整档案（利用 Models.h 的 to_json 序列化）
+  - `ListCharactersTool` — 列出所有角色摘要（id/name/role/goal）
+  - `CreateCharacterTool` — 创建角色（自动生成 char-001 格式 ID，重名检测，补零对齐）
+  - `UpdateCharacterTool` — 更新角色字段（指针到成员 map 驱动，支持 16 个 string + 4 个 array 字段）
+- **新增** — `tests/test_character_tools.cpp`：6 个测试（创建/查询/列表/更新/错误处理/ToolRegistry）
+- 测试统计：12/12 全部通过（新增 1 个测试目标）
+
+## [2026-06-09] 第三轮代码审查修复 — REVIEW_NOTES.md 11 问题
+
+- **修复** — #1 Agent 不再覆盖用户的 `system_prompt_`：ContextManager 产出用局部变量拼接（审查发现的回归 bug）
+- **修复** — #2 `truncateMessages()` token 公式统一为 `countMessages()` 循环重算（审查发现的 bug）
+- **修复** — #3 `buildSystemPrompt()` 无效章节 fallback 到项目概述（审查发现的 bug）
+- **修复** — #4 `truncateMessages()` budget ≤ 0 时返回空列表（审查发现的 edge case）
+- **修复** — #6 `CreateChapterTool` 恢复全量保存（审查发现的回归 bug）
+- **修复** — #7 工具执行结果 4000 字符截断（防止单条消息超出 token 预算）
+- **修复** — #8 删除 `processUserMessage` 中空 `try/catch`（审查发现的死代码）
+- **修复** — #9 `ListChaptersTool` 描述与实际行为同步（审查发现的文档不一致）
+- **修复** — #11 `ContextAssembly::total_tokens` 注释标注为估算值
+- 暂缓 — #5 Project& 生命周期约束（等 Phase 3.5）+ #10 additionalProperties 安全默认
+- 影响范围：`Agent.cpp`、`ContextManager.h/.cpp`、`ChapterTools.h/.cpp`
+- 测试统计：11/11 全部通过
+
+## [2026-06-09] Step 3.1-3.4 代码审查修复
+
+- **修复** — Agent 集成 ContextManager：`runToolLoop` 每次 LLM 调用前做 token 预算截断（可选，通过 `setContextManager()` 启用）
+- **修复** — `ListChaptersTool` 不再逐章读取文件（100 章 = 省 100 次磁盘 I/O），改为只返回元数据
+- **修复** — 删除 `countWords()` 重复实现（与 `TokenCounter` 功能重复且算法不一致）
+- **修复** — `CreateChapterTool` 只保存 `outline.json` 而非全部 6 个 JSON 文件
+- **修复** — Agent 新增 `setContextWindow()` 配置入口
+- 测试统计：11/11 全部通过
+
+## [2026-06-08] Phase 3.4 — Chapter 工具（5 个）
+
+- **新增** — `src/agent/tools/ChapterTools.h/.cpp`：5 个章节操作工具类
+  - `ReadChapterTool` — 读取章节 Markdown 全文
+  - `WriteChapterTool` — 覆写章节内容
+  - `CreateChapterTool` — 创建新章节 + 更新 outline + 写入文件
+  - `AppendChapterTool` — 读取 → 追加 → 写回
+  - `ListChaptersTool` — 列出所有章节 ID/标题/顺序/字数
+- **新增** — 每个工具持有 `Project&` 引用，通过 `ProjectIO` 执行磁盘 I/O
+- **新增** — `tests/test_chapter_tools.cpp`：7 个集成测试（临时目录 + 真实文件 I/O）
+- **修复** — 文件名使用章节 ID（`ch-001.md`）而非标题，避免 Windows 窄字符 API 下 UTF-8 路径问题
+- 影响范围：`src/agent/tools/ChapterTools.h/.cpp`、`tests/test_chapter_tools.cpp`
+- 测试统计：11/11 全部通过（新增 1 个测试目标）
+
+## [2026-06-08] Phase 3.3 — ContextManager（基础版）
+
+- **新增** — `src/agent/ContextManager.h/.cpp`：上下文管理器，负责 token 预算计算 + 消息截断 + 系统提示词构建
+- **新增** — `ContextAssembly` 结构体：截断后消息 + 系统提示词 + 预算统计 + 截断元信息
+- **新增** — `calculateBudget()`：80/20 规则（80% 输入 + 20% 输出预留）
+- **新增** — `truncateMessages()`：从旧到新移除超出预算的消息，保证最新消息不丢失
+- **新增** — `buildSystemPrompt()`：委托 PromptContextBuilder 按章节构建系统提示词
+- **新增** — `tests/test_context_manager.cpp`：6 个测试（预算计算、不截断、截断触发、无 Project、有/无章节）
+- 影响范围：`src/agent/ContextManager.h`、`src/agent/ContextManager.cpp`、`tests/test_context_manager.cpp`
+- 测试统计：10/10 全部通过（新增 1 个测试目标）
+
+## [2026-06-08] Phase 3.2 — Agent 核心循环
+
+- **新增** — `src/agent/Agent.h/.cpp`：核心 Agent 类，实现 `processUserMessage()` 和 `execute()` 两种入口
+- **新增** — Tool call 循环：LLM 请求工具 → Agent 执行 → 回传结果 → 再次调用 LLM（最多 10 轮）
+- **新增** — 首轮流式 + 后续非流式的混合调用策略（用户看到实时输出，工具循环节省开销）
+- **新增** — 对话历史自动管理：用户消息、assistant 回复、tool 结果自动追加到 Conversation
+- **新增** — `tests/test_agent.cpp`：5 个 Mock HTTP 测试（简单对话、tool call 循环、execute 模式、对话管理、空输入）
+- 影响范围：`src/agent/Agent.h`、`src/agent/Agent.cpp`、`tests/test_agent.cpp`、`CMakeLists.txt`、`tests/CMakeLists.txt`
+- 测试统计：9/9 全部通过（新增 1 个测试目标）
+
+## [2026-06-08] Phase 3.1 — ToolRegistry + 内置工具架构
+
+- **新增** — `src/agent/tools/BuiltInTool.h`：工具抽象基类 + `ToolCategory` 枚举（7 个类别）+ `toDefinition()` 转换
+- **新增** — `src/utils/SchemaUtils.h`：JSON Schema 构建辅助（`object` / `stringProp` / `integerProp` / `booleanProp` / `stringEnum` 等）
+- **新增** — `src/agent/ToolRegistry.h/.cpp`：工具注册中心，支持 `registerTool()`（函数式）和 `registerBuiltInTool()`（类式）两种注册方式
+- **新增** — `tests/test_tool_registry.cpp`：8 个测试（函数式/类式注册、执行、ToolDefinition 输出、错误处理、分类查询、SchemaUtils）
+- 影响范围：`src/agent/`、`src/utils/SchemaUtils.h`、`CMakeLists.txt`、`tests/CMakeLists.txt`
+- 测试统计：8/8 全部通过（新增 1 个测试目标）
+
+## [2026-06-08] 新增 LLM 请求→响应流程图文档
+
+- **新增** — `docs/diagrams/` 目录：存放流程图和架构图
+- **新增** — `docs/diagrams/LLM请求响应流程图.md`：Mermaid 格式的完整流程图（含 7 张图）
+  - 总览：非流式 vs 流式两条路径对比（flowchart）
+  - 详细时序图：从用户输入到 LLMResponse 返回（sequence diagram, 7 个阶段）
+  - 组件数据流图：SSE 文本 → StreamChunk → LLMResponse 的类型转换链
+  - 错误处理路径：4 层错误检测（配置/HTTP/SSE/完整性）及中文错误映射
+  - 数据结构对照表：各阶段数据类型的来源/去向
+  - 非流式 vs 流式对比表
+- 可在 VS Code 中按 `Ctrl+Shift+V` 直接预览 Mermaid 渲染效果
+
+## [2026-06-08] 编译速度优化 — 对象库消除重复编译
+
+- **新增** — CMake 对象库 `novelagent_lib`：所有业务源码编译为 `.o` 集合，主程序和测试共享
+- **修改** — 每个 `.cpp` 从编译 2~4 次降为 1 次（`SSEParser.cpp`: 4×→1×, `LLMClient.cpp`: 3×→1×, `StreamAccumulator.cpp`: 3×→1×）
+- **修改** — 测试目标大幅简化：每个测试从 ~10 行（include 路径 + 链接库 + 源文件列表）简化为 ~5 行
+- **修改** — 构建生成器从 MSYS Makefiles 切换为 Ninja（自动检测），增量构建更快
+- **修改** — `add_compile_definitions(CPPHTTPLIB_OPENSSL_SUPPORT)` 从全局改为 `target_compile_definitions` 精确作用域
+- **修改** — MSYS2 DLL PATH 覆盖所有测试目标（对象库 PUBLIC 链接使所有测试都依赖 OpenSSL/spdlog DLL）
+- 影响范围：`CMakeLists.txt`、`tests/CMakeLists.txt`
+- 测试统计：7/7 全部通过，增量构建 ~12s（修改 1 个 `.cpp`）
+
+## [2026-06-08] Message.h 协议构造代码封装
+
+- **新增** — `Message` 静态工厂方法：`user()`、`system()`、`assistant()`、`toolResult()`，替代冗长的聚合初始化
+- **新增** — `Conversation` 类（`src/llm/Conversation.h`）：封装对话历史管理，提供 `addUser()`、`addAssistant()`、`systemPrompt()`、`messages()` 等便捷方法
+- **新增** — `tests/test_sse_helpers.h`：SSE 测试数据构造辅助（`sseContentChunk` / `sseFinishChunk` / `sseToolCallChunk`），消除测试中手工拼接 JSON 字符串
+- **修改** — `test_llm_client.cpp`：迁移至新 API（工厂方法 + SSE 辅助），删除手工 JSON 拼接代码
+- **修改** — `test_deepseek_smoke.cpp`：迁移至 `Message::user()` 工厂方法
+- 影响范围：`src/llm/Message.h`、`src/llm/Conversation.h`、`tests/test_sse_helpers.h`、`tests/test_llm_client.cpp`、`tests/test_deepseek_smoke.cpp`
+- 测试统计：7/7 全部通过
+
+## [2026-06-08] 流式响应字段封装 — StreamingTypes 分离 + StreamingPipeline
+
+- **新增** — `src/llm/StreamingTypes.h`：从 Message.h 拆分出 `ToolCallDelta`、`UsageInfo`、`StreamChunk` 三个流式中间类型
+- **新增** — `src/llm/StreamingPipeline.h`：封装 SSEParser + StreamAccumulator + 回调路由为统一流式管道 facade
+- **修改** — `LLMClient::chat()`：管道装配从 ~40 行简化为 ~15 行，使用 `StreamingPipeline`
+- **修改** — `SSEParser.h` / `StreamAccumulator.h`：include 改为直接引用 `StreamingTypes.h`
+- **修改** — `Message.h`：移除流式类型（~35 行），末尾 `#include "StreamingTypes.h"` 保持向后兼容
+- 影响范围：`src/llm/Message.h`、`src/llm/StreamingTypes.h`、`src/llm/StreamingPipeline.h`、`src/llm/SSEParser.h`、`src/llm/StreamAccumulator.h`、`src/llm/LLMClient.cpp`
+- 测试统计：7/7 全部通过
+
 ## [2026-05-31] 依赖管理迁移 MSYS2 + Phase 2 代码审查修复
 
 - **新增** — MSYS2 pacman 优先 + FetchContent 回退的二级依赖管理（`find_package` → `FetchContent`）

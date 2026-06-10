@@ -16,6 +16,9 @@ public:
     /// 估算消息列表的总 token 数（含角色标记和工具调用的结构开销）
     static int countMessages(const std::vector<Message>& messages);
 
+    /// 估算单条消息的 token 数（避免为截断循环构造临时 vector）
+    static int countSingleMessage(const Message& msg);
+
     /// 统计文本中的中文字符数（CJK 统一表意文字）
     static int estimateChineseChars(const std::string& text);
 

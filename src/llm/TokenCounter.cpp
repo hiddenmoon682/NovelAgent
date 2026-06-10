@@ -107,13 +107,51 @@ int TokenCounter::estimateEnglishWords(const std::string& text)
 
 int TokenCounter::countTokens(const std::string& text)
 {
-    int chineseChars = estimateChineseChars(text);
-    int englishWords = estimateEnglishWords(text);
+    // 单次遍历同时统计中文和英文，避免双重扫描
+    int chineseChars = 0;
+    int englishWords = 0;
+    bool inWord = false;
+
+    const char* it = text.data();
+    const char* end = it + text.size();
+
+    while (it < end) {
+        unsigned char c = static_cast<unsigned char>(*it);
+        if ((c & 0x80) == 0) {
+            // ASCII
+            if (std::isalpha(c)) {
+                if (!inWord) { ++englishWords; inWord = true; }
+            } else {
+                inWord = false;
+            }
+            ++it;
+        } else {
+            // 多字节 UTF-8 → 解码并判断 CJK
+            uint32_t cp = decodeUtf8(it, end);
+            if (isCJK(cp)) {
+                ++chineseChars;
+            }
+        }
+    }
 
     // 中文: 每字符约 0.60~0.75 token（取 0.75 偏保守）
     // 英文: 每单词约 1.2~1.5 token（取 1.3）
-    // 标点、数字、空白等开销已在系数中隐含补偿
     return static_cast<int>(chineseChars * 0.75 + englishWords * 1.3);
+}
+
+int TokenCounter::countSingleMessage(const Message& msg)
+{
+    int total = countTokens(msg.content);
+    total += countTokens(msg.tool_call_id);
+    total += countTokens(msg.name);
+    total += 4; // 消息角色等元数据开销
+
+    for (const auto& tc : msg.tool_calls) {
+        total += countTokens(tc.function_name);
+        total += countTokens(tc.arguments);
+        total += 8; // 工具调用 JSON 结构开销
+    }
+    return total;
 }
 
 int TokenCounter::countMessages(const std::vector<Message>& messages)

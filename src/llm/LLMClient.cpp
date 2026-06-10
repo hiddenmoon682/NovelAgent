@@ -1,73 +1,13 @@
 #include "llm/LLMClient.h"
 
-#include "llm/SSEParser.h"
-#include "llm/StreamAccumulator.h"
+#include "llm/StreamingPipeline.h"
 
-#include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
 #include <stdexcept>
-#include <mutex>
-#include <unordered_map>
 
 namespace llm {
-
-// ===========================================================================
-// 内部常量
-// ===========================================================================
-
-namespace {
-
-// 超时配置（秒）
-constexpr int kConnectionTimeout = 60;
-constexpr int kReadTimeout = 180;   // 流式模式需较长超时（大模型逐 token 生成）
-constexpr int kWriteTimeout = 60;
-
-constexpr const char* kUserAgent = "NovelAgent/0.2.0";
-
-/// ── 长连接缓存（按 LLMClient 实例隔离）──────────────────────────────
-
-/// 缓存条目：httplib::Client + 其对应的 host
-struct ClientEntry {
-    std::unique_ptr<httplib::Client> client;
-    std::string host;
-};
-
-std::mutex g_clients_mutex;
-std::unordered_map<const void*, ClientEntry> g_clients;
-
-/// 获取或创建当前 LLMClient 实例专属的长连接
-httplib::Client& getOrCreateClient(const void* instance_key,
-                                   const std::string& base_url)
-{
-    // 规范化 host
-    std::string host = base_url;
-    while (!host.empty() && host.back() == '/') {
-        host.pop_back();
-    }
-
-    std::lock_guard<std::mutex> lock(g_clients_mutex);
-
-    auto& entry = g_clients[instance_key];
-
-    // 无缓存 或 host 变了（地址复用 / Provider 切换）→ 重建
-    if (!entry.client || entry.host != host) {
-        entry.client = std::make_unique<httplib::Client>(host);
-        entry.client->set_connection_timeout(kConnectionTimeout, 0);
-        entry.client->set_read_timeout(kReadTimeout, 0);
-        entry.client->set_write_timeout(kWriteTimeout, 0);
-        entry.client->set_keep_alive(true);
-        entry.host = host;
-
-        spdlog::debug("[LLMClient] 建立长连接 → {} (实例 {})",
-                      host, instance_key);
-    }
-
-    return *entry.client;
-}
-
-} // namespace
 
 // ===========================================================================
 // 构造 / 配置校验
@@ -75,6 +15,14 @@ httplib::Client& getOrCreateClient(const void* instance_key,
 
 LLMClient::LLMClient(const ProviderConfig& config)
     : config_(config)
+    , http_(HttpConfig{
+          config.base_url,
+          config.api_key,
+          60,    // connect_timeout
+          180,   // read_timeout
+          3,     // max_retries
+          1000   // retry_base_delay_ms
+      })
 {
 }
 
@@ -133,7 +81,7 @@ nlohmann::json LLMClient::buildRequestBody(
 }
 
 // ===========================================================================
-// chatNonStreaming — 非流式调用
+// chatNonStreaming — 非流式调用（委托 HttpClient::post）
 // ===========================================================================
 
 LLMResponse LLMClient::chatNonStreaming(
@@ -144,47 +92,20 @@ LLMResponse LLMClient::chatNonStreaming(
     validateConfig();
 
     auto body = buildRequestBody(messages, tools, system_prompt, false);
-    auto& cli = getOrCreateClient(this, config_.base_url);
-
-    httplib::Headers headers = {
-        {"Authorization", "Bearer " + config_.api_key},
-        {"Content-Type", "application/json"},
-        {"User-Agent", kUserAgent}
-    };
 
     spdlog::info("[LLMClient] 非流式请求 → {} model={}", config_.base_url, config_.model);
 
-    auto res = cli.Post("/v1/chat/completions", headers, body.dump(), "application/json");
-
-    // 传输层错误
-    if (!res) {
-        auto err = httpErrorToString(static_cast<int>(res.error()));
-        last_error_ = err;
-        spdlog::error("[LLMClient] 网络错误: {}", err);
-        throw std::runtime_error("LLM 请求失败: " + err);
-    }
-
-    // HTTP 错误
-    if (res->status != 200) {
-        auto err = parseApiError(res->status, res->body);
-        last_error_ = err;
-        spdlog::error("[LLMClient] API 错误 ({}): {}", res->status, err);
-        throw std::runtime_error("API 错误: " + err);
-    }
-
-    // 解析 JSON 响应 → LLMResponse
     try {
-        auto j = nlohmann::json::parse(res->body);
+        auto j = http_.post("/v1/chat/completions", body);
         return j.get<LLMResponse>();
-    } catch (const nlohmann::json::exception& e) {
+    } catch (const std::exception& e) {
         last_error_ = e.what();
-        spdlog::error("[LLMClient] JSON 解析失败: {}", e.what());
-        throw std::runtime_error("API 响应解析失败: " + std::string(e.what()));
+        throw;
     }
 }
 
 // ===========================================================================
-// chat — 流式调用
+// chat — 流式调用（使用 HttpClient::postStreaming）
 // ===========================================================================
 
 LLMResponse LLMClient::chat(
@@ -196,72 +117,28 @@ LLMResponse LLMClient::chat(
     validateConfig();
 
     auto body = buildRequestBody(messages, tools, system_prompt, true);
-    auto& cli = getOrCreateClient(this, config_.base_url);
 
     spdlog::info("[LLMClient] 流式请求 → {} model={}", config_.base_url, config_.model);
 
     // ── 组装流式管道 ──
-    SSEParser parser;
-    StreamAccumulator acc;
+    StreamingPipeline pipeline;
+    pipeline.setCallbacks(callbacks);
 
-    LLMResponse accumulated;
-    bool stream_completed = false;
-    bool tool_call_seen = false;
-    std::string stream_error;
+    // ── 流式 POST ──
     std::string raw_response_body;
 
-    // SSEParser → StreamAccumulator + 回调转发
-    parser.setOnChunk([&](const StreamChunk& chunk) {
-        acc.feed(chunk);
-
-        if (callbacks.on_content && !chunk.content_delta.empty()) {
-            callbacks.on_content(chunk.content_delta);
-        }
-        if (callbacks.on_reasoning && !chunk.reasoning_delta.empty()) {
-            callbacks.on_reasoning(chunk.reasoning_delta);
-        }
-        if (callbacks.on_tool_call_start && !tool_call_seen
-            && !chunk.tool_call_deltas.empty()) {
-            tool_call_seen = true;
-            callbacks.on_tool_call_start();
-        }
-    });
-
-    parser.setOnError([&](const std::string& err) {
-        stream_error = err;
-        if (callbacks.on_error) {
-            callbacks.on_error(err);
-        }
-    });
-
-    acc.setOnDone([&](const LLMResponse& response) {
-        accumulated = response;
-        stream_completed = true;
-        if (callbacks.on_complete) {
-            callbacks.on_complete(response);
-        }
-    });
-
-    // ── 发送流式 POST（通过 Request.content_receiver 接收流式数据）──
-    httplib::Request req;
-    req.method = "POST";
-    req.path = "/v1/chat/completions";
-    req.set_header("Authorization", "Bearer " + config_.api_key);
-    req.set_header("Content-Type", "application/json");
-    req.set_header("User-Agent", kUserAgent);
-    req.body = body.dump();
-    req.content_receiver = [&](const char* data, size_t len, uint64_t /*offset*/,
-                                uint64_t /*total*/) {
-        raw_response_body.append(data, len);
-        parser.feed(std::string(data, len));
-        return true;
-    };
-
-    auto res = cli.send(req);
+    auto res = http_.postStreaming(
+        "/v1/chat/completions",
+        body.dump(),
+        [&](const char* data, size_t len) {
+            raw_response_body.append(data, len);
+            pipeline.feed(std::string(data, len));
+            return true;
+        });
 
     // ── 传输层错误 ──
     if (!res) {
-        auto err = httpErrorToString(static_cast<int>(res.error()));
+        auto err = HttpClient::httpErrorToString(static_cast<int>(res.error()));
         last_error_ = err;
         spdlog::error("[LLMClient] 网络错误: {}", err);
         if (callbacks.on_error) callbacks.on_error(err);
@@ -270,7 +147,7 @@ LLMResponse LLMClient::chat(
 
     // ── HTTP 错误 ──
     if (res->status != 200) {
-        auto err = parseApiError(res->status, raw_response_body);
+        auto err = HttpClient::parseApiError(res->status, raw_response_body);
         last_error_ = err;
         spdlog::error("[LLMClient] API 错误 ({}): {}", res->status, err);
         if (callbacks.on_error) callbacks.on_error(err);
@@ -278,82 +155,20 @@ LLMResponse LLMClient::chat(
     }
 
     // ── SSE 解析错误 ──
-    if (!stream_error.empty()) {
-        last_error_ = stream_error;
-        throw std::runtime_error("SSE 解析错误: " + stream_error);
+    if (pipeline.hasError()) {
+        last_error_ = pipeline.error();
+        throw std::runtime_error("SSE 解析错误: " + pipeline.error());
     }
 
     // ── 流未正常结束 ──
-    if (!stream_completed) {
+    if (!pipeline.completed()) {
         last_error_ = "流式响应未正常结束（未收到 finish_reason）";
         spdlog::error("[LLMClient] {}", last_error_);
         if (callbacks.on_error) callbacks.on_error(last_error_);
         throw std::runtime_error(last_error_);
     }
 
-    return accumulated;
-}
-
-// ===========================================================================
-// 错误处理辅助
-// ===========================================================================
-
-std::string LLMClient::parseApiError(int http_status, const std::string& response_body) const
-{
-    // 优先解析 JSON 错误体（OpenAI/DeepSeek 格式: {"error": {"message": "...", "code": "..."}}）
-    if (!response_body.empty()) {
-        try {
-            auto j = nlohmann::json::parse(response_body);
-            if (j.contains("error") && j["error"].is_object()) {
-                auto& err = j["error"];
-                std::string msg = err.value("message", "");
-                std::string code = err.value("code", "");
-                if (!code.empty()) {
-                    return "[" + code + "] " + msg;
-                }
-                if (!msg.empty()) {
-                    return msg;
-                }
-            }
-        } catch (...) {
-            // JSON 解析失败，回退到状态码描述
-        }
-    }
-
-    // 回退：HTTP 状态码描述
-    switch (http_status) {
-        case 400: return "请求参数错误 (400)";
-        case 401: return "API Key 无效或未授权 (401)";
-        case 403: return "权限不足 (403)";
-        case 404: return "API 端点不存在 (404)";
-        case 429: return "请求频率过高，请稍后再试 (429)";
-        case 500: return "LLM 服务端内部错误 (500)";
-        case 502: return "LLM 服务暂时不可用 (502)";
-        case 503: return "LLM 服务正在维护中 (503)";
-        default:  return "HTTP " + std::to_string(http_status);
-    }
-}
-
-std::string LLMClient::httpErrorToString(int error_code)
-{
-    auto err = static_cast<httplib::Error>(error_code);
-
-    switch (err) {
-        case httplib::Error::Success:              return "成功";
-        case httplib::Error::Unknown:              return "未知网络错误";
-        case httplib::Error::Connection:           return "连接失败（服务器不可达）";
-        case httplib::Error::BindIPAddress:        return "网络绑定失败";
-        case httplib::Error::Read:                 return "读取超时或连接断开";
-        case httplib::Error::Write:                return "写入数据失败";
-        case httplib::Error::ExceedRedirectCount:  return "重定向次数过多";
-        case httplib::Error::Canceled:             return "请求已取消";
-        case httplib::Error::SSLConnection:        return "SSL/TLS 连接错误";
-        case httplib::Error::SSLLoadingCerts:      return "SSL 证书加载失败";
-        case httplib::Error::SSLServerVerification: return "SSL 服务端证书验证失败";
-        case httplib::Error::ConnectionTimeout:    return "连接超时";
-        case httplib::Error::ProxyConnection:      return "代理连接失败";
-        default:                                   return "网络错误 (code: " + std::to_string(error_code) + ")";
-    }
+    return pipeline.response();
 }
 
 } // namespace llm

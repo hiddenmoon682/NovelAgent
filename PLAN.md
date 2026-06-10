@@ -1,6 +1,6 @@
 # NovelAgent CLI -- 细化实现计划
 
-> 版本: 3.4 | 更新时间: 2026-05-31 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 ✓ | Phase 3 待实施（14 步）
+> 版本: 5.0 | 更新时间: 2026-06-10 | Phase 0 ✓ | Phase 1 ✓ | Phase 2 ✓ | Phase 3 ✓ | Phase 3.5 ✓ | Phase 4 ✓ | Phase 5 ✓
 
 ## 背景
 
@@ -683,7 +683,7 @@ AppConfig (JSON 读写 + 环境变量), FileUtils, StringUtils, JsonUtils, smoke
 
 ### Phase 3.5: 多Agent 并行编排
 
-> 状态: **待实施** | 预计: 9 个步骤 | 依赖: Phase 3
+> 状态: **已完成** ✅ | 9 个步骤全部完成 | 依赖: Phase 3
 
 多Agent 并行编排（Agent Orchestrator）。一个主 Agent 接收复杂任务后，将其拆分为多个子任务，派发给多个子 Agent **同时并行处理**，最后汇总结果返回用户。
 
@@ -818,7 +818,7 @@ struct SubTask {
 
 ### Phase 4: 上下文管理与语义检索
 
-> 状态: **待实施** | 预计: 9 个步骤 | 依赖: Phase 2 + Phase 3
+> 状态: **已完成** ✅ | 9 个步骤 | 依赖: Phase 2 + Phase 3
 > 注：PromptContextBuilder 已在 Phase 1 提前落地，Phase 4 包含上下文预算/降级（Step 4.1-4.5）和语义检索管线（Step 4.6-4.9）
 
 #### Step 4.1: 实现对话历史摘要
@@ -921,9 +921,56 @@ struct SubTask {
 
 ---
 
-### Phase 5: 打磨
+### Phase 5: 打磨 + 终端 GUI
 
-> 状态: **待实施** | 预计: 6 个步骤 | 依赖: Phase 3 + Phase 4
+> 状态: **已完成** ✅ | 7 个步骤 + 终端 GUI | 依赖: Phase 3 + Phase 4
+
+#### 终端 GUI（Claude Code CLI 风格）
+
+NovelAgent 拥有类 Claude Code 的终端交互界面，通过 ANSI 转义码实现丰富的可视化体验：
+
+**颜色主题（语义化角色区分）：**
+- 助手回复：绿色（`Ansi::assistant()`）
+- 用户输入：蓝色加粗（`Ansi::userInput()`）
+- 工具调用：灰色（`Ansi::toolCall()`）
+- 思考链：暗灰色（`Ansi::thinking()`）
+- 错误：红色（`Ansi::error()`）
+- 警告：黄色（`Ansi::warning()`）
+- 标题：亮白色加粗（`Ansi::title()`）
+
+**界面布局：**
+```
+┌─ NovelAgent v0.3.0 — AI 写小说助手 ───────────────┐
+│                                                      │
+│  Serial | 项目: 我的小说 | 1500 tokens               │  ← 状态栏
+│                                                      │
+│  > 请帮我写第三章的开场段落                           │  ← 用户输入（蓝色）
+│                                                      │
+│  好的，让我先读取当前大纲和第二章的结尾...            │  ← 助手回复（绿色）
+│                                                      │
+│  [工具调用] read_chapter                             │  ← 工具调用（灰色）
+│  (3200 tokens)                                       │  ← token 统计（暗灰色）
+│                                                      │
+└──────────────────────────────────────────────────────┘
+```
+
+**核心组件：**
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| `AnsiTerminal` | `src/cli/AnsiTerminal.h` | ANSI 转义码工具库（颜色/样式/光标/语义主题） |
+| `TerminalGUI` | `src/cli/TerminalGUI.h/.cpp` | 终端 GUI 控制器（主题输出/状态栏/进度/Markdown渲染/历史） |
+| `StreamDisplay` | `src/cli/StreamDisplay.h/.cpp` | 流式输出 + ANSI 主题包装（Phase 5 重写） |
+| `ReplHandler` | `src/cli/ReplHandler.h/.cpp` | REPL 主循环 + 命令系统 + Tab 补全（Phase 5 重写） |
+
+**Markdown 终端渲染：**
+- `**粗体**` → ANSI 粗体转义码
+- `*斜体*` → ANSI 斜体转义码
+- 代码块 → 灰色背景
+- 渲染集成在 `TerminalGUI::renderMarkdown()` 中，流式输出时自动应用
+
+**Windows 兼容性：**
+- 程序启动时 `Ansi::enableWindowsAnsi()` 调用 `SetConsoleMode(ENABLE_VIRTUAL_TERMINAL_PROCESSING)`
+- Windows 10 1607+ 原生支持，旧版 Windows 退化显示纯文本
 
 #### Step 5.1: ANSI 颜色输出
 **修改**: `src/cli/StreamDisplay.cpp`
@@ -943,10 +990,68 @@ struct SubTask {
 **修改**: `src/main.cpp`, `src/agent/Agent.cpp`
 
 - 未捕获异常自动保存项目
-- LLM 调用超时的重试逻辑（最多 3 次）
+- LLM 调用超时的重试逻辑（最多 3 次）✅ 已在 Phase 3 中提前实现（LLMClient 指数退避重试, 429/502/503 + 网络错误）
 - 磁盘写入失败的友好提示
+- Agent 崩溃时的状态恢复（加载上次 conversation）
 
-#### Step 5.4: Markdown 渲染（基础）
+#### Step 5.4: Agent 显式状态机
+**新建/修改**: `src/agent/AgentState.h`, `src/agent/Agent.cpp`
+
+- 定义显式 Agent 状态枚举：
+  ```cpp
+  enum class AgentState {
+      Idle,           // 等待用户输入
+      Thinking,       // LLM 思考中（流式输出）
+      AwaitingTool,   // 工具执行中
+      WaitingUser,    // 等待用户确认（Plan Mode / 危险操作确认）
+      Error,          // 错误状态（可恢复）
+      Fatal           // 不可恢复错误
+  };
+  ```
+- `Agent::processUserMessage()` 中更新状态转换
+- 状态转换日志：`spdlog::info("[Agent] {} → {}", oldState, newState)`
+- StreamDisplay 根据状态切换界面提示（如 `Thinking...`、`Executing tool...`）
+- Phase 3.5 的 SubAgent 可复用状态机（独立实例、独立状态）
+
+**验证**: 编译通过 + 状态转换日志输出
+
+#### Step 5.5: 工具参数 Schema 校验
+**新建/修改**: `src/agent/ToolPipeline.h`, `src/agent/ToolRegistry.cpp`
+
+- 在 `ToolPipeline::executeOne()` 中，执行工具前根据 `ToolDefinition::parameters` JSON Schema 校验 LLM 传入的 `arguments`
+- 校验内容：
+  - required 字段是否存在
+  - 字段类型是否匹配（string/integer/boolean/array）
+  - string 枚举值是否在允许范围内
+- 校验失败时返回结构化错误：`{"error": "参数校验失败", "details": [{"field": "chapter_id", "reason": "缺少必填字段"}]}`
+- 校验通过后再调用工具执行
+- 注意：`additionalProperties: false` → 拒绝 LLM 传入的额外字段（记录 warning 日志但不阻断）
+
+**验证**: 编译通过 + `test_tool_registry` 新增参数校验测试
+
+#### Step 5.6: Agent 执行轨迹记录
+**新建**: `src/agent/ExecutionTracer.h`
+
+- 结构化记录每次 Agent 决策步骤：
+  ```cpp
+  struct TraceEntry {
+      std::string timestamp;
+      int step_index;
+      std::string event_type;    // "user_input" | "llm_call" | "tool_call" | "tool_result" | "llm_response"
+      nlohmann::json payload;     // 事件详情（不含完整章节内容，只含摘要）
+      int tokens_used;
+      int duration_ms;
+  };
+  ```
+- `ExecutionTracer` 类：
+  - `record(TraceEntry)` → 追加到内存 trace 列表
+  - `dump(path)` → 保存为 `.novelagent/traces/{session_id}.jsonl`
+  - 每条记录一行 JSON，支持流式追加和回放
+- 在 `Agent::processUserMessage()` 和 `ToolPipeline::executeAndAppend()` 中插入 trace 记录点
+- `/trace show` 命令在 REPL 中展示最近 N 步
+- 用于调试：回放 Agent 的完整决策过程，分析工具调用成功率、token 消耗趋势
+
+**验证**: 编译通过 + REPL 中 `/trace show` 输出最近步骤
 **修改**: `src/cli/StreamDisplay.cpp`
 
 - 检测 LLM 输出中的 Markdown 格式（`**粗体**`, `*斜体*`, 代码块）
@@ -999,7 +1104,8 @@ Phase 0 (骨架) ✓ 完成
 | Phase 0 | — | ✓ 完成 |
 | Phase 1 | — | ✓ 完成（超规格） |
 | Phase 2 | 8 steps | ✓ 已完成 |
-| Phase 3 | 12 steps | ○ 待实施 |
-| Phase 4 | 9 steps | ○ 待实施（PromptContextBuilder 已提前落地） |
-| Phase 5 | 6 steps | ○ 待实施 |
-| **总计** | **35 steps** | Phase 0-1 done, 35 remaining |
+| Phase 3 | 12 steps | ✓ 核心完成 |
+| Phase 3.5 | 9 steps | ✓ 已完成 |
+| Phase 4 | 9 steps | ✓ 已完成 |
+| Phase 5 | 7 steps + 终端GUI | ✓ 已完成 |
+| **总计** | **35+ steps** | Phase 0-5 全部完成 ✅ |

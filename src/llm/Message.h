@@ -79,11 +79,47 @@ inline void from_json(const nlohmann::json& j, ToolCall& tc) {
 // ============================================================================
 
 struct Message {
+    // ── 字段 ──
     MessageRole role = MessageRole::User;
     std::string content;               // 消息正文（可为空，当 tool_calls 非空时）
     std::vector<ToolCall> tool_calls;  // 工具调用列表（仅 assistant 角色使用）
     std::string tool_call_id;          // 关联的工具调用 ID（仅 tool 角色使用）
     std::string name;                  // 可选参与者名称
+
+    // ── 便捷工厂方法 ──
+
+    /// 创建用户消息（最常用）
+    static Message user(std::string content) {
+        Message m;
+        m.role = MessageRole::User;
+        m.content = std::move(content);
+        return m;
+    }
+
+    /// 创建系统提示词消息
+    static Message system(std::string content) {
+        Message m;
+        m.role = MessageRole::System;
+        m.content = std::move(content);
+        return m;
+    }
+
+    /// 创建 AI 助手消息
+    static Message assistant(std::string content) {
+        Message m;
+        m.role = MessageRole::Assistant;
+        m.content = std::move(content);
+        return m;
+    }
+
+    /// 创建工具调用结果消息（回传给 LLM）
+    static Message toolResult(std::string call_id, std::string content) {
+        Message m;
+        m.role = MessageRole::Tool;
+        m.tool_call_id = std::move(call_id);
+        m.content = std::move(content);
+        return m;
+    }
 };
 
 // Message 的 JSON 序列化。
@@ -157,43 +193,6 @@ inline void from_json(const nlohmann::json& j, ToolDefinition& td) {
         td.parameters = j.value("parameters", nlohmann::json::object());
     }
 }
-
-// ============================================================================
-// 流式响应中间类型 — SSE 解析器输出，StreamAccumulator 消费
-// ============================================================================
-
-/// 流式响应中单个 tool_call 的增量字段。
-/// 一个 chunk 可含多个 ToolCallDelta（每个 index 一个），arguments 为增量片段。
-struct ToolCallDelta {
-    int index = 0;             // tool_call 在数组中的索引（用于跨 chunk 合并）
-    std::string id;            // 首个 chunk 携带
-    std::string type;          // 通常为 "function"
-    std::string function_name; // 首个 chunk 携带
-    std::string arguments;     // 增量片段，非完整 JSON，需跨 chunk 拼接
-};
-
-/// 流式响应的 token 统计信息（末个 chunk 携带）。
-struct UsageInfo {
-    int prompt_tokens = 0;
-    int completion_tokens = 0;
-    int total_tokens = 0;
-    int cached_tokens = 0;      // prompt_tokens_details.cached_tokens
-    int reasoning_tokens = 0;   // completion_tokens_details.reasoning_tokens
-};
-
-/// 流式响应中单个 chunk 的完整表示（SSE 解析器的输出单元）。
-/// 所有增量字段与 OpenAI/DeepSeek 流式 delta 结构一一对应。
-struct StreamChunk {
-    std::string id;                          // 响应 ID（首个 chunk 携带）
-    std::string model;                       // 模型名（首个 chunk 携带）
-    int64_t created = 0;                     // Unix 时间戳（首个 chunk 携带）
-    std::string content_delta;               // 文本增量
-    std::string reasoning_delta;             // 思维链增量（DeepSeek thinking 模式）
-    std::vector<ToolCallDelta> tool_call_deltas; // 工具调用增量（同一 chunk 可含多个 index）
-    std::string finish_reason;               // 结束原因（末个 chunk 携带）
-    UsageInfo usage;                         // token 统计（末个 chunk 携带）
-    bool is_end = false;                     // [DONE] 终止信号
-};
 
 // ============================================================================
 // LLMResponse — LLM API 调用返回结果
@@ -303,3 +302,7 @@ inline void from_json(const nlohmann::json& j, LLMResponse& r) {
 }
 
 } // namespace llm
+
+// 流式响应中间类型（ToolCallDelta / UsageInfo / StreamChunk）
+// 从 Message.h 拆分出，此处包含以保持向后兼容
+#include "llm/StreamingTypes.h"

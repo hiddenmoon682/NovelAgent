@@ -2,7 +2,8 @@
 
 #include <functional>
 #include <string>
-#include "llm/Message.h"
+#include <nlohmann/json.hpp>
+#include "llm/StreamingTypes.h"
 
 namespace llm {
 

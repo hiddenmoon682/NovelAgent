@@ -1,9 +1,123 @@
 # 已修复问题记录
 
+## 第六轮审查（2026-06-09） — 暂缓项集中修复
+
+Phase 3.5 完成后触发条件满足，修复了 4 个暂缓项：
+
+### #1 Project& → shared_ptr ✅
+22 个文件修改。所有工具类从 Project& 裸引用改为 std::shared_ptr<Project>。
+BuiltInTool::Factory 签名更新，REGISTER_TOOL 宏适配。
+
+### #3 Update 风格统一 ✅
+SettingTools/WorldRuleTools 从 if-else 链改为指针到成员 map。
+
+### #4 execute() 集成 ContextManager ✅
+Agent::execute() 在 --exec 模式中也使用 ContextManager 组装 system prompt。
+
+### #2 ShellTools 超时 ⏭ 暂缓
+添加 TODO，Phase 5 迁移到 CreateProcess。
+
+---
+
+
 > 创建时间: 2026-05-29
 > 用途: 记录已排查并修复的问题，按时间倒序排列
 >
 > 未修复的问题请记录在 `REVIEW_NOTES.md` 中。
+
+---
+
+## 第五轮审查（2026-06-09） — Phase 3.6-3.12 代码审查修复
+
+### #16 ShellTools 黑名单误拦截管道/重定向 ✅
+
+**修复**: 从黑名单移除 `|` `>` `>>` `;` `&&` `||`，补充 PowerShell 缩写变体（ri/rdr/saps/iwr/irm/spps/sasv/icm），添加注册表修改检测。
+
+### #17 ShellTools 误导性白名单注释 ✅
+
+**修复**: 删除未实现的白名单注释，替换为准确的安全说明 + TODO。
+
+### #18 ShellTools 关键词绕过风险 ✅
+
+**修复**: 补充 PowerShell 常见缩写到黑名单 + 添加安全声明"不可在完全不可信环境中运行"。
+
+### #19 StreamDisplay Windows ANSI 初始化 ✅
+
+**修复**: 添加 `SetConsoleMode(ENABLE_VIRTUAL_TERMINAL_PROCESSING)` 初始化，确保 Windows 终端正确渲染颜色码。
+
+### #20 ChapterTools.h 注释过期 ✅
+
+**修复**: `ListChaptersTool` header 注释从 `word_count` 更新为 `file_path, synopsis`。
+
+### #22 ReplHandler 未使用 LLMResponse ✅
+
+**修复**: 检查 `finish_reason`，在 `"length"` 和 `"content_filter"` 时给用户提示。
+
+### #6 CreateChapterTool 部分保存风险 ✅ (第三轮已修复)
+
+已恢复为 `ProjectIO::save()` 全量保存。
+
+### #12 ShellTools 命令注入 ✅ (第四轮已修复)
+
+添加 24 关键词黑名单 + 100KB 输出截断。
+
+### #14 CommandParser 大小写敏感 ✅ (第四轮已修复)
+
+命令名转小写比较。
+
+### #15 ShellTools 输出无大小限制 ✅ (第四轮已修复)
+
+100KB 截断。
+
+---
+
+## 第三轮审查（2026-06-09） — Phase 3.1-3.4 修复
+
+来自 `REVIEW_NOTES.md` 的 11 个问题，修复了 9 个。
+
+### #1 ContextManager 覆盖用户 system_prompt ✅
+
+**修复**: `runToolLoop()` 中使用局部变量 `effective_prompt`，不再修改成员 `system_prompt_`。ContextManager 产出的上下文 prompt 与用户设置的人格 prompt 通过 `"\n\n"` 拼接。
+
+### #2 truncateMessages token 公式不一致 ✅
+
+**修复**: 截断循环中每次移除消息后调用 `TokenCounter::countMessages()` 重新计算，消除手工减法与初始估值的不一致。
+
+### #3 buildSystemPrompt 无效章节返回空 ✅
+
+**修复**: `buildForChapter()` 返回 `nullopt` 时，fallback 到无章节版本（返回项目概述），而非返回空字符串。
+
+### #4 truncateMessages budget ≤ 0 返回全部消息 ✅
+
+**修复**: `budget <= 0` 时返回空列表并设置 `truncated_count`，不再返回无法容纳的全部消息。
+
+### #5 ChapterTools 持有 Project& 裸引用 ✅ 已修复（第六轮）
+
+**修复**: 22 个文件修改，所有工具类从 `Project&` 改为 `std::shared_ptr<Project>`。Phase 3.5 完成后触发条件满足。
+
+### #6 CreateChapter 部分保存风险 ✅
+
+**修复**: 恢复为 `ProjectIO::save()` 全量保存，保证 outline.json 与其他 JSON 文件一致。
+
+### #7 工具调用结果无大小限制 ✅
+
+**修复**: `executeToolCallsAndAppend()` 中对结果 JSON 做 4000 字符截断。截断时附加原文长度提示。
+
+### #8 空 try/catch 块 ✅
+
+**修复**: 删除 `processUserMessage()` 中无操作的 `try { ... } catch (...) { throw; }` 块。
+
+### #9 ListChaptersTool 描述与行为不一致 ✅
+
+**修复**: `description()` 更新为"列出当前项目所有章节的 ID、标题、顺序、文件路径和摘要"，与实现了无 `word_count` 的行为一致。
+
+### #10 SchemaUtils additionalProperties 硬编码 🔵 暂缓
+
+**决定**: 当前安全默认值正确。在注释中记录此设计决策。
+
+### #11 total_tokens 精度说明缺失 ✅
+
+**修复**: 注释更新为"占用的 token 数（TokenCounter 启发式估算，非精确值）"。
 
 ---
 
