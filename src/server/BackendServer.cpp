@@ -81,6 +81,20 @@ void BackendServer::removePortFile() const {
 }
 
 void BackendServer::setupRoutes() {
+    // ── 全局 CORS 中间件 ──
+    // 为所有 API 路由添加跨域头，并处理 OPTIONS 预检请求
+    server_->set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type");
+        // OPTIONS 预检请求直接返回 204，不进入后续路由处理
+        if (req.method == "OPTIONS") {
+            res.status = 204;
+            return httplib::Server::HandlerResponse::Handled;
+        }
+        return httplib::Server::HandlerResponse::Unhandled;
+    });
+
     // ── 桌面窗口前端页面 ──
     server_->Get("/", [](const httplib::Request&, httplib::Response& res) {
         char buf[MAX_PATH];
@@ -255,7 +269,6 @@ void BackendServer::setupRoutes() {
                 if (llm_thread->joinable()) llm_thread->join();
             });
 
-        res.set_header("Access-Control-Allow-Origin", "*");
     });
 
     // ── 单次执行 ──
@@ -309,6 +322,46 @@ void BackendServer::setupRoutes() {
         r["content"] = book.str();
         r["chapters"] = count;
         res.set_content(r.dump(), "application/json");
+    });
+
+    // ── 章节列表（供 GUI 侧边栏使用）──
+    server_->Get("/api/project/chapters", [this](const httplib::Request&, httplib::Response& res) {
+        if (!project_) {
+            res.set_content("{\"error\":\"未打开项目\"}", "application/json");
+            return;
+        }
+        json chapters = json::array();
+        for (const auto& ch : project_->outline.chapters) {
+            json item;
+            item["id"] = ch.id;
+            item["title"] = ch.title;
+            item["order"] = ch.order;
+            item["synopsis"] = ch.synopsis;
+            item["status"] = ch.status;
+            item["scenes_count"] = ch.scenes.size();
+            item["pov_characters"] = ch.pov_characters;
+            chapters.push_back(item);
+        }
+        res.set_content(chapters.dump(), "application/json");
+    });
+
+    // ── 角色列表（供 GUI 侧边栏使用）──
+    server_->Get("/api/project/characters", [this](const httplib::Request&, httplib::Response& res) {
+        if (!project_) {
+            res.set_content("{\"error\":\"未打开项目\"}", "application/json");
+            return;
+        }
+        json characters = json::array();
+        for (const auto& c : project_->characters) {
+            json item;
+            item["id"] = c.id;
+            item["name"] = c.name;
+            item["role"] = c.role;
+            item["traits"] = c.traits;
+            item["appearances_count"] = c.chapter_appearances.size();
+            characters.push_back(item);
+        }
+        res.set_content(characters.dump(), "application/json");
     });
 }
 

@@ -9,16 +9,12 @@
 
 #include <CLI/CLI.hpp>
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/basic_file_sink.h>
 #include <algorithm>
-#include <atomic>
 #include <cstdlib>
 #include <iostream>
-#include <thread>
 
 #ifdef _WIN32
 #include <windows.h>
-#include <shellapi.h>
 
 /// 将命令行参数从系统代码页转换为 UTF-8（修复 MinGW 中文乱码）。
 /// 仅在字符串不是有效 UTF-8 时才进行转换。
@@ -47,37 +43,6 @@ static std::string argToUtf8(const std::string& input) {
     if (!utf8.empty() && utf8.back() == '\0') utf8.pop_back();
     return utf8;
 }
-
-// ── 启动桌面窗口（Edge --app 模式）──
-static bool launchDesktop(const std::string& projectPath, int port) {
-    // 找 Edge 浏览器
-    std::string edge;
-    const char* paths[] = {
-        "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-        "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-    };
-    for (auto* p : paths) {
-        if (GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES) { edge = p; break; }
-    }
-    if (edge.empty()) return false;
-
-    std::string url = "http://localhost:" + std::to_string(port) + "/";
-    std::string cmdLine = "\"" + edge + "\" --app=\"" + url + "\" --window-size=900,700";
-
-    STARTUPINFOA si = {};
-    si.cb = sizeof(si);
-    PROCESS_INFORMATION pi = {};
-
-    if (!CreateProcessA(nullptr, cmdLine.data(), nullptr, nullptr,
-                        FALSE, 0, nullptr, nullptr, &si, &pi)) {
-        return false;
-    }
-
-    CloseHandle(pi.hThread);
-    WaitForSingleObject(pi.hProcess, INFINITE);
-    CloseHandle(pi.hProcess);
-    return true;
-}
 #else
 static std::string argToUtf8(const std::string& input) { return input; }
 #endif
@@ -88,14 +53,14 @@ int main(int argc, char** argv) {
     CLI::App app{"NovelAgent - AI-Powered Novel Writing Assistant"};
 
     std::string projectPath, backendProjectPath, execCommand, providerName = "deepseek";
-    bool verbose = false, tuiMode = false;
+    bool verbose = false, replMode = false;
     int wsPort = 8899;
 
     app.add_option("-p,--project", projectPath, "项目目录路径");
     app.add_option("-e,--exec", execCommand, "执行单次命令后退出");
     app.add_option("--provider", providerName, "LLM provider (deepseek, kimi, claude)");
     app.add_flag("-v,--verbose", verbose, "启用调试日志");
-    app.add_flag("--tui", tuiMode, "启动 TUI 前端界面");
+    app.add_flag("--repl", replMode, "使用传统 REPL 模式（默认启动 TUI 终端界面）");
 
     // Phase 6: backend 子命令
     auto* backendCmd = app.add_subcommand("backend", "启动后端 HTTP+SSE 服务器");
@@ -207,63 +172,13 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        // ── 桌面模式：双击启动时自动弹出桌面窗口 ──
-        if (tuiMode || (projectPath.empty() && execCommand.empty())) {
-            std::string appProjectPath = projectPath.empty() ? ".\\my_novel" : projectPath;
-
-            // 日志写文件
-            auto logPath = appProjectPath + "\\.novelagent\\backend.log";
-            try {
-                auto fileLogger = spdlog::basic_logger_mt("file", logPath);
-                spdlog::set_default_logger(fileLogger);
-                spdlog::flush_on(spdlog::level::info);
-            } catch (...) {}
-            std::cout.setstate(std::ios::failbit);
-
-            { ProjectManager pm; pm.openOrCreate(appProjectPath); }
-
-            int appPort = 18899;
-
-            // 后端线程
-            std::atomic<bool> backendReady{false};
-            std::thread backendThread([&]() {
-                try {
-                    ProjectManager pm;
-                    Project project = pm.openOrCreate(appProjectPath);
-                    auto projectPtr = std::make_shared<Project>(std::move(project));
-                    llm::LLMClient llmClient(*provider);
-                    agent::ToolRegistry registry;
-                    agent::registerAllTools(registry, projectPtr);
-                    server::ServerConfig cfg;
-                    cfg.port = appPort;
-                    cfg.project_path = appProjectPath;
-                    server::BackendServer backend(llmClient, registry, projectPtr, cfg);
-                    backendReady = true;
-                    backend.run();
-                } catch (const std::exception& e) {
-                    spdlog::error("[Desktop] 后端异常: {}", e.what());
-                }
-            });
-
-            while (!backendReady) std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            // 等 HTTP 服务真正开始监听
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-
-            // 恢复 cout 用于错误输出
-            std::cout.clear();
-
-            if (!launchDesktop(appProjectPath, appPort)) {
-                // Edge 没找到，用默认浏览器打开
-                std::string url = "http://localhost:" + std::to_string(appPort) + "/";
-                ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOW);
-                std::cout << "已打开浏览器窗口，按 Ctrl+C 退出。\n";
-            }
-
-            backendThread.detach();
+        if (replMode) {
+            novelAgent.runRepl();
             return 0;
         }
 
-        novelAgent.runRepl();
+        // 默认：启动 TUI 终端界面
+        novelAgent.runTui();
 
     } catch (const std::exception& e) {
         std::cerr << Ansi::error() << "\n致命错误: " << e.what()

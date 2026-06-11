@@ -27,4 +27,9 @@ config.json
 # Example novels are user data
 examples/
 .claude/settings.local.json
-tui/my_novel/
+
+# Tauri GUI
+gui/node_modules/
+gui/dist/
+gui/src-tauri/target/
+gui/src-tauri/binaries/novelagent-*.exe

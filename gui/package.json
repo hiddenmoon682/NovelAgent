@@ -1,0 +1,40 @@
+{
+  "name": "novelagent-gui",
+  "private": true,
+  "version": "0.1.0",
+  "description": "NovelAgent 桌面 GUI — AI 辅助写小说",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "build:cpp": "cmd /c scripts\\build-cpp-backend.bat",
+    "copy:sidecar": "cmd /c scripts\\copy-sidecar.bat"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "rehype-highlight": "^7.0.2",
+    "zustand": "^5.0.5",
+    "lucide-react": "^0.507.0",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.3.1",
+    "@tauri-apps/api": "^2.5.0",
+    "@tauri-apps/plugin-shell": "^2.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.5",
+    "tailwindcss": "^4.1.6",
+    "@tailwindcss/vite": "^4.1.6",
+    "@tauri-apps/cli": "^2.5.0"
+  }
+}

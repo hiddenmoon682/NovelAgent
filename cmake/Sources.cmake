@@ -89,3 +89,11 @@ set(NOVELAGENT_SERVER
     src/server/SessionManager.h src/server/SessionManager.cpp
     src/server/BackendServer.h src/server/BackendServer.cpp
 )
+
+set(NOVELAGENT_TUI
+    src/tui/TuiApp.h src/tui/TuiApp.cpp
+    src/tui/TuiChatPanel.h src/tui/TuiChatPanel.cpp
+    src/tui/TuiInputBar.h src/tui/TuiInputBar.cpp
+    src/tui/TuiStatusBar.h src/tui/TuiStatusBar.cpp
+    src/tui/TuiSidebar.h src/tui/TuiSidebar.cpp
+)

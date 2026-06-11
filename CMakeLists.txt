@@ -58,8 +58,13 @@ target_include_directories(novelagent_app PUBLIC src)
 target_link_libraries(novelagent_app PUBLIC novelagent_core novelagent_tools)
 target_precompile_headers(novelagent_app REUSE_FROM novelagent_core)
 
+add_library(novelagent_tui OBJECT ${NOVELAGENT_TUI})
+target_include_directories(novelagent_tui PUBLIC src)
+target_link_libraries(novelagent_tui PUBLIC novelagent_core ftxui::screen ftxui::dom ftxui::component)
+target_precompile_headers(novelagent_tui REUSE_FROM novelagent_core)
+
 add_executable(novelagent src/main.cpp)
-target_link_libraries(novelagent PRIVATE novelagent_core novelagent_tools novelagent_app)
+target_link_libraries(novelagent PRIVATE novelagent_core novelagent_tools novelagent_app novelagent_tui)
 
 # ── 自动复制 MSYS2 DLL（双击 exe 无需配置 PATH）──
 if(WIN32 AND EXISTS "D:/SoftWare/msys2/mingw64/bin")
@@ -68,6 +73,7 @@ if(WIN32 AND EXISTS "D:/SoftWare/msys2/mingw64/bin")
         libssl-3-x64.dll libcrypto-3-x64.dll
         libspdlog-1.17.dll libwinpthread-1.dll
         libgcc_s_seh-1.dll libstdc++-6.dll
+        libftxui-screen.dll libftxui-dom.dll libftxui-component.dll
     )
     foreach(dll ${NEEDED_DLLS})
         add_custom_command(TARGET novelagent POST_BUILD

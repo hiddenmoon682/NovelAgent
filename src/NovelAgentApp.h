@@ -26,6 +26,7 @@ public:
 
     void runRepl(const std::string& welcomeMessage = "");
     void runExec(const std::string& command);
+    void runTui();
 
     agent::Agent& agent() { return agent_; }
     agent::ToolRegistry& registry() { return registry_; }

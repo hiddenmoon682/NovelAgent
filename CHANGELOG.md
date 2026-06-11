@@ -1,5 +1,49 @@
 # Changelog
 
+## [2026-06-11] Tauri 桌面 GUI v0.1.0
+
+- **新增** — `gui/` 目录：Tauri v2 + React 19 + TypeScript 桌面应用
+  - React 前端（29 个源文件）：ChatPanel / MessageBubble / StreamingText / ChatInputBar / Sidebar / TopBar / AppLayout
+  - Tauri Rust 后端（`src-tauri/`）：Sidecar 生命周期管理（启动/健康检查/关闭）、项目路径记忆、文件夹选择对话框
+  - Catppuccin Mocha 深色主题，Markdown 流式渲染，可折叠思考链，自动滚底
+  - 技术栈: Vite 6 + Tailwind CSS v4 + Zustand + react-markdown + rfd
+- **新增** — 后端 API 补充（`src/server/BackendServer.cpp`）：
+  - 全局 CORS 中间件（`set_pre_routing_handler`）— 所有路由自动添加跨域头 + OPTIONS 预检
+  - `GET /api/project/chapters` — 章节列表（id/title/order/synopsis/status/scenes_count）
+  - `GET /api/project/characters` — 角色列表（id/name/role/traits/appearances_count）
+- **打包** — NSIS 安装包 7.8MB（含 C++ 后端 22MB + 9 个 MinGW DLL + React 前端 404KB）
+- **路径** — 首次启动弹出文件夹选择框，之后自动记住（`%APPDATA%/novelagent/last_project.txt`）
+- **环境** — Rust 1.96.0 安装至 `D:\Rust\`，USTC 镜像加速
+- **构建** — `npm run tauri:build` 一键产出安装包；`npm run copy:sidecar` 复制 C++ 二进制 + DLL
+
+## [2026-06-10] FTXUI TUI — 类 Claude Code 终端界面
+
+- **新增** — `src/tui/` 模块（5 个组件，纯 C++20 + FTXUI）:
+  - `TuiApp` — 主控制器：ScreenInteractive 事件循环、组件树组装、Worker 线程调度
+  - `TuiChatPanel` — 聊天面板：流式消息渲染、多角色颜色区分（用户/助手/错误/系统）
+  - `TuiInputBar` — 输入栏：命令历史（↑↓）、Enter 提交、占位提示
+  - `TuiStatusBar` — 状态栏：模式标签（就绪/思考中/执行工具/错误）、Token 用量、项目信息
+  - `TuiSidebar` — 侧边栏：大纲列表 + 角色列表（通过 Project 数据）
+- **线程模型** — Worker 线程调用 Agent + `screen.Post()` 桥接 `StreamCallbacks`，UI 不冻结
+- **斜杠命令** — `/help` `/exit` `/status` `/clear`（扩展自 CLI CommandParser）
+- **CLI 入口** — `novelagent --tui -p ./项目` 启动 FTXUI 终端界面
+- **依赖** — FTXUI 6.1.9（MSYS2 `mingw-w64-x86_64-ftxui`），动态链接 3 个 DLL（~2MB）
+- **修改** — `NovelAgentApp` 新增 `runTui()`，`main.cpp` 新增 `--tui` 标志
+- **修改** — `CMakeLists.txt` 新增 `novelagent_tui` object library
+- **新增** — `tests/test_tui.cpp`：12 个 TUI 组件测试（ChatPanel/InputBar/StatusBar/Sidebar）
+- 三种模式共存: `novelagent`（REPL）/ `--tui`（FTXUI）/ `backend`（HTTP+SSE）
+- 测试统计: **15/15** 全部通过（新增 1 个测试目标）
+
+## [2026-06-10] 清理 — 移除前端代码，回归纯 C++ 后端
+
+- **移除** — Node.js Ink/React TUI 前端（`tui/` 目录，7 个 TypeScript 文件）
+- **移除** — TUI-Web 页面（`tui-web/index.html`）
+- **移除** — 启动脚本（`start.bat`、`start.sh`）
+- **移除** — `main.cpp` 中的 `launchDesktop()` 函数 + `--tui` CLI 选项
+- **移除** — `.gitignore` 中 `tui/my_novel/` 条目
+- **保留** — C++ 后端 Server（`BackendServer`、`SessionManager`），纯 HTTP+SSE API，前端由外部实现
+- 项目回归为纯 C++20 代码库
+
 ## [2026-06-10] Phase 6 — 前后端分离 + Node.js Ink TUI
 
 - **C++ 后端 Server** — `src/server/BackendServer.h/.cpp` + `SessionManager.h/.cpp`:
@@ -8,22 +52,7 @@
   - SSE 流式聊天：`set_chunked_content_provider` 实现真正的流式响应
   - API 路由：`/api/chat`(SSE) `/api/session` `/api/execute` `/api/project/status` `/api/project/export` `/api/health`
   - 端口文件机制（`.novelagent/port`）供前端自动发现后端
-- **Node.js Ink/React TUI 前端** — `tui/`:
-  - Ink/React 组件（Claude Code 同款技术栈）
-  - ChatPanel：流式对话渲染 + Markdown
-  - InputBar：键盘输入 + 命令处理
-  - StatusBar：模式/Token/项目状态
-  - SSE 客户端：`parseSSELine` 解析后端事件流
-  - 后端进程管理：`spawnBackend` / `isBackendRunning` / `getBackendPort`
-- **新增命令**:
-  - `novelagent backend -p ./项目` — 启动后端服务器
-  - `cd tui && npm start` — 启动 Ink TUI 前端
-  - `novelagent` — 保留原单体 CLI 模式（向后兼容）
-- **多终端体验**:
-  - 终端 1：启动后端
-  - 终端 2/3：各自启动 TUI 前端，共享同一后端 + 项目数据
-  - 每个终端独立 Session（对话隔离），共享 Project + ToolRegistry
-- **新增** — 11 个文件（4 C++ + 7 TypeScript）
+- **新增** — 4 个 C++ 文件
 - 测试统计: **14/14** 全部通过
 
 ## [2026-06-10] Phase 5 — 打磨 + 终端 GUI (7步全部完成)
