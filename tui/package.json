@@ -1,0 +1,24 @@
+{
+  "name": "novelagent-tui",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.tsx",
+    "dev": "tsx src/main.tsx",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "ink": "^4.4.1",
+    "ink-spinner": "^5.0.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "@types/react": "^18.3.3",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.22.4",
+    "typescript": "^5.5.3"
+  }
+}

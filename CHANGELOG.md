@@ -1,5 +1,31 @@
 # Changelog
 
+## [2026-06-10] Phase 6 — 前后端分离 + Node.js Ink TUI
+
+- **C++ 后端 Server** — `src/server/BackendServer.h/.cpp` + `SessionManager.h/.cpp`:
+  - HTTP+SSE 服务器（基于 httplib），支持多终端同时连接
+  - SessionManager：多会话管理（创建/销毁/空闲清理），线程安全
+  - SSE 流式聊天：`set_chunked_content_provider` 实现真正的流式响应
+  - API 路由：`/api/chat`(SSE) `/api/session` `/api/execute` `/api/project/status` `/api/project/export` `/api/health`
+  - 端口文件机制（`.novelagent/port`）供前端自动发现后端
+- **Node.js Ink/React TUI 前端** — `tui/`:
+  - Ink/React 组件（Claude Code 同款技术栈）
+  - ChatPanel：流式对话渲染 + Markdown
+  - InputBar：键盘输入 + 命令处理
+  - StatusBar：模式/Token/项目状态
+  - SSE 客户端：`parseSSELine` 解析后端事件流
+  - 后端进程管理：`spawnBackend` / `isBackendRunning` / `getBackendPort`
+- **新增命令**:
+  - `novelagent backend -p ./项目` — 启动后端服务器
+  - `cd tui && npm start` — 启动 Ink TUI 前端
+  - `novelagent` — 保留原单体 CLI 模式（向后兼容）
+- **多终端体验**:
+  - 终端 1：启动后端
+  - 终端 2/3：各自启动 TUI 前端，共享同一后端 + 项目数据
+  - 每个终端独立 Session（对话隔离），共享 Project + ToolRegistry
+- **新增** — 11 个文件（4 C++ + 7 TypeScript）
+- 测试统计: **14/14** 全部通过
+
 ## [2026-06-10] Phase 5 — 打磨 + 终端 GUI (7步全部完成)
 
 - **5.1** — `AnsiTerminal.h`: 统一 ANSI 工具库（颜色/样式/光标/语义主题）

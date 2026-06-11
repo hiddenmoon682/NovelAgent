@@ -12,7 +12,9 @@
 #include "llm/ILLMClient.h"
 #include "llm/Message.h"
 
+#include <atomic>
 #include <chrono>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -47,6 +49,8 @@ private:
     llm::ILLMClient& client_;
     IToolProvider& tools_;
     llm::Conversation conversation_;
+    std::mutex conv_mutex_;               // 保护 conversation_ 并发访问
+    std::atomic<bool> cancelled_{false};  // 超时时通知异步任务停止
 };
 
 } // namespace agent

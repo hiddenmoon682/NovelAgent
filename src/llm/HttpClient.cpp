@@ -20,13 +20,15 @@ HttpClient::HttpClient(const HttpConfig& config)
     : config_(config)
 {
     parseUrl();
-    client_ = std::make_unique<httplib::Client>(host_);
+    // 构造完整 scheme+host，httplib 需要 "https://host" 格式才能启用 SSL
+    client_ = std::make_unique<httplib::Client>(scheme_ + "://" + host_);
+    client_->set_follow_location(true);
     client_->set_connection_timeout(config_.connect_timeout, 0);
     client_->set_read_timeout(config_.read_timeout, 0);
     client_->set_keep_alive(true);
 
-    spdlog::debug("[HttpClient] 初始化 → {} (host={}, prefix={})",
-                  config_.base_url, host_, path_prefix_);
+    spdlog::debug("[HttpClient] 初始化 → {}://{} (prefix={})",
+                  scheme_, host_, path_prefix_);
 }
 
 HttpClient::~HttpClient() = default;
@@ -138,7 +140,7 @@ nlohmann::json HttpClient::post(
 }
 
 // ===========================================================================
-// postStreaming — 流式 POST
+// postStreaming — 流式 POST（Fix #3: 指数退避重试）
 // ===========================================================================
 
 httplib::Result HttpClient::postStreaming(
@@ -149,22 +151,59 @@ httplib::Result HttpClient::postStreaming(
     std::string path_full = fullPath(path);
     auto headers = defaultHeaders();
 
-    httplib::Request req;
-    req.method = "POST";
-    req.path = path_full;
-    for (const auto& [key, val] : headers) {
-        req.set_header(key.c_str(), val.c_str());
+    // Fix #3: 流式调用也支持连接级重试（最多 2 次，含首次共 3 次）
+    const int max_attempts = config_.max_retries > 0 ? config_.max_retries : 2;
+    int retry_delay_ms = config_.retry_base_delay_ms;
+
+    for (int attempt = 0; attempt <= max_attempts; ++attempt) {
+        if (attempt > 0) {
+            spdlog::warn("[HttpClient] 流式重试 {}/{} ({}ms 后)",
+                         attempt, max_attempts, retry_delay_ms);
+            std::this_thread::sleep_for(std::chrono::milliseconds(retry_delay_ms));
+        }
+
+        httplib::Request req;
+        req.method = "POST";
+        req.path = path_full;
+        for (const auto& [key, val] : headers) {
+            req.set_header(key.c_str(), val.c_str());
+        }
+        req.body = body;
+
+        // 每次重试创建新的 receiver 包装（避免 use-after-move）
+        req.content_receiver = [receiver = content_receiver](
+            const char* data, size_t len, uint64_t /*offset*/, uint64_t /*total*/) {
+            return receiver(data, len);
+        };
+
+        spdlog::debug("[HttpClient] 流式 POST {} (attempt {})", path_full, attempt);
+        auto res = client_->send(req);
+
+        // 传输层错误 → 可重试
+        if (!res) {
+            int err_code = static_cast<int>(res.error());
+            if (attempt < max_attempts && isRetryableNetworkError(err_code)) {
+                retry_delay_ms *= 2;
+                continue;
+            }
+            return res;  // 不可重试，返回错误给调用方
+        }
+
+        // HTTP 错误 → 429/502/503 可重试
+        if (res->status != 200) {
+            if (attempt < max_attempts && isRetryableStatus(res->status)) {
+                retry_delay_ms *= 2;
+                continue;
+            }
+            return res;
+        }
+
+        // 成功
+        return res;
     }
-    req.body = body;
 
-    // 包装 content_receiver 以匹配 httplib 的签名
-    req.content_receiver = [receiver = std::move(content_receiver)](
-        const char* data, size_t len, uint64_t /*offset*/, uint64_t /*total*/) {
-        return receiver(data, len);
-    };
-
-    spdlog::debug("[HttpClient] 流式 POST {}", path_full);
-    return client_->send(req);
+    // 不应到达
+    throw std::runtime_error("流式请求失败: 超过最大重试次数");
 }
 
 // ===========================================================================
@@ -210,6 +249,8 @@ std::string HttpClient::parseApiError(int http_status, const std::string& respon
         case 500: return "LLM 服务端内部错误 (500)";
         case 502: return "LLM 服务暂时不可用 (502)";
         case 503: return "LLM 服务正在维护中 (503)";
+        case 302:
+        case 301: return "API 地址已变更，请检查 base_url 配置 (HTTP " + std::to_string(http_status) + ")";
         default:  return "HTTP " + std::to_string(http_status);
     }
 }

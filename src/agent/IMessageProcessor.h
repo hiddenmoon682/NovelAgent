@@ -23,11 +23,10 @@ class IMessageProcessor {
 public:
     virtual ~IMessageProcessor() = default;
 
+    /// Fix #3: 运行时更新 system prompt（避免 Agent::setSystemPrompt 的 dynamic_cast）。
+    virtual void setSystemPrompt(const std::string& prompt) = 0;
+
     /// 处理用户消息，返回 LLM 的最终回复文本。
-    /// @param input          用户输入
-    /// @param conversation   对话历史（会被修改）
-    /// @param callbacks      流式回调
-    /// @return               AI 回复文本 + 最终 LLMResponse
     struct Result {
         std::string text;
         llm::LLMResponse raw_response;
@@ -52,6 +51,10 @@ public:
     void setContextManager(class ContextManager* cm) { context_manager_ = cm; }
     void setContextWindow(int window) { context_window_ = window; }
     void setMaxToolRounds(int n) { max_tool_rounds_ = n; }
+    void setTracer(class ExecutionTracer* t) { tracer_ = t; }
+
+    // Fix #3: 实现接口
+    void setSystemPrompt(const std::string& p) override { system_prompt_ = p; }
 
 private:
     llm::ILLMClient& client_;
@@ -60,6 +63,7 @@ private:
     class ContextManager* context_manager_ = nullptr;
     int context_window_ = 65536;
     int max_tool_rounds_ = 10;
+    class ExecutionTracer* tracer_ = nullptr;  // Fix #3
 
     std::string buildEffectivePrompt(
         const llm::Conversation& conversation,
@@ -76,12 +80,16 @@ public:
     Result process(const std::string& input,
                    llm::Conversation& conversation,
                    llm::StreamCallbacks callbacks) override;
+    void setSystemPrompt(const std::string& p) override;
 
     AgentOrchestrator& orchestrator() { return *orchestrator_; }
     void setTemplateManager(class TemplateManager* tm);
 
 private:
+    llm::ILLMClient& client_;
+    ToolRegistry& registry_;
     std::unique_ptr<AgentOrchestrator> orchestrator_;
+    std::string system_prompt_;
 };
 
 } // namespace agent

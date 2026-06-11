@@ -1,12 +1,21 @@
 #pragma once
 
-#include "llm/LLMClient.h"  // StreamCallbacks
+/// 流式管道 — 将 SSE 文本流转换为完整 LLMResponse。
+///
+/// Fix #4: 支持依赖注入（ISSEParser/IStreamAccumulator mock）。
+/// Fix #5: 语义化回调类型别名 SSEEventHandler, ChunkProvider。
+
+#include "llm/LLMClient.h"
 #include "llm/SSEParser.h"
 #include "llm/StreamAccumulator.h"
 
+#include <functional>
+
 namespace llm {
 
-/// 流式管道 — 将 SSE 文本流转换为完整 LLMResponse。
+// Fix #5: 语义化回调类型别名
+using SSEEventHandler = std::function<void(const std::string& type, const std::string& data)>;
+using ChunkDataCallback = std::function<bool(const char* data, size_t len)>;
 ///
 /// 内部组合 SSEParser（解析） + StreamAccumulator（累积），
 /// 并透明转发回调给外部 StreamCallbacks。
