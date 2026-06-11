@@ -13,6 +13,9 @@ cmake-build-*/
 .DS_Store
 Thumbs.db
 
+# MSYS2 DLLs (copied for standalone execution)
+*.dll
+
 # NovelAgent config (contains API keys)
 .novelagent/
 novelagent.json
@@ -24,3 +27,10 @@ config.json
 # Example novels are user data
 examples/
 .claude/settings.local.json
+tui/my_novel/
+
+# Local development config
+opencode.json
+
+# Claude skills (local skills not tracked)
+.claude/skills/
