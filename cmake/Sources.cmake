@@ -28,6 +28,7 @@ set(NOVELAGENT_LLM
     src/llm/StreamingPipeline.h
     src/llm/HttpClient.h src/llm/HttpClient.cpp
     src/llm/LLMClient.h src/llm/LLMClient.cpp
+    src/llm/LLMClientFactory.h src/llm/LLMClientFactory.cpp
     src/llm/Conversation.h
 )
 

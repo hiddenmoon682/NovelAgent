@@ -4,6 +4,7 @@
 #include "agent/AgentSetup.h"
 #include "cli/AnsiTerminal.h"
 #include "config/AppConfig.h"
+#include "llm/LLMClientFactory.h"
 #include "project/ProjectManager.h"
 #include "server/BackendServer.h"
 
@@ -131,15 +132,15 @@ int main(int argc, char** argv) {
             }
             auto projectPtr = std::make_shared<Project>(std::move(project));
 
-            // 创建 LLMClient + ToolRegistry
-            llm::LLMClient llmClient(*provider);
+            // 创建 LLMClientFactory + ToolRegistry（每个会话获得独立 LLMClient）
+            llm::LLMClientFactory llmFactory(*provider);
             agent::ToolRegistry registry;
             agent::registerAllTools(registry, projectPtr);
 
             server::ServerConfig cfg;
             cfg.port = wsPort;
             cfg.project_path = backendProjectPath;
-            server::BackendServer backend(llmClient, registry, projectPtr, cfg);
+            server::BackendServer backend(llmFactory, registry, projectPtr, cfg);
 
             std::cout << Ansi::title() << "NovelAgent Backend" << Ansi::reset()
                       << " | " << Ansi::info() << "HTTP+SSE → localhost:"

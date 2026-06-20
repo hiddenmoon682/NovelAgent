@@ -1,8 +1,9 @@
-/// BackendServer 实现 — 网络审查修复版（#1~#7全部修复）。
+/// BackendServer 实现 — 网络审查修复版（#1~#7全部修复）+ Phase 4 线程安全（工厂模式会话隔离）。
 
 #include "server/BackendServer.h"
 #include "server/SSEQueue.h"
 
+#include "llm/LLMClientFactory.h"
 #include "project/Models.h"
 #include "project/ProjectIO.h"
 #include "utils/FileUtils.h"
@@ -20,10 +21,10 @@ using json = nlohmann::json;
 namespace server {
 
 BackendServer::BackendServer(
-    llm::ILLMClient& client, agent::ToolRegistry& registry,
+    llm::LLMClientFactory& factory, agent::ToolRegistry& registry,
     std::shared_ptr<Project> project, const ServerConfig& config)
-    : client_(client), registry_(registry), project_(std::move(project)),
-      config_(config), session_mgr_(client_, registry_, project_)
+    : factory_(factory), registry_(registry), project_(std::move(project)),
+      config_(config), session_mgr_(factory_, registry_, project_)
 {}
 
 BackendServer::~BackendServer() { stop(); }
@@ -172,6 +173,10 @@ void BackendServer::setupRoutes() {
 
         auto llm_thread = std::make_shared<std::thread>(
             [session, message, queue, done_flag]() {
+                // 会话级互斥锁：同一会话的并发 /api/chat 请求串行化，
+                // 防止对 Agent 内部状态（conversation/tracer/LLMClient）的数据竞争
+                std::lock_guard<std::mutex> lock(session->request_mutex);
+
                 llm::StreamCallbacks cb;
                 bool cb_error_called = false;
 
@@ -281,7 +286,7 @@ void BackendServer::setupRoutes() {
             res.set_content("{\"error\":\"缺少 command\"}", "application/json");
             return;
         }
-        agent::Agent tempAgent(client_, registry_);
+        agent::Agent tempAgent(factory_, registry_);
         auto response = tempAgent.execute(command);
         json r;
         r["content"] = response.content;

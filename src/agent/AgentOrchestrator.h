@@ -6,16 +6,24 @@
 /// - ISynthesisStrategy 接口解耦汇总逻辑（LLM/拼接/模板可替换）
 /// - SubTask 从 AgentOrchestratorTypes.h 导入（共享类型）
 /// - SubAgent 通过 IToolProvider 受限视图访问工具
+///
+/// Phase 4 线程安全改进：
+/// - AgentOrchestrator 持有独立的 LLMClient（通过工厂创建），与主 Agent 隔离
+/// - 每个并行 SubAgent 通过工厂获得独立的 LLMClient 实例
 
 #include "agent/AgentOrchestratorTypes.h"
 #include "agent/ISynthesisStrategy.h"
 #include "agent/SubAgent.h"
-#include "llm/ILLMClient.h"
 
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
+
+namespace llm {
+class ILLMClient;
+class LLMClientFactory;
+} // namespace llm
 
 namespace agent {
 
@@ -58,11 +66,11 @@ public:
 };
 
 using SubAgentFactory = std::function<std::unique_ptr<SubAgent>(
-    llm::ILLMClient&, IToolProvider&)>;
+    llm::LLMClientFactory&, IToolProvider&)>;
 
 inline auto defaultSubAgentFactory() {
-    return [](llm::ILLMClient& c, IToolProvider& t) {
-        return std::make_unique<SubAgent>(c, t);
+    return [](llm::LLMClientFactory& f, IToolProvider& t) {
+        return std::make_unique<SubAgent>(f, t);
     };
 }
 
@@ -72,8 +80,10 @@ inline auto defaultSubAgentFactory() {
 
 class AgentOrchestrator {
 public:
-    AgentOrchestrator(llm::ILLMClient& client, ToolRegistry& registry,
+    /// @param factory  LLM 客户端工厂（用于创建编排器自身及子 Agent 的独立客户端）
+    AgentOrchestrator(llm::LLMClientFactory& factory, ToolRegistry& registry,
                       std::string mainPrompt = "");
+    ~AgentOrchestrator();
 
     std::string processMessage(const std::string& input);
 
@@ -92,7 +102,8 @@ public:
     void setSubAgentFactory(SubAgentFactory factory);
 
 private:
-    llm::ILLMClient& client_;
+    llm::LLMClientFactory& factory_;                      // 供 SubAgent 创建独立客户端
+    std::unique_ptr<llm::ILLMClient> client_;             // 编排器自身使用的 LLMClient
     ToolRegistry& registry_;
     std::string main_prompt_;
     bool parallel_enabled_ = true;

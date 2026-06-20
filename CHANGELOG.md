@@ -1,5 +1,34 @@
 # Changelog
 
+## [2026-06-20] LLMClientFactory — 实例级线程隔离 + 5 个预存在 Bug 修复
+
+### Phase 4 线程安全：实例级隔离
+
+- **新增** — `src/llm/LLMClientFactory.h/.cpp`：工厂类，封装 `ProviderConfig`，`create()` 返回独立 `LLMClient` 实例
+  - 工厂本身不可变（线程安全），可在多线程间共享
+  - 每个 `Agent` / `SubAgent` / `AgentOrchestrator` 通过工厂创建自己的 `LLMClient`
+  - `AgentOrchestrator` 为每个并行 `SubAgent` 创建独立客户端
+  - `SessionManager` 为每个 Session 创建独立 `Agent`（从而独立 `LLMClient`）
+- **修改** — `Agent` / `SubAgent` / `AgentOrchestrator` / `SessionManager` / `BackendServer` 全部改用工厂模式
+  - `Agent` 持有 `unique_ptr<ILLMClient>` + `LLMClientFactory&`（用于 `useParallelProcessor`）
+  - `SubAgent` 新增测试用构造函数 `SubAgent(unique_ptr<ILLMClient>, IToolProvider&)`
+  - `ParallelProcessor` → `AgentOrchestrator` 链路全部通过工厂创建独立客户端
+- **注释** — 所有相关类的线程安全注释更新（`LLMClient` / `HttpClient` / `Agent` / `SubAgent` / `AgentOrchestrator` / `SessionManager` / `BackendServer`）
+
+### Bug 修复（预存在，本次审查发现并修复）
+
+- **修复** — `AgentOrchestrator::executeParallel()` 节流循环双重消费 `std::future` 导致 `std::future_error` 崩溃
+  - 引入 `consumed[]` 追踪已在节流中收集的 future，最终收集循环跳过已消费项
+  - 同时添加 `std::this_thread::yield()` 消除节流轮询忙等待
+- **修复** — `BackendServer::/api/chat` 同一会话并发请求导致 Agent 数据竞争
+  - `Session` 新增 `std::mutex request_mutex`，请求线程调用 `processUserMessage()` 前加锁串行化
+- **修复** — `SubAgent::execute()` 超时后 `future.wait()` 无超时限制，HTTP 挂起时无限阻塞
+  - 改为 `future.wait_for(config.timeout * 2)`，超时后记录错误并返回（避免调用方永久卡死）
+- **修复** — `ParallelProcessor::process()` 静默丢弃流式回调和 `raw_response`
+  - 填充 `raw_response.content` / `finish_reason`
+  - 调用 `callbacks.on_complete` / `on_error`
+  - 添加异常 try-catch
+
 ## [2026-06-11] Tauri 桌面 GUI v0.1.0
 
 - **新增** — `gui/` 目录：Tauri v2 + React 19 + TypeScript 桌面应用

@@ -21,7 +21,8 @@ namespace llm {
 /// 生命周期：由 Agent 持有，每次对话轮次调用 chat()。
 /// LLMClient 自身不维护对话历史——历史由 Agent 维护。
 ///
-/// 线程安全：不安全。同一实例不应并发调用。
+/// 线程安全：单实例不安全（httplib 内部状态不可共享）。
+/// 多线程场景请使用 LLMClientFactory 为每个执行上下文创建独立实例。
 class LLMClient : public ILLMClient {
 public:
     /// 构造函数接收 ProviderConfig，拷贝保存。
@@ -58,8 +59,15 @@ public:
     std::string lastError() const { return last_error_; }
 
 private:
+    // ── LLM 提供商配置（model / api_key / base_url 等），构造函数中拷贝保存 ──
     ProviderConfig config_;
+
+    // ── 共享的 HTTP 客户端，封装了 URL 解析 / 认证 / 重试等基础设施 ──
+    // 由 HttpClient 提供 post() 和 postStreaming() 两个核心方法 
     HttpClient http_;
+
+    // ── 最近一次 chat() / chatNonStreaming() 调用的错误详情 ──
+    // 调用方可通过 lastError() 查询，用于日志记录或用户提示
     std::string last_error_;
 
     /// 检查 api_key / base_url / model 等必要字段

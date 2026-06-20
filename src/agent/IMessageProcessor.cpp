@@ -1,4 +1,4 @@
-/// IMessageProcessor 实现。
+/// IMessageProcessor 实现 — Phase 4 线程安全：ParallelProcessor 通过工厂创建独立 AgentOrchestrator。
 
 #include "agent/IMessageProcessor.h"
 #include "agent/AgentOrchestrator.h"
@@ -6,6 +6,7 @@
 #include "agent/PromptComposer.h"
 #include "agent/ToolCallLoop.h"
 #include "agent/ToolRegistry.h"
+#include "llm/LLMClientFactory.h"
 
 #include <spdlog/spdlog.h>
 
@@ -84,30 +85,48 @@ std::string SerialProcessor::buildEffectivePrompt(
 // ===========================================================================
 
 ParallelProcessor::ParallelProcessor(
-    llm::ILLMClient& client, ToolRegistry& registry, std::string system_prompt)
-    : client_(client), registry_(registry), system_prompt_(std::move(system_prompt))
+    llm::LLMClientFactory& factory, ToolRegistry& registry, std::string system_prompt)
+    : factory_(factory), registry_(registry), system_prompt_(std::move(system_prompt))
 {
-    orchestrator_ = std::make_unique<AgentOrchestrator>(client_, registry_, system_prompt_);
+    orchestrator_ = std::make_unique<AgentOrchestrator>(factory_, registry_, system_prompt_);
 }
 
 ParallelProcessor::~ParallelProcessor() = default;
 
 void ParallelProcessor::setSystemPrompt(const std::string& p) {
     system_prompt_ = p;
-    orchestrator_ = std::make_unique<AgentOrchestrator>(client_, registry_, system_prompt_);
+    orchestrator_ = std::make_unique<AgentOrchestrator>(factory_, registry_, system_prompt_);
 }
 
 ParallelProcessor::Result ParallelProcessor::process(
     const std::string& input,
     llm::Conversation& conversation,
-    llm::StreamCallbacks /*callbacks*/)
+    llm::StreamCallbacks callbacks)
 {
-    auto text = orchestrator_->processMessage(input);
-    conversation.addUser(input);
-    conversation.addAssistant(text);
-
     Result r;
-    r.text = text;
+
+    try {
+        auto text = orchestrator_->processMessage(input);
+        conversation.addUser(input);
+        conversation.addAssistant(text);
+
+        r.text = text;
+        r.raw_response.content = text;
+        r.raw_response.finish_reason = "stop";
+        // 注意：并行模式下 token 总数需汇总多个子任务 + 汇总 LLM 调用，
+        // 当前无法精确统计，保持 total_tokens 为 0
+
+        if (callbacks.on_complete) {
+            callbacks.on_complete(r.raw_response);
+        }
+    } catch (const std::exception& e) {
+        spdlog::error("[ParallelProcessor] 并行处理异常: {}", e.what());
+        r.raw_response.finish_reason = "error";
+        if (callbacks.on_error) {
+            callbacks.on_error(e.what());
+        }
+    }
+
     return r;
 }
 

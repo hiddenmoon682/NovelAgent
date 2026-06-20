@@ -14,14 +14,17 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(CompilerSettings)
-include(FetchDependencies)
-include(Sources)  # Fix #1: 模块化源文件列表
 
+# OpenSSL 必须在 FetchDependencies 之前查找，
+# 因为 cpp-httplib（HTTPLIB_USE_OPENSSL=ON）的 CMake 配置阶段就需要它
 set(OPENSSL_ROOT_DIR "D:/SoftWare/msys2/mingw64" CACHE PATH "OpenSSL root directory")
 if(NOT EXISTS "${OPENSSL_ROOT_DIR}")
     unset(OPENSSL_ROOT_DIR CACHE)
 endif()
 find_package(OpenSSL REQUIRED)
+
+include(FetchDependencies)
+include(Sources)  # Fix #1: 模块化源文件列表
 
 # Fix #1: 模块化源文件列表（直接在 Sources.cmake 中定义变量，无需函数调用）
 set(CORE_SOURCES

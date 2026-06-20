@@ -1,6 +1,7 @@
-/// SessionManager 实现。
+/// SessionManager 实现 — Phase 4 线程安全：每个会话通过工厂创建独立的 Agent/LLMClient。
 
 #include "server/SessionManager.h"
+#include "llm/LLMClientFactory.h"
 #include "project/Models.h"
 
 #include <spdlog/spdlog.h>
@@ -32,9 +33,9 @@ std::string uuid4() {
 } // namespace
 
 SessionManager::SessionManager(
-    llm::ILLMClient& client, agent::ToolRegistry& registry,
+    llm::LLMClientFactory& factory, agent::ToolRegistry& registry,
     std::shared_ptr<Project> project)
-    : client_(client), registry_(registry), project_(std::move(project))
+    : factory_(factory), registry_(registry), project_(std::move(project))
 {}
 
 std::string SessionManager::createSession() {
@@ -42,7 +43,7 @@ std::string SessionManager::createSession() {
 
     auto session = std::make_shared<Session>();
     session->id = uuid4();
-    session->agent = std::make_unique<agent::Agent>(client_, registry_);
+    session->agent = std::make_unique<agent::Agent>(factory_, registry_);
     session->agent->setSystemPrompt(
         "你是一个专业的网络小说写作助手 NovelAgent。");
     session->agent->useSerialProcessor();
