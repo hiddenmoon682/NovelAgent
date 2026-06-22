@@ -12,6 +12,10 @@
 #include <memory>
 #include <string>
 
+namespace llm {
+class LLMClientFactory;
+} // namespace llm
+
 namespace agent {
 
 class ToolCallLoop;
@@ -38,8 +42,10 @@ public:
 };
 
 /// 串行处理器 — 标准 tool call 循环模式（默认）。
+/// 使用父 Agent 拥有的 LLMClient 引用，自身不持有所有权。
 class SerialProcessor : public IMessageProcessor {
 public:
+    /// @param client  父 Agent 的 LLMClient 引用（SerialProcessor 不持有所有权）
     SerialProcessor(llm::ILLMClient& client, ToolRegistry& registry,
                     std::string system_prompt);
 
@@ -73,7 +79,8 @@ private:
 /// 并行处理器 — 委托 AgentOrchestrator 做并行编排。
 class ParallelProcessor : public IMessageProcessor {
 public:
-    ParallelProcessor(llm::ILLMClient& client, ToolRegistry& registry,
+    /// @param factory  LLM 客户端工厂（传递给 AgentOrchestrator 用于创建独立客户端）
+    ParallelProcessor(llm::LLMClientFactory& factory, ToolRegistry& registry,
                       std::string system_prompt);
     ~ParallelProcessor() override;
 
@@ -86,7 +93,7 @@ public:
     void setTemplateManager(class TemplateManager* tm);
 
 private:
-    llm::ILLMClient& client_;
+    llm::LLMClientFactory& factory_;
     ToolRegistry& registry_;
     std::unique_ptr<AgentOrchestrator> orchestrator_;
     std::string system_prompt_;

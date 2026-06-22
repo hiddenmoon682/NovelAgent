@@ -1,9 +1,10 @@
-/// AgentOrchestrator 实现 — P1 重构版（ISynthesisStrategy + RestrictedToolProvider）。
+/// AgentOrchestrator 实现 — P1 重构版（ISynthesisStrategy + RestrictedToolProvider）+ Phase 4 线程安全（工厂模式 SubAgent 隔离）。
 
 #include "agent/AgentOrchestrator.h"
 #include "agent/IToolProvider.h"
 #include "agent/TemplateManager.h"
 #include "agent/ToolRegistry.h"
+#include "llm/LLMClientFactory.h"
 
 #include <spdlog/spdlog.h>
 #include <future>
@@ -54,12 +55,14 @@ std::vector<SubTask> TemplateDecomposition::decompose(
 // ===========================================================================
 
 AgentOrchestrator::AgentOrchestrator(
-    llm::ILLMClient& client, ToolRegistry& registry, std::string mainPrompt)
-    : client_(client), registry_(registry), main_prompt_(std::move(mainPrompt))
+    llm::LLMClientFactory& factory, ToolRegistry& registry, std::string mainPrompt)
+    : factory_(factory), client_(factory.create()), registry_(registry), main_prompt_(std::move(mainPrompt))
 {
     detector_ = std::make_unique<KeywordParallelDetector>();
-    synthesis_ = std::make_unique<LlmSynthesis>(client_, main_prompt_);
+    synthesis_ = std::make_unique<LlmSynthesis>(*client_, main_prompt_);
 }
+
+AgentOrchestrator::~AgentOrchestrator() = default;
 
 void AgentOrchestrator::setTemplateManager(TemplateManager* tm) {
     template_mgr_ = tm;
@@ -101,7 +104,7 @@ std::string AgentOrchestrator::processMessage(const std::string& input)
 {
     if (!parallel_enabled_ || !getDetector().shouldParallelize(input)) {
         std::vector<llm::Message> msgs = { llm::Message::user(input) };
-        auto resp = client_.chatNonStreaming(msgs, {}, main_prompt_);
+        auto resp = client_->chatNonStreaming(msgs, {}, main_prompt_);
         return resp.content;
     }
 
@@ -110,7 +113,7 @@ std::string AgentOrchestrator::processMessage(const std::string& input)
     auto tasks = decompose(input);
     if (tasks.empty()) {
         std::vector<llm::Message> msgs = { llm::Message::user(input) };
-        return client_.chatNonStreaming(msgs, {}, main_prompt_).content;
+        return client_->chatNonStreaming(msgs, {}, main_prompt_).content;
     }
 
     spdlog::info("[Orchestrator] {} 个子任务", tasks.size());
@@ -126,15 +129,28 @@ std::vector<SubTask> AgentOrchestrator::decompose(const std::string& input)
 void AgentOrchestrator::executeParallel(std::vector<SubTask>& tasks)
 {
     std::vector<std::future<SubAgentResult>> futures(tasks.size());
+    std::vector<bool> consumed(tasks.size(), false);  // 追踪已被节流循环消费的 future
     int running = 0;
 
     for (size_t i = 0; i < tasks.size(); ++i) {
+        // ── 节流控制：当并发数达到上限时，等待任一任务完成 ──
         while (running >= max_parallel_) {
             for (size_t j = 0; j < i; ++j) {
-                if (futures[j].valid() &&
+                if (!consumed[j] && futures[j].valid() &&
                     futures[j].wait_for(std::chrono::milliseconds(100)) == std::future_status::ready) {
-                    futures[j].get(); --running; break;
+                    // 提前收集已完成任务的结果，避免最终循环重复 get()
+                    auto result = futures[j].get();
+                    consumed[j] = true;
+                    tasks[j].status = result.timed_out ? "timed_out" :
+                                      !result.error.empty() ? "failed" : "completed";
+                    tasks[j].result = result.output;
+                    tasks[j].error = result.error;
+                    --running; break;
                 }
+            }
+            // 避免忙等待——在轮询间隙让出 CPU
+            if (running >= max_parallel_) {
+                std::this_thread::yield();
             }
         }
 
@@ -148,13 +164,18 @@ void AgentOrchestrator::executeParallel(std::vector<SubTask>& tasks)
 
             // P0 改进：SubAgent 通过 RestrictedToolProvider 受限视图访问工具
             RestrictedToolProvider tools(registry_, task.allowed_tools);
-            auto agent = agent_factory_(client_, tools);
+            auto agent = agent_factory_(factory_, tools);
             return agent->execute(config);
         });
         ++running;
     }
 
+    // ── 最终收集：跳过已被节流循环消费的 future ──
     for (size_t i = 0; i < futures.size(); ++i) {
+        if (consumed[i]) {
+            spdlog::info("[Orchestrator] {} {}: {} 字", tasks[i].id, tasks[i].status, tasks[i].result.size());
+            continue;
+        }
         auto result = futures[i].get();
         tasks[i].status = result.timed_out ? "timed_out" :
                           !result.error.empty() ? "failed" : "completed";

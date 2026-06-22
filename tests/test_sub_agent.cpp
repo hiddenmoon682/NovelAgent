@@ -43,10 +43,9 @@ public:
 
 void test_sub_agent_basic() {
     TEST("SubAgent 基本执行 — 返回 LLM 响应文本");
-    MockLLMClient mock("子任务执行完成");
     agent::ToolRegistry registry;
     agent::RestrictedToolProvider tools(registry, {});
-    agent::SubAgent sub(mock, tools);
+    agent::SubAgent sub(std::make_unique<MockLLMClient>("子任务执行完成"), tools);
 
     agent::SubAgentConfig config;
     config.task = "分析 ch-001 的剧情";
@@ -73,7 +72,6 @@ void test_sub_agent_timeout() {
 
 void test_sub_agent_tool_filter() {
     TEST("SubAgent 工具过滤 — 只允许指定工具");
-    MockLLMClient mock("ok");
     agent::ToolRegistry registry;
     registry.registerTool("read", "读", utils::schema::object({}),
         agent::ToolCategory::Content,
@@ -83,7 +81,7 @@ void test_sub_agent_tool_filter() {
         [](const nlohmann::json&) { return nlohmann::json::object(); });
 
     agent::RestrictedToolProvider tools(registry, {"read"});
-    agent::SubAgent sub(mock, tools);
+    agent::SubAgent sub(std::make_unique<MockLLMClient>("ok"), tools);
     agent::SubAgentConfig config;
     config.task = "test";
     config.system_prompt = "test";

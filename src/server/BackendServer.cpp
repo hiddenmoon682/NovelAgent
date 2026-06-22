@@ -1,8 +1,9 @@
-/// BackendServer 实现 — 网络审查修复版（#1~#7全部修复）。
+/// BackendServer 实现 — 网络审查修复版（#1~#7全部修复）+ Phase 4 线程安全（工厂模式会话隔离）。
 
 #include "server/BackendServer.h"
 #include "server/SSEQueue.h"
 
+#include "llm/LLMClientFactory.h"
 #include "project/Models.h"
 #include "project/ProjectIO.h"
 #include "utils/FileUtils.h"
@@ -20,10 +21,10 @@ using json = nlohmann::json;
 namespace server {
 
 BackendServer::BackendServer(
-    llm::ILLMClient& client, agent::ToolRegistry& registry,
+    llm::LLMClientFactory& factory, agent::ToolRegistry& registry,
     std::shared_ptr<Project> project, const ServerConfig& config)
-    : client_(client), registry_(registry), project_(std::move(project)),
-      config_(config), session_mgr_(client_, registry_, project_)
+    : factory_(factory), registry_(registry), project_(std::move(project)),
+      config_(config), session_mgr_(factory_, registry_, project_)
 {}
 
 BackendServer::~BackendServer() { stop(); }
@@ -81,6 +82,20 @@ void BackendServer::removePortFile() const {
 }
 
 void BackendServer::setupRoutes() {
+    // ── 全局 CORS 中间件 ──
+    // 为所有 API 路由添加跨域头，并处理 OPTIONS 预检请求
+    server_->set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type");
+        // OPTIONS 预检请求直接返回 204，不进入后续路由处理
+        if (req.method == "OPTIONS") {
+            res.status = 204;
+            return httplib::Server::HandlerResponse::Handled;
+        }
+        return httplib::Server::HandlerResponse::Unhandled;
+    });
+
     // ── 桌面窗口前端页面 ──
     server_->Get("/", [](const httplib::Request&, httplib::Response& res) {
         char buf[MAX_PATH];
@@ -158,6 +173,10 @@ void BackendServer::setupRoutes() {
 
         auto llm_thread = std::make_shared<std::thread>(
             [session, message, queue, done_flag]() {
+                // 会话级互斥锁：同一会话的并发 /api/chat 请求串行化，
+                // 防止对 Agent 内部状态（conversation/tracer/LLMClient）的数据竞争
+                std::lock_guard<std::mutex> lock(session->request_mutex);
+
                 llm::StreamCallbacks cb;
                 bool cb_error_called = false;
 
@@ -255,7 +274,6 @@ void BackendServer::setupRoutes() {
                 if (llm_thread->joinable()) llm_thread->join();
             });
 
-        res.set_header("Access-Control-Allow-Origin", "*");
     });
 
     // ── 单次执行 ──
@@ -268,7 +286,7 @@ void BackendServer::setupRoutes() {
             res.set_content("{\"error\":\"缺少 command\"}", "application/json");
             return;
         }
-        agent::Agent tempAgent(client_, registry_);
+        agent::Agent tempAgent(factory_, registry_);
         auto response = tempAgent.execute(command);
         json r;
         r["content"] = response.content;
@@ -309,6 +327,46 @@ void BackendServer::setupRoutes() {
         r["content"] = book.str();
         r["chapters"] = count;
         res.set_content(r.dump(), "application/json");
+    });
+
+    // ── 章节列表（供 GUI 侧边栏使用）──
+    server_->Get("/api/project/chapters", [this](const httplib::Request&, httplib::Response& res) {
+        if (!project_) {
+            res.set_content("{\"error\":\"未打开项目\"}", "application/json");
+            return;
+        }
+        json chapters = json::array();
+        for (const auto& ch : project_->outline.chapters) {
+            json item;
+            item["id"] = ch.id;
+            item["title"] = ch.title;
+            item["order"] = ch.order;
+            item["synopsis"] = ch.synopsis;
+            item["status"] = ch.status;
+            item["scenes_count"] = ch.scenes.size();
+            item["pov_characters"] = ch.pov_characters;
+            chapters.push_back(item);
+        }
+        res.set_content(chapters.dump(), "application/json");
+    });
+
+    // ── 角色列表（供 GUI 侧边栏使用）──
+    server_->Get("/api/project/characters", [this](const httplib::Request&, httplib::Response& res) {
+        if (!project_) {
+            res.set_content("{\"error\":\"未打开项目\"}", "application/json");
+            return;
+        }
+        json characters = json::array();
+        for (const auto& c : project_->characters) {
+            json item;
+            item["id"] = c.id;
+            item["name"] = c.name;
+            item["role"] = c.role;
+            item["traits"] = c.traits;
+            item["appearances_count"] = c.chapter_appearances.size();
+            characters.push_back(item);
+        }
+        res.set_content(characters.dump(), "application/json");
     });
 }
 

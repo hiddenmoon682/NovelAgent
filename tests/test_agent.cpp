@@ -1,6 +1,6 @@
 #include "agent/Agent.h"
 #include "agent/ToolRegistry.h"
-#include "llm/LLMClient.h"
+#include "llm/LLMClientFactory.h"
 #include "test_sse_helpers.h"
 #include "utils/SchemaUtils.h"
 
@@ -105,9 +105,9 @@ void test_simple_conversation() {
     });
     server.start();
 
-    llm::LLMClient client(makeConfig(server.port));
+    llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
-    agent::Agent agent(client, registry);
+    agent::Agent agent(factory, registry);
 
     auto response = agent.processUserMessage("Hi");
 
@@ -159,7 +159,7 @@ void test_tool_call_loop() {
     });
     server.start();
 
-    llm::LLMClient client(makeConfig(server.port));
+    llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
 
     // 注册 echo 工具
@@ -174,7 +174,7 @@ void test_tool_call_loop() {
         }
     );
 
-    agent::Agent agent(client, registry);
+    agent::Agent agent(factory, registry);
     auto response = agent.processUserMessage("echo test");
 
     CHECK(response.content == "工具已执行完毕");
@@ -214,9 +214,9 @@ void test_execute_mode() {
     });
     server.start();
 
-    llm::LLMClient client(makeConfig(server.port));
+    llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
-    agent::Agent agent(client, registry);
+    agent::Agent agent(factory, registry);
 
     auto response = agent.execute("查询项目状态");
 
@@ -249,9 +249,9 @@ void test_conversation_management() {
     });
     server.start();
 
-    llm::LLMClient client(makeConfig(server.port));
+    llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
-    agent::Agent agent(client, registry);
+    agent::Agent agent(factory, registry);
 
     // 第一轮
     agent.processUserMessage("第一句话");
@@ -283,9 +283,9 @@ void test_empty_input() {
     });
     server.start();
 
-    llm::LLMClient client(makeConfig(server.port));
+    llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
-    agent::Agent agent(client, registry);
+    agent::Agent agent(factory, registry);
 
     auto response = agent.processUserMessage("");
     CHECK(response.content.empty());

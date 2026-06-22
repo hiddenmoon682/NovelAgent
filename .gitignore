@@ -34,3 +34,9 @@ opencode.json
 
 # Claude skills (local skills not tracked)
 .claude/skills/
+
+# Tauri GUI
+gui/node_modules/
+gui/dist/
+gui/src-tauri/target/
+gui/src-tauri/binaries/novelagent-*.exe

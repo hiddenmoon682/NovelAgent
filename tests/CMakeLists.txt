@@ -21,6 +21,9 @@ foreach(name test_tool_registry test_agent test_chapter_tools
     add_novelagent_test(${name} "novelagent_core;novelagent_tools")
 endforeach()
 
+# 依赖 core + tui 的测试
+add_novelagent_test(test_tui "novelagent_core;novelagent_tui")
+
 # DLL 路径
 if(EXISTS "D:/SoftWare/msys2/mingw64/bin")
     set(CORE_TESTS test_main test_models test_project_io test_prompt_context
@@ -28,7 +31,8 @@ if(EXISTS "D:/SoftWare/msys2/mingw64/bin")
                    test_context_manager test_retrieval)
     set(TOOLS_TESTS test_tool_registry test_agent test_chapter_tools
                     test_character_tools test_sub_agent)
-    set_property(TEST ${CORE_TESTS} ${TOOLS_TESTS}
+    set(TUI_TESTS test_tui)
+    set_property(TEST ${CORE_TESTS} ${TOOLS_TESTS} ${TUI_TESTS}
         APPEND PROPERTY ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:D:/SoftWare/msys2/mingw64/bin")
 endif()

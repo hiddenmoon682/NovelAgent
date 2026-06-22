@@ -5,7 +5,7 @@
 #include "agent/TemplateManager.h"
 #include "agent/ToolRegistry.h"
 #include "config/AppConfig.h"
-#include "llm/LLMClient.h"
+#include "llm/LLMClientFactory.h"
 #include "project/FileStorageBackend.h"
 #include "project/Models.h"
 
@@ -26,6 +26,7 @@ public:
 
     void runRepl(const std::string& welcomeMessage = "");
     void runExec(const std::string& command);
+    void runTui();
 
     agent::Agent& agent() { return agent_; }
     agent::ToolRegistry& registry() { return registry_; }
@@ -35,7 +36,7 @@ public:
 private:
     std::unique_ptr<IOutputChannel> ownedOutput_;
     IOutputChannel& out_;
-    llm::LLMClient client_;
+    llm::LLMClientFactory client_;  // LLMClient 工厂（构造后不可变，传递给 Agent 创建独立客户端）
     agent::ToolRegistry registry_;
     agent::Agent agent_;
     std::shared_ptr<Project> project_;

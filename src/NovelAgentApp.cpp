@@ -6,6 +6,7 @@
 #include "cli/ReplHandler.h"
 #include "cli/StreamDisplay.h"
 #include "project/ProjectIO.h"
+#include "tui/TuiApp.h"
 
 #include <iostream>
 
@@ -62,6 +63,11 @@ void NovelAgentApp::saveConversationIfNeeded(const llm::LLMResponse& /*response*
     } catch (...) {
         // 持久化失败不阻塞主流程
     }
+}
+
+void NovelAgentApp::runTui() {
+    TuiApp tui(agent_, project_);
+    tui.run();
 }
 
 void NovelAgentApp::runRepl(const std::string& welcomeMessage)

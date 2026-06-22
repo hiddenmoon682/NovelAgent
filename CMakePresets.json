@@ -1,0 +1,17 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "default",
+      "description": "Ninja + GCC (MinGW-w64), MSYS2 提供 OpenSSL/FTXUI",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "OPENSSL_ROOT_DIR": "D:/SoftWare/msys2/mingw64",
+        "CMAKE_PREFIX_PATH": "D:/SoftWare/msys2/mingw64"
+      }
+    }
+  ]
+}

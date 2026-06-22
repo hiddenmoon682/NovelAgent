@@ -5,7 +5,8 @@
 /// 封装 URL 解析、Bearer Token 认证、指数退避重试、错误响应解析。
 /// LLMClient（Chat API）和 EmbeddingGenerator（Embeddings API）共享此实现。
 ///
-/// 线程安全：不安全。同一实例不应并发调用。
+/// 线程安全：单实例不安全（httplib::Client 内部状态不可并发）。
+/// 多线程场景请通过 LLMClientFactory 为每个执行上下文创建独立的 LLMClient（从而独立的 HttpClient）。
 
 #include <nlohmann/json_fwd.hpp>
 #include <httplib.h>
@@ -88,7 +89,7 @@ public:
     static bool isRetryableNetworkError(int err);
 
 private:
-    HttpConfig config_;
+    HttpConfig config_;          // HTTP 客户端配置
     std::string host_;           // 解析后的主机名
     std::string path_prefix_;    // base_url 中的路径前缀（如 "/v1" 省略）
     std::string scheme_;         // "https" 或 "http"

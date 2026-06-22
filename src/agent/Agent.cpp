@@ -1,4 +1,4 @@
-/// Agent 实现 — Agent 最佳实践增强版 (Fix #3,#6)。
+/// Agent 实现 — Agent 最佳实践增强版 (Fix #3,#6) + Phase 4 线程安全 (LLMClientFactory)。
 
 #include "agent/Agent.h"
 #include "agent/AgentOrchestrator.h"
@@ -7,13 +7,14 @@
 #include "agent/ToolCallLoop.h"
 #include "agent/ToolPipeline.h"
 #include "agent/ToolRegistry.h"
+#include "llm/LLMClientFactory.h"
 
 #include <spdlog/spdlog.h>
 
 namespace agent {
 
-Agent::Agent(llm::ILLMClient& client, ToolRegistry& registry)
-    : client_(client), registry_(registry)
+Agent::Agent(llm::LLMClientFactory& factory, ToolRegistry& registry)
+    : factory_(factory), client_(factory.create()), registry_(registry)
 {
     useSerialProcessor();
 }
@@ -30,7 +31,7 @@ void Agent::setContextWindow(int window) { context_window_ = window; }
 void Agent::clearConversation() { conversation_.clear(); }
 
 void Agent::useSerialProcessor() {
-    auto sp = std::make_unique<SerialProcessor>(client_, registry_, system_prompt_);
+    auto sp = std::make_unique<SerialProcessor>(*client_, registry_, system_prompt_);
     sp->setContextManager(context_manager_);
     sp->setContextWindow(context_window_);
     sp->setMaxToolRounds(max_tool_rounds_);
@@ -40,7 +41,7 @@ void Agent::useSerialProcessor() {
 }
 
 void Agent::useParallelProcessor(TemplateManager* tm) {
-    auto pp = std::make_unique<ParallelProcessor>(client_, registry_, system_prompt_);
+    auto pp = std::make_unique<ParallelProcessor>(factory_, registry_, system_prompt_);
     if (tm) pp->setTemplateManager(tm);
     processor_ = std::move(pp);
     spdlog::info("[Agent] 切换到并行处理器");
@@ -106,7 +107,7 @@ llm::LLMResponse Agent::execute(const std::string& command,
             effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
     }
 
-    auto response = client_.chat(messages, tools, effective_prompt, std::move(callbacks));
+    auto response = client_->chat(messages, tools, effective_prompt, std::move(callbacks));
     state_.transition(AgentState::Idle);
     return response;
 }

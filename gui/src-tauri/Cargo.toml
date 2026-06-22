@@ -1,0 +1,25 @@
+[package]
+name = "novelagent-gui"
+version = "0.1.0"
+description = "NovelAgent 桌面 GUI"
+authors = ["NovelAgent"]
+edition = "2021"
+rust-version = "1.79"
+
+[lib]
+name = "novelagent_gui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["time", "macros"] }
+reqwest = { version = "0.12", features = ["json"] }
+
+[package.metadata]

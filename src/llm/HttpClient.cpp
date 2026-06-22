@@ -59,13 +59,23 @@ void HttpClient::parseUrl()
     }
 }
 
+// ===========================================================================
+// fullPath — 将 path_prefix_ 与具体 API 路径拼接为完整请求路径
+// 例如: path_prefix_="/v1", path="/chat/completions" → "/v1/chat/completions"
+// ===========================================================================
+
 std::string HttpClient::fullPath(const std::string& path) const
 {
     return path_prefix_ + path;
 }
 
 // ===========================================================================
-// 请求头
+// defaultHeaders — 构造每个 HTTP 请求都携带的默认请求头
+//
+// 包含:
+//   Authorization — Bearer Token 认证，使用配置中的 API Key
+//   Content-Type — 固定 application/json（所有请求体均为 JSON）
+//   User-Agent  — 客户端标识，方便服务端识别调用来源
 // ===========================================================================
 
 httplib::Headers HttpClient::defaultHeaders() const
@@ -78,7 +88,24 @@ httplib::Headers HttpClient::defaultHeaders() const
 }
 
 // ===========================================================================
-// post — 简单 JSON POST（非流式，自动重试）
+// post — 非流式 JSON POST（发送完整 JSON 请求体，等待完整 JSON 响应）
+//
+// 参数:
+//   path — API 相对路径，与 path_prefix_ 拼接为完整路径
+//   body — 请求体，自动序列化为 JSON 字符串
+//
+// 重试策略（指数退避）:
+//   可重试的网络错误（Connection/Read/ConnectionTimeout）
+//   可重试的 HTTP 状态码（429/502/503）
+//   → 每次重试间隔翻倍，最多重试 config_.max_retries 次
+//
+// 不可重试的情况（直接抛异常）:
+//   非可重试的网络错误（SSL、代理等）
+//   非可重试的 HTTP 状态码（400/401/403/404/500 等）
+//   JSON 响应体解析失败
+//
+// 返回:
+//   解析后的 JSON 响应体（已确保 HTTP 200）
 // ===========================================================================
 
 nlohmann::json HttpClient::post(
@@ -100,9 +127,20 @@ nlohmann::json HttpClient::post(
             std::this_thread::sleep_for(std::chrono::milliseconds(retry_delay_ms));
         }
 
+        // 发送 HTTP POST 请求（httplib 封装）
+        //   path_full — 完整 API 路径
+        //   headers   — 请求头（Authorization/Content-Type/User-Agent）
+        //   body_str  — JSON 序列化后的请求体
+        //   "application/json" — 固定内容类型，服务端根据此解析请求体
+        //   （与 headers 中的重复，但 httplib 要求传此参数）
+        
+        //   返回值 res — httplib::Result：
+        //     !res 为 true  → 传输层错误，res.error() 获取错误码
+        //     res->status   → HTTP 状态码
+        //     res->body     → 响应体字符串
         auto res = client_->Post(path_full, headers, body_str, "application/json");
 
-        // ── 传输层错误 ──
+        // ── 传输层错误（连接断开、超时等） ──
         if (!res) {
             int err_code = static_cast<int>(res.error());
             if (attempt < config_.max_retries && isRetryableNetworkError(err_code)) {
@@ -114,7 +152,7 @@ nlohmann::json HttpClient::post(
             throw std::runtime_error("HTTP 请求失败: " + err);
         }
 
-        // ── HTTP 错误 ──
+        // ── HTTP 错误（服务端返回了非 200 状态码） ──
         if (res->status != 200) {
             if (attempt < config_.max_retries && isRetryableStatus(res->status)) {
                 spdlog::warn("[HttpClient] HTTP {} 可重试", res->status);
@@ -136,11 +174,31 @@ nlohmann::json HttpClient::post(
         }
     }
 
+    // 所有重试次数耗尽仍未成功
     throw std::runtime_error("HTTP 请求失败: 超过最大重试次数");
 }
 
 // ===========================================================================
-// postStreaming — 流式 POST（Fix #3: 指数退避重试）
+// postStreaming — 流式 POST（用于 SSE / Chat Completions 流式响应）
+//
+// 与 post() 的关键区别:
+//   1. body 为预序列化的 std::string（由调用方自行组装）
+//   2. 不等待完整响应，而是通过 content_receiver 逐块接收流式数据
+//   3. 返回 httplib::Result 而非 nlohmann::json，由调用方处理响应
+//   4. 手动构造 httplib::Request（设置 content_receiver 回调）
+//
+// 参数:
+//   path              — API 相对路径
+//   body              — 预序列化的 JSON 请求体字符串
+//   content_receiver  — 数据块回调，每次收到数据时被调用
+//                      返回 true=继续接收，false=取消接收
+//
+// 重试策略:
+//   与 post() 相同的指数退避，但 max_attempts 取自 config_.max_retries，
+//   若未配置则默认 2（共 3 次尝试）
+//
+// 返回:
+//   httplib::Result — 由调用方判断成功/失败并解析
 // ===========================================================================
 
 httplib::Result HttpClient::postStreaming(
@@ -151,7 +209,6 @@ httplib::Result HttpClient::postStreaming(
     std::string path_full = fullPath(path);
     auto headers = defaultHeaders();
 
-    // Fix #3: 流式调用也支持连接级重试（最多 2 次，含首次共 3 次）
     const int max_attempts = config_.max_retries > 0 ? config_.max_retries : 2;
     int retry_delay_ms = config_.retry_base_delay_ms;
 
@@ -162,6 +219,9 @@ httplib::Result HttpClient::postStreaming(
             std::this_thread::sleep_for(std::chrono::milliseconds(retry_delay_ms));
         }
 
+        // ── 手动构造 httplib::Request ──
+        // post() 使用便捷方法 client_->Post(...)，但流式请求需要
+        // 手动设置 content_receiver，所以改用 client_->send(req)
         httplib::Request req;
         req.method = "POST";
         req.path = path_full;
@@ -170,7 +230,11 @@ httplib::Result HttpClient::postStreaming(
         }
         req.body = body;
 
-        // 每次重试创建新的 receiver 包装（避免 use-after-move）
+        // ── 设置流式数据接收回调 ──
+        // httplib 的 content_receiver 签名:
+        //   bool(const char* data, size_t len, uint64_t offset, uint64_t total)
+        // 外层捕获 content_receiver，每次重试重新构造 lambda，
+        // 避免因移动导致回调失效（use-after-move 防护）
         req.content_receiver = [receiver = content_receiver](
             const char* data, size_t len, uint64_t /*offset*/, uint64_t /*total*/) {
             return receiver(data, len);
@@ -179,17 +243,18 @@ httplib::Result HttpClient::postStreaming(
         spdlog::debug("[HttpClient] 流式 POST {} (attempt {})", path_full, attempt);
         auto res = client_->send(req);
 
-        // 传输层错误 → 可重试
+        // ── 传输层错误 ──
         if (!res) {
             int err_code = static_cast<int>(res.error());
             if (attempt < max_attempts && isRetryableNetworkError(err_code)) {
                 retry_delay_ms *= 2;
                 continue;
             }
-            return res;  // 不可重试，返回错误给调用方
+            // 不可重试 → 将原始 Result 返回给调用方，由调用方决定如何处理
+            return res;
         }
 
-        // HTTP 错误 → 429/502/503 可重试
+        // ── HTTP 错误 ──
         if (res->status != 200) {
             if (attempt < max_attempts && isRetryableStatus(res->status)) {
                 retry_delay_ms *= 2;
@@ -198,16 +263,23 @@ httplib::Result HttpClient::postStreaming(
             return res;
         }
 
-        // 成功
+        // ── 成功 ──
         return res;
     }
 
-    // 不应到达
+    // 不应到达此处（循环内必 return）
     throw std::runtime_error("流式请求失败: 超过最大重试次数");
 }
 
 // ===========================================================================
-// 查询
+// rawClient — 返回底层 httplib::Client 的引用
+//
+// 当调用方需要执行 post()/postStreaming() 之外的特殊 HTTP 操作时
+// （例如 GET、PUT、DELETE、自定义超时等），可通过此方法直接操作
+// 原始的 httplib::Client。
+//
+// 注意: 尽量避免使用此方法，优先使用 HttpClient 封装的方法，
+// 以确保重试、错误处理等逻辑的一致性。
 // ===========================================================================
 
 httplib::Client& HttpClient::rawClient()
@@ -221,6 +293,10 @@ httplib::Client& HttpClient::rawClient()
 
 std::string HttpClient::parseApiError(int http_status, const std::string& response_body)
 {
+    // ── 尝试从响应体中提取 JSON 格式的错误信息 ──
+    // LLM API（OpenAI / DeepSeek 等）的错误响应格式通常为:
+    //   {"error": {"message": "...", "code": "..."}}
+    // 成功解析后优先返回 "[code] message" 格式，其次是纯 message。
     if (!response_body.empty()) {
         try {
             auto j = nlohmann::json::parse(response_body);
@@ -236,7 +312,8 @@ std::string HttpClient::parseApiError(int http_status, const std::string& respon
                 }
             }
         } catch (...) {
-            // JSON 解析失败，回退到状态码描述
+            // catch (...) — 如果响应体不是合法 JSON（例如纯文本错误），捕获所有异常，然后静默忽略
+            // JSON 解析失败 → 忽略，回退到下面的 HTTP 状态码描述
         }
     }
 
@@ -277,10 +354,31 @@ std::string HttpClient::httpErrorToString(int error_code)
     }
 }
 
+// ===========================================================================
+// isRetryableStatus — 判断 HTTP 状态码是否值得重试
+//
+// 429 Too Many Requests     — 触发限流，等待后重试通常可恢复
+// 502 Bad Gateway           — 上游临时故障，通常几秒后自动恢复
+// 503 Service Unavailable   — 服务过载/维护中，等待后可能恢复
+//
+// 其他错误（400/401/403/404/500 等）直接放弃，无需重试。
+// ===========================================================================
+
 bool HttpClient::isRetryableStatus(int status)
 {
     return status == 429 || status == 502 || status == 503;
 }
+
+// ===========================================================================
+// isRetryableNetworkError — 判断传输层错误是否值得重试
+//
+// httplib::Error::Connection         — 连接失败（服务器未响应）
+// httplib::Error::Read               — 读取超时或连接中途断开
+// httplib::Error::ConnectionTimeout  — 建立连接超时
+//
+// 以上错误均为网络层面临时性问题，重试通常可以恢复。
+// SSL、代理、证书验证等错误直接放弃，无需重试。
+// ===========================================================================
 
 bool HttpClient::isRetryableNetworkError(int err)
 {

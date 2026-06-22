@@ -4,6 +4,8 @@
 /// Fix #1: httplib Server 超时/keepalive/idle/payload 配置。
 /// Fix #4: 并发连接上限。
 /// Fix #5: 请求体大小检查。
+///
+/// Phase 4 线程安全：通过 LLMClientFactory 为每个会话/临时 Agent 创建独立 LLMClient。
 
 #include "server/SessionManager.h"
 #include <httplib.h>
@@ -12,6 +14,10 @@
 #include <string>
 #include <thread>
 #include <atomic>
+
+namespace llm {
+class LLMClientFactory;
+} // namespace llm
 
 namespace server {
 
@@ -35,7 +41,8 @@ struct ServerConfig {
 
 class BackendServer {
 public:
-    BackendServer(llm::ILLMClient& client, agent::ToolRegistry& registry,
+    /// @param factory  LLM 客户端工厂（用于创建临时 Agent 和会话的独立客户端）
+    BackendServer(llm::LLMClientFactory& factory, agent::ToolRegistry& registry,
                   std::shared_ptr<Project> project, const ServerConfig& config);
     ~BackendServer();
 
@@ -46,7 +53,7 @@ public:
     int activeClients() const { return active_clients_.load(); }
 
 private:
-    llm::ILLMClient& client_;
+    llm::LLMClientFactory& factory_;
     agent::ToolRegistry& registry_;
     std::shared_ptr<Project> project_;
     ServerConfig config_;

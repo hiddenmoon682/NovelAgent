@@ -2,13 +2,15 @@
 
 /// 多会话管理器 — 管理多个独立的 Agent 会话实例。
 /// 每个前端连接对应一个 Session，拥有独立的 Agent + Conversation。
+///
+/// 线程安全改进：每个会话通过 LLMClientFactory 创建独立的 Agent（从而独立的 LLMClient），
+/// 确保多客户端并发时互不干扰。
 
 #include "agent/Agent.h"
 #include "agent/AgentState.h"
 #include "agent/ContextManager.h"
 #include "agent/ExecutionTracer.h"
 #include "agent/ToolRegistry.h"
-#include "llm/ILLMClient.h"
 
 #include <chrono>
 #include <memory>
@@ -18,6 +20,10 @@
 #include <vector>
 
 struct Project;
+
+namespace llm {
+class LLMClientFactory;
+} // namespace llm
 
 namespace server {
 
@@ -29,12 +35,14 @@ struct Session {
     std::unique_ptr<agent::StateMachine> state;
     std::chrono::steady_clock::time_point created;
     std::chrono::steady_clock::time_point last_active;
+    std::mutex request_mutex;  // 保护并发 /api/chat 请求的串行化
 };
 
 /// 多会话管理器（线程安全）。
 class SessionManager {
 public:
-    SessionManager(llm::ILLMClient& client, agent::ToolRegistry& registry,
+    /// @param factory  LLM 客户端工厂（每个会话创建独立的 Agent/LLMClient）
+    SessionManager(llm::LLMClientFactory& factory, agent::ToolRegistry& registry,
                    std::shared_ptr<Project> project);
 
     /// 创建新会话，返回 session_id。
@@ -59,7 +67,7 @@ public:
     std::shared_ptr<Project> project() { return project_; }
 
 private:
-    llm::ILLMClient& client_;
+    llm::LLMClientFactory& factory_;
     agent::ToolRegistry& registry_;
     std::shared_ptr<Project> project_;
 
