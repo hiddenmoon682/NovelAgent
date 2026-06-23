@@ -2,7 +2,7 @@
 
 #include <functional>
 #include <string>
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include "llm/StreamingTypes.h"
 
 namespace llm {

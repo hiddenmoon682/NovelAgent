@@ -6,7 +6,7 @@
 // 1. 先从 Project 中筛出和当前章节/任务最相关的对象。
 // 2. 再按 GenerationControl 对字段做白名单/黑名单过滤。
 // 3. 同时产出结构化 payload 和可直接发送给 LLM 的文本版本。
-#include "project/Models.h"
+#include "project/Models/ModelsFwd.h"
 
 #include <optional>
 #include <string>

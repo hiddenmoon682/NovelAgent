@@ -6,7 +6,7 @@
 ///
 /// Phase 4 扩展：新增 agentDir() / nowTimestamp() 支持会话持久化和摘要缓存。
 
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <string>
 
 class IStorageBackend {

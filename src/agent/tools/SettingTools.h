@@ -1,7 +1,6 @@
 #pragma once
 #include "agent/tools/BuiltInTool.h"
-#include "project/Models.h"
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 namespace agent {
 

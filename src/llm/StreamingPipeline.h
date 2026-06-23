@@ -103,13 +103,13 @@ public:
     }
 
 private:
-    SSEParser parser_;
-    StreamAccumulator accumulator_;
-    StreamCallbacks callbacks_;
-    LLMResponse response_;
-    bool completed_ = false;
-    bool tool_call_seen_ = false;
-    std::string error_;
+    SSEParser parser_;                /// SSE 解析器，将原始 SSE 文本解析为 StreamChunk
+    StreamAccumulator accumulator_;   /// 流累积器，将多个 StreamChunk 累积为完整的 LLMResponse
+    StreamCallbacks callbacks_;       /// 外部回调函数集，转发给 Agent / StreamDisplay
+    LLMResponse response_;            /// 累积完成的完整 LLM 响应
+    bool completed_ = false;          /// 标记流是否已正常结束（收到 finish_reason 或 [DONE]）
+    bool tool_call_seen_ = false;     /// 标记是否已触发 on_tool_call_start，确保只触发一次
+    std::string error_;               /// 解析或处理过程中产生的错误描述
 };
 
 } // namespace llm

@@ -4,9 +4,12 @@ project(NovelAgent
     LANGUAGES CXX
 )
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
 
 if(EXISTS "D:/SoftWare/msys2/mingw64")
     list(PREPEND CMAKE_PREFIX_PATH "D:/SoftWare/msys2/mingw64")

@@ -21,6 +21,9 @@ Thumbs.db
 novelagent.json
 config.json
 
+# ccache 编译缓存
+.ccache/
+
 # Clangd index
 .cache/
 

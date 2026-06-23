@@ -49,14 +49,9 @@ endif()
 find_package(ftxui REQUIRED)
 
 # --- cpp-httplib ---
-# 轻量级 C++ HTTP(S) 库，header-only。在 Windows 上封装 WinHTTP，
-# Linux/macOS 上封装系统原生 socket API，无需 OpenSSL 即可访问 HTTPS。
-# 用于 LLMClient 向 DeepSeek/Kimi/Claude API 发送 HTTP POST 请求。
-FetchContent_Declare(cpp-httplib
-    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-    GIT_TAG v0.18.5
-    GIT_SHALLOW TRUE
-)
-set(HTTPLIB_COMPILE OFF CACHE INTERNAL "")
-set(HTTPLIB_USE_OPENSSL ON CACHE INTERNAL "")
-FetchContent_MakeAvailable(cpp-httplib)
+# 轻量级 C++ HTTP(S) 库，header-only。本地副本，无需网络下载。
+add_library(httplib INTERFACE)
+target_include_directories(httplib INTERFACE ${CMAKE_SOURCE_DIR}/third_party/cpp-httplib)
+target_compile_definitions(httplib INTERFACE CPPHTTPLIB_OPENSSL_SUPPORT)
+target_link_libraries(httplib INTERFACE OpenSSL::SSL OpenSSL::Crypto ws2_32 crypt32)
+add_library(httplib::httplib ALIAS httplib)

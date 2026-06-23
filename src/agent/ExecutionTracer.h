@@ -64,7 +64,16 @@ public:
     std::string recentSummary(int n = 10) const;
 
 private:
+    /// 轨迹条目容器 — 按记录顺序存储所有 TraceEntry。
+    /// 每次 record() 在末尾 push_back 一条，entries() 返回只读引用供外部遍历。
+    /// dump() 遍历此容器逐行写出为 JSONL 文件。
+    /// clear() 清空容器并将 step_index_ 重置为 0。
     std::vector<TraceEntry> entries_;
+
+    /// 步骤序号计数器 — 从 0 开始，每次 record() 自动递增。
+    /// 注意：step_index_ 仅由便捷接口 record(event_type, tokens, ms, payload)
+    /// 内部自增；接受 TraceEntry 的接口不会自动设置 step_index_，
+    /// 调用方需自行填充 TraceEntry::step_index 字段。
     int step_index_ = 0;
 
     /// 生成当前 UTC 时间戳。

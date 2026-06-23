@@ -1,4 +1,5 @@
 #include "agent/tools/OutlineTools.h"
+#include "project/Models.h"
 #include "utils/SchemaUtils.h"
 #include <spdlog/spdlog.h>
 

@@ -34,10 +34,24 @@ inline const char* agentStateName(AgentState s) {
 
 /// 状态机 — 管理 Agent 状态转换。
 ///
+/// 状态转换图：
+///   Idle ──→ Thinking ──→ AwaitingTool
+///    ↑  ←──    ↑   ←──     ↑
+///    │         │            │
+///    ├──→ WaitingUser       │
+///    │  ←──                 │
+///    │                      │
+///    ├──→ Error ←── Thinking / AwaitingTool
+///    │  ←── (recover)
+///    │
+///    └──→ Fatal ←── Thinking / AwaitingTool / Error
+///        ←── (reset only)
+///
 /// 使用示例:
 ///   StateMachine sm;
-///   sm.transition(AgentState::Thinking);  // Idle → Thinking
-///   sm.transition(AgentState::Idle);      // Thinking → Idle
+///   sm.transition(AgentState::Thinking);     // Idle → Thinking ✅
+///   sm.transition(AgentState::AwaitingTool); // Thinking → AwaitingTool ✅
+///   sm.transition(AgentState::Idle);         // AwaitingTool → Idle ❌ 非法
 class StateMachine {
 public:
     StateMachine() : state_(AgentState::Idle) {}
@@ -45,7 +59,7 @@ public:
     /// 当前状态。
     AgentState current() const { return state_; }
 
-    /// 转换到新状态。返回 true 表示合法转换。
+    /// 转换到新状态。返回 true 表示转换合法且已执行，false 表示非法转换被拒绝。
     bool transition(AgentState new_state);
 
     /// 是否处于可接受用户输入的状态。

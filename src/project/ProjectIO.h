@@ -18,7 +18,7 @@
 //       summaries.json    — 章节摘要缓存
 //       state.json        — Agent 运行时状态
 
-#include "Models.h"
+#include "project/Models/Project.h"
 #include <string>
 #include <optional>
 #include <nlohmann/json.hpp>

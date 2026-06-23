@@ -13,6 +13,21 @@ set(NOVELAGENT_UTILS
 
 set(NOVELAGENT_PROJECT
     src/project/Models.h
+    src/project/Models/ModelDetail.h
+    src/project/Models/ModelsFwd.h
+    src/project/Models/GenerationControl.h
+    src/project/Models/Scene.h
+    src/project/Models/Relationship.h
+    src/project/Models/CharacterDevelopment.h
+    src/project/Models/Character.h
+    src/project/Models/Setting.h
+    src/project/Models/WorldRule.h
+    src/project/Models/PlotThread.h
+    src/project/Models/Volume.h
+    src/project/Models/Chapter.h
+    src/project/Models/Style.h
+    src/project/Models/Outline.h
+    src/project/Models/Project.h
     src/project/IProjectAccess.h src/project/ProjectAccess.h
     src/project/IStorageBackend.h
     src/project/FileStorageBackend.h src/project/FileStorageBackend.cpp
