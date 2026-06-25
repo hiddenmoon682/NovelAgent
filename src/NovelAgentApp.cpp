@@ -46,7 +46,7 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
     agent_.setSystemPrompt(agent::PromptComposer::compose(pc));
 
     agent_.setContextManager(&cm_);
-    agent_.setContextWindow(client_.config().context_window);
+    agent_.setMaxContextTokens(client_.config().max_context_tokens);
     // 默认使用串行处理器（支持完整 ToolCallLoop + 工具集）。
     // Agent 构造函数已调用 useSerialProcessor()，无需再次设置。
     // 用户可通过 REPL 中 /parallel on 切换到并行编排模式。

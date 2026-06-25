@@ -55,7 +55,7 @@ public:
 
     /// 设置上下文管理器（可选）。
     void setContextManager(class ContextManager* cm) { context_manager_ = cm; }
-    void setContextWindow(int window) { context_window_ = window; }
+    void setMaxContextTokens(int tokens) { max_context_tokens_ = tokens; }
     void setMaxToolRounds(int n) { max_tool_rounds_ = n; }
     void setTracer(class ExecutionTracer* t) { tracer_ = t; }
 
@@ -80,9 +80,9 @@ private:
     /// 为 buildEffectivePrompt() 提供额外的系统级上下文。
     class ContextManager* context_manager_ = nullptr;
 
-    /// 上下文窗口上限（token 数），默认 65536。
-    /// 用于 ContextManager 做消息裁剪和摘要触发，避免超出 LLM 的上下文限制。
-    int context_window_ = 65536;
+    /// 每次请求的最大上下文 token 数（应用层预算上限），默认 131072（128K）。
+    /// 用于 ContextManager 做消息裁剪，避免超出用户设定的成本上限。
+    int max_context_tokens_ = 131072;
 
     /// 单轮用户请求的最大 tool_call 轮数，默认 10 轮。
     /// 防止 LLM 陷入无限 tool_call 循环；达到上限后强制返回已有结果。

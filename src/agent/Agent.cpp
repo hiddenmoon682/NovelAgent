@@ -28,13 +28,13 @@ void Agent::setSystemPrompt(std::string prompt) {
 }
 void Agent::setMaxToolRounds(int n) { max_tool_rounds_ = (n >= 1) ? n : 1; }
 void Agent::setContextManager(ContextManager* cm) { context_manager_ = cm; }
-void Agent::setContextWindow(int window) { context_window_ = window; }
+void Agent::setMaxContextTokens(int tokens) { max_context_tokens_ = tokens; }
 void Agent::clearConversation() { conversation_.clear(); }
 
 void Agent::useSerialProcessor() {
     auto sp = std::make_unique<SerialProcessor>(*client_, registry_, system_prompt_);
     sp->setContextManager(context_manager_);
-    sp->setContextWindow(context_window_);
+    sp->setMaxContextTokens(max_context_tokens_);
     sp->setMaxToolRounds(max_tool_rounds_);
     // Fix #3: 传递 tracer 给 SerialProcessor
     sp->setTracer(&tracer_);
@@ -170,7 +170,7 @@ llm::LLMResponse Agent::execute(const std::string& command,
     if (context_manager_) {
         llm::Conversation tempConv;
         tempConv.addUser(command);
-        auto assembly = context_manager_->assemble(tempConv, context_window_);
+        auto assembly = context_manager_->assemble(tempConv, max_context_tokens_);
         if (!assembly.system_prompt.empty())
             effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
     }

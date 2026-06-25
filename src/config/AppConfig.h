@@ -5,7 +5,7 @@
 //
 // DeepSeek、Kimi、Claude 都兼容 OpenAI 风格接口，
 // 因此三者共用同一套 ProviderConfig 结构。
-// 实际差异主要在 base_url、model 和 context_window。
+// 实际差异主要在 base_url、model 和 max_context_tokens。
 
 #include <string>
 #include <map>
@@ -16,13 +16,13 @@ struct ProviderConfig {
     std::string api_key;
     std::string base_url;       // 例如 "https://api.deepseek.com"
     std::string model;          // 例如 "deepseek-chat"
-    int context_window = 65536; // 模型支持的最大上下文窗口（token）
+    int max_context_tokens = 131072; // 每次请求发送给 LLM 的最大上下文 token 数（应用层预算上限，非模型上下文窗口大小）
     double temperature = 0.7;
     int max_tokens = 4096;
 
     // 使用 nlohmann 宏自动生成 to_json/from_json。
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProviderConfig,
-        name, api_key, base_url, model, context_window, temperature, max_tokens)
+        name, api_key, base_url, model, max_context_tokens, temperature, max_tokens)
 };
 
 struct AppConfig {

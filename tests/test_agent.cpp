@@ -53,7 +53,7 @@ static ProviderConfig makeConfig(int port) {
     cfg.model = "test-model";
     cfg.temperature = 0.7;
     cfg.max_tokens = 1024;
-    cfg.context_window = 65536;
+    cfg.max_context_tokens = 65536;
     return cfg;
 }
 

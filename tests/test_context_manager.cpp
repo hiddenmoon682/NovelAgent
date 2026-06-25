@@ -1,6 +1,6 @@
+/// test_context_manager — 精简版（适配移除预算分配/降级/摘要后的 ContextManager）。
+
 #include "agent/ContextManager.h"
-#include "agent/ConversationSummarizer.h"
-#include "agent/DegradationPipeline.h"
 #include "llm/Conversation.h"
 #include "llm/TokenCounter.h"
 #include "project/FileStorageBackend.h"
@@ -28,9 +28,9 @@ static int tests_passed = 0;
 // =========================================================================
 // 辅助
 // =========================================================================
+
 static llm::Conversation makeLongConversation() {
     llm::Conversation conv;
-    // 使用中文消息（token 估算更高）
     conv.addUser("这是一条比较长的用户消息用于测试上下文窗口的截断功能判断是否正常。" + std::string(100, 'x'));
     conv.addAssistant("助手回复同样包含较多文字内容用于占满预算空间触发截断逻辑。" + std::string(100, 'y'));
     conv.addUser("第二条用户消息继续增加对话历史的长度以测试截断是否正确工作。" + std::string(100, 'z'));
@@ -38,101 +38,8 @@ static llm::Conversation makeLongConversation() {
     return conv;
 }
 
-static llm::Conversation makeStoryConversation() {
-    llm::Conversation conv;
-    conv.addUser("请帮我写主角张三的第 ch-003 章。剧情需要有一个大的转折。");
-    conv.addAssistant("好的，我先读取 ch-003 的当前内容，分析角色张三的剧情发展。");
-    conv.addUser("另外检查一下反派李四与主角的矛盾是否有合理的铺垫。");
-    conv.addAssistant("已经检查。冲突升级是关键的剧情转折点。伏笔在 ch-001 章已埋下。");
-    return conv;
-}
-
 // =========================================================================
-// Phase 4 新测试 — ConversationSummarizer
-// =========================================================================
-
-void test_summarize_conversation() {
-    TEST("ConversationSummarizer — 提取角色名和章节引用");
-
-    auto conv = makeStoryConversation();
-    agent::ConversationSummarizer summarizer;
-    auto summary = summarizer.summarize(conv.messages());
-
-    CHECK(!summary.summary.empty());
-    CHECK(summary.source_message_count > 0);
-    CHECK(!summary.chapter_refs.empty());
-    CHECK(!summary.plot_points.empty() || !summary.tasks.empty());
-
-    PASS();
-}
-
-void test_summarize_empty() {
-    TEST("ConversationSummarizer — 空对话返回空摘要");
-
-    agent::ConversationSummarizer summarizer;
-    std::vector<llm::Message> empty;
-    auto summary = summarizer.summarize(empty);
-
-    CHECK(summary.summary.empty());
-    CHECK(summary.source_message_count == 0);
-
-    PASS();
-}
-
-void test_summarizer_custom_keywords() {
-    TEST("ConversationSummarizer — 自定义关键词（P3 可配置化）");
-
-    auto conv = makeStoryConversation();
-
-    agent::SummaryKeywords kw;
-    kw.plot_keywords = {"转折", "铺垫"};
-    kw.task_keywords = {"写"};
-
-    agent::ConversationSummarizer summarizer(kw);
-    auto summary = summarizer.summarize(conv.messages());
-
-    CHECK(!summary.summary.empty());
-    // 验证关键词确实被使用
-    CHECK(summarizer.keywords().plot_keywords.size() == 2);
-
-    PASS();
-}
-
-// =========================================================================
-// Phase 4 新测试 — DegradationPipeline
-// =========================================================================
-
-void test_degradation_pipeline_basic() {
-    TEST("DegradationPipeline — 默认5级策略注册");
-
-    agent::DegradationPipeline pipeline;
-    pipeline.registerDefaultStrategies();
-
-    CHECK(pipeline.determineLevel(5000, 10000) == agent::DegradationLevel::None);
-    CHECK(pipeline.determineLevel(12000, 10000) != agent::DegradationLevel::None);
-
-    PASS();
-}
-
-void test_degradation_pipeline_apply() {
-    TEST("DegradationPipeline — 各级降级执行");
-
-    std::string prompt = "# 项目: 测试\n## 当前章节: ch-003\n"
-        "### 角色: 张三 (protagonist)\n**姓名**: 张三\n"
-        + std::string(500, 'x');
-
-    agent::DegradationPipeline pipeline;
-    pipeline.registerDefaultStrategies();
-
-    auto result = pipeline.execute(prompt, agent::DegradationLevel::Summarize);
-    CHECK(!result.empty());
-    CHECK(result.size() < prompt.size());
-
-    PASS();
-}
-
-// =========================================================================
-// Phase 4 新测试 — SessionPersistence
+// SessionPersistence 测试
 // =========================================================================
 
 void test_session_save_load() {
@@ -157,15 +64,8 @@ void test_session_save_load() {
 }
 
 // =========================================================================
-// 原有测试 — 适配新 API
+// assemble 测试（精简版）
 // =========================================================================
-
-void test_calculate_budget() {
-    TEST("calculateBudget — 80% 规则");
-    CHECK(agent::ContextManager::calculateBudget(1000) == 800);
-    CHECK(agent::ContextManager::calculateBudget(100) == 80);
-    PASS();
-}
 
 void test_no_truncation() {
     TEST("assemble — 短消息不触发截断");
@@ -173,9 +73,9 @@ void test_no_truncation() {
     conv.addUser("短消息");
 
     agent::ContextManager cm;
-    auto result = cm.assemble(conv, 65536);
+    auto result = cm.assemble(conv, 131072);
 
-    CHECK(!result.truncated);
+    CHECK(result.truncated_count == 0);
     CHECK(result.messages.size() == 1);
     PASS();
 }
@@ -185,7 +85,7 @@ void test_truncation() {
     auto conv = makeLongConversation();
     agent::ContextManager cm;
     auto result = cm.assemble(conv, 50);  // 极小预算
-    CHECK(result.truncated);
+    CHECK(result.truncated_count > 0);
     PASS();
 }
 
@@ -194,7 +94,7 @@ void test_assemble_no_project() {
     llm::Conversation conv;
     conv.addUser("测试");
     agent::ContextManager cm;
-    auto result = cm.assemble(conv, 65536);
+    auto result = cm.assemble(conv, 131072);
     CHECK(result.system_prompt.empty());
     PASS();
 }
@@ -226,53 +126,43 @@ void test_build_system_prompt_no_chapter() {
     PASS();
 }
 
-void test_allocate_budget() {
-    TEST("allocateBudget — 50/30/20 规则");
+void test_total_tokens() {
+    TEST("assemble — total_tokens 统计正确");
+    llm::Conversation conv;
+    conv.addUser("测试消息");
+
     agent::ContextManager cm;
-    auto alloc = cm.allocateBudget(65536);
-    CHECK(alloc.total_budget == 52428);
-    CHECK(alloc.chapter_budget > 0);
-    CHECK(alloc.conversation_budget > 0);
-    CHECK(alloc.summary_budget > 0);
+    auto result = cm.assemble(conv, 131072);
+    CHECK(result.total_tokens > 0);
+    CHECK(result.total_tokens >= static_cast<int>(result.messages.size()));
     PASS();
 }
 
-void test_assemble_with_degradation() {
-    TEST("assemble — 触发降级");
-    llm::Conversation conv;
-    for (int i = 0; i < 20; ++i) {
-        conv.addUser("这是第" + std::to_string(i) + "条测试消息包含较多中文内容用于消耗token预算。" + std::string(80, 't'));
-        conv.addAssistant("助手回复第" + std::to_string(i) + "条也包含同样的中文内容来增加token消耗。" + std::string(80, 'r'));
-    }
+void test_truncation_keeps_newest() {
+    TEST("assemble — 截断保留最新消息");
+    auto conv = makeLongConversation();
     agent::ContextManager cm;
-    auto result = cm.assemble(conv, 200);
-    CHECK(result.truncated);
-    CHECK(result.degradation_level >= 0);
+    auto result = cm.assemble(conv, 80);  // 只够保留约1-2条消息
+    CHECK(result.truncated_count > 0);
+    // 应该保留最后一条（最新的）消息
+    CHECK(!result.messages.empty());
     PASS();
 }
 
 // =========================================================================
 
 int main() {
-    std::cout << "=== test_context_manager (Phase 4 重构版) ===\n\n";
+    std::cout << "=== test_context_manager (精简版) ===\n\n";
 
-    // 新模块测试
-    test_summarize_conversation();
-    test_summarize_empty();
-    test_summarizer_custom_keywords();
-    test_degradation_pipeline_basic();
-    test_degradation_pipeline_apply();
     test_session_save_load();
 
-    // 适配后测试
-    test_calculate_budget();
     test_no_truncation();
     test_truncation();
     test_assemble_no_project();
     test_build_system_prompt();
     test_build_system_prompt_no_chapter();
-    test_allocate_budget();
-    test_assemble_with_degradation();
+    test_total_tokens();
+    test_truncation_keeps_newest();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;

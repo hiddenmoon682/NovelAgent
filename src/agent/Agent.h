@@ -39,8 +39,8 @@ public:
     void setMaxToolRounds(int n);
     /// 设置上下文管理器（知识库检索、动态上下文注入）。
     void setContextManager(ContextManager* cm);
-    /// 设置 LLM 上下文窗口大小（token 数），用于截断对话历史。
-    void setContextWindow(int window);
+    /// 设置每次请求的最大上下文 token 数（应用层预算上限），旧消息超出将被截断。
+    void setMaxContextTokens(int tokens);
 
     /// 处理用户输入——核心入口。自动追加对话历史、调用 LLM、执行工具，
     /// 并在多轮 tool_call 循环后返回最终 LLMResponse。
@@ -92,7 +92,7 @@ private:
     std::string system_prompt_;                     ///< 系统提示词，设定 Agent 行为边界和写作风格
     int max_tool_rounds_ = 10;                      ///< 单次用户消息的最大工具调用轮数，防止无限循环
     ContextManager* context_manager_ = nullptr;     ///< 上下文管理器（非拥有指针），管理知识库检索和动态上下文注入
-    int context_window_ = 65536;                    ///< LLM 上下文窗口大小（token 数），用于截断对话历史
+    int max_context_tokens_ = 131072;               ///< 每次请求的最大上下文 token 数（应用层预算上限），用于截断对话历史
     std::unique_ptr<IMessageProcessor> processor_;  ///< 消息处理策略（串行/并行），决定多轮 tool_call 的执行模式
 
     // Fix #3: 执行轨迹记录器 — 自动记录每次 LLM 调用、工具执行和状态转换的详细轨迹

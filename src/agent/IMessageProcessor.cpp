@@ -175,10 +175,10 @@ std::string SerialProcessor::buildEffectivePrompt(
     }
 
     // ── 路径 B：有 ContextManager（动态上下文模式） ──
-    // assemble() 内部根据 context_window_ 做消息裁剪/摘要/RAG 注入，
+    // assemble() 内部根据 max_context_tokens_ 做消息裁剪，
     // 返回组装后的消息列表和附加的系统提示词。
     // TODO 上下文压缩问题
-    auto assembly = context_manager_->assemble(conversation, context_window_);
+    auto assembly = context_manager_->assemble(conversation, max_context_tokens_);
     out_messages = std::move(assembly.messages);
 
     // 通过 PromptComposer 将 personality（固定角色）和 context（动态上下文）拼接。

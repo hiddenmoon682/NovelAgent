@@ -99,24 +99,29 @@ void ReplHandler::setupPhase5Commands() {
             auto& cfg = agent_.client().config();
             std::ostringstream ss;
             ss << Ansi::info() << "当前配置:\n" << Ansi::reset();
-            ss << "  context_window   = " << cfg.context_window << " tokens\n";
-            ss << "  model            = " << cfg.model << "\n";
-            ss << "  provider         = " << cfg.name << "\n";
-            ss << Ansi::dim() << "修改: /config context_window 65536\n" << Ansi::reset();
+            ss << "  max_context_tokens = " << cfg.max_context_tokens << " tokens\n";
+            ss << "  model              = " << cfg.model << "\n";
+            ss << "  provider           = " << cfg.name << "\n";
+            ss << Ansi::dim() << "修改: /config max_context_tokens 131072\n" << Ansi::reset();
             out_.write(ss.str());
             return true;
         }
         if (args.size() < 2) { out_.write(Ansi::dim() + "用法: /config <项> <值>\n" + Ansi::reset()); return true; }
         try {
-            if (args[0] == "context_window") {
+            if (args[0] == "max_context_tokens") {
                 int w = std::stoi(args[1]);
                 if (w < 1024) { out_.write(Ansi::warning() + "至少需要 1024 tokens\n" + Ansi::reset()); return true; }
-                agent_.setContextWindow(w);
-                out_.write(Ansi::success() + "上下文窗口 → " + std::to_string(w) + "\n" + Ansi::reset());
+                agent_.setMaxContextTokens(w);
+                // 同步更新 SerialProcessor
+                if (agent_.isParallelEnabled())
+                    agent_.useParallelProcessor();
+                else
+                    agent_.useSerialProcessor();
+                out_.write(Ansi::success() + "max_context_tokens → " + std::to_string(w) + "\n" + Ansi::reset());
             } else {
-                out_.write(Ansi::warning() + "未知配置项，可配置: context_window\n" + Ansi::reset());
+                out_.write(Ansi::warning() + "未知配置项，可配置: max_context_tokens\n" + Ansi::reset());
             }
-        } catch (...) { out_.write(Ansi::error() + "请输入有效数字，例如: /config context_window 65536\n" + Ansi::reset()); }
+        } catch (...) { out_.write(Ansi::error() + "请输入有效数字，例如: /config max_context_tokens 131072\n" + Ansi::reset()); }
         return true;
     });
 
@@ -157,7 +162,7 @@ void ReplHandler::setupCommands() {
     parser_.registerCommand("clear", "清空对话历史", [this](const auto&) { agent_.clearConversation(); gui_.writeWarning("对话已清空。"); return true; });
     parser_.registerCommand("model", "显示当前模型", [this](const auto&) {
         auto& cfg = agent_.client().config();
-        out_.write(Ansi::info() + cfg.name + " / " + cfg.model + " / " + std::to_string(cfg.context_window) + " tokens\n" + Ansi::reset());
+        out_.write(Ansi::info() + cfg.name + " / " + cfg.model + " / " + std::to_string(cfg.max_context_tokens) + " max_context_tokens\n" + Ansi::reset());
         return true;
     });
     parser_.registerCommand("parallel", "/parallel on|off — 并行编排", [this](const auto& args) {

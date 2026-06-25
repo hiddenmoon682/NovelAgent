@@ -65,9 +65,6 @@ set(NOVELAGENT_AGENT
     src/agent/ToolCallLoop.h src/agent/ToolCallLoop.cpp
     src/agent/IMessageProcessor.h src/agent/IMessageProcessor.cpp
     src/agent/ISynthesisStrategy.h src/agent/ISynthesisStrategy.cpp
-    src/agent/ConversationSummarizer.h src/agent/ConversationSummarizer.cpp
-    src/agent/ChapterSummaryCache.h src/agent/ChapterSummaryCache.cpp
-    src/agent/DegradationPipeline.h src/agent/DegradationPipeline.cpp
     src/agent/SessionPersistence.h src/agent/SessionPersistence.cpp
     src/agent/ContextManager.h src/agent/ContextManager.cpp
     src/agent/PromptComposer.h
