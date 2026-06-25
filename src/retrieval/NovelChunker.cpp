@@ -2,6 +2,7 @@
 
 #include "retrieval/NovelChunker.h"
 
+#include "project/Models.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>

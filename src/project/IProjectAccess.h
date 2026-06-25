@@ -8,8 +8,15 @@
 /// Phase 3.5 多 Agent 场景中，SubAgent 只能获取 IProjectReader&，
 /// 确保并行子 Agent 不会相互干扰数据。
 
-#include "Models.h"
 #include <string>
+#include <vector>
+
+struct Chapter;
+struct Character;
+struct Setting;
+struct WorldRule;
+struct Outline;
+struct Style;
 
 /// 只读项目访问接口 — 所有查询类工具依赖此接口。
 class IProjectReader {

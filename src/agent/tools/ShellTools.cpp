@@ -58,7 +58,8 @@ int execWithTimeout(const std::string& cmd, std::string& output, DWORD timeoutMs
     if (!CreatePipe(&hRead, &hWrite, &sa, 0)) return -1;
     SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
 
-    STARTUPINFOA si = {sizeof(STARTUPINFOA)};
+    STARTUPINFOA si{};
+    si.cb = sizeof(STARTUPINFOA);
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdOutput = hWrite;
     si.hStdError = hWrite;

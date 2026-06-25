@@ -1,12 +1,29 @@
 cmake_minimum_required(VERSION 3.24)
+
+# ── 修复 Git Bash 与 MSYS2 MinGW 的 DLL 冲突 ──
+# Git for Windows 自带旧版 MinGW（/mingw64 → D:\git\Git\mingw64），
+# 其 libstdc++-6.dll / libgcc_s_seh-1.dll 与 MSYS2 新版 ABI 不兼容。
+# 当 Git Bash 是当前 shell 时，/mingw64/bin 被加入 PATH，
+# 导致 cc1plus.exe 加载错误的 DLL 而崩溃。
+# 必须在 project() 之前修复 PATH，否则编译器检测阶段就会失败。
+# 检测方法：Git Bash 的 /mingw64 不含 c++ 编译器；MSYS2 的含有。
+if(WIN32 AND NOT EXISTS "/mingw64/bin/c++.exe")
+    string(REGEX REPLACE "/mingw64/bin:?" "" fixed_path "$ENV{PATH}")
+    set(ENV{PATH} "${fixed_path}")
+    message(STATUS "Git Bash detected: removed /mingw64/bin from PATH")
+endif()
+
 project(NovelAgent
     DESCRIPTION "AI-powered novel writing assistant"
     LANGUAGES CXX
 )
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
 
 if(EXISTS "D:/SoftWare/msys2/mingw64")
     list(PREPEND CMAKE_PREFIX_PATH "D:/SoftWare/msys2/mingw64")

@@ -15,10 +15,13 @@
 ///   auto char_text = chunker.chunkCharacter(character);
 ///   auto setting_text = chunker.chunkSetting(setting);
 
-#include "project/Models.h"
-
 #include <string>
 #include <vector>
+
+struct Chapter;
+struct Character;
+struct Setting;
+struct WorldRule;
 
 namespace retrieval {
 

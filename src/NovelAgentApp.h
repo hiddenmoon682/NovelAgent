@@ -7,9 +7,10 @@
 #include "config/AppConfig.h"
 #include "llm/LLMClientFactory.h"
 #include "project/FileStorageBackend.h"
-#include "project/Models.h"
 
 #include "cli/IOutputChannel.h"
+
+struct Project;
 #include <memory>
 #include <string>
 #include <vector>

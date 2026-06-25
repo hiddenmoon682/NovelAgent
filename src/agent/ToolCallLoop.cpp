@@ -86,6 +86,8 @@ ToolCallLoopResult ToolCallLoop::run(
             if (has_repeated) {
                 r.loop_detected = true;
                 r.error = "检测到重复工具调用循环，已自动终止";
+                if (tracer_) tracer_->record("error", r.total_tokens_used, 0,
+                    {{"reason", "重复工具调用循环"}, {"round", round}});
                 // 向对话注入错误上下文，让调用方了解终止原因
                 llm::Message err_msg;
                 err_msg.role = llm::MessageRole::Tool;
@@ -140,6 +142,8 @@ ToolCallLoopResult ToolCallLoop::run(
         r.response = response;
         r.rounds_executed = config.max_rounds;
         spdlog::warn("[ToolCallLoop] 达到最大轮数 ({})", config.max_rounds);
+        if (tracer_) tracer_->record("error", r.total_tokens_used, 0,
+            {{"reason", "达到最大工具调用轮数"}, {"max_rounds", config.max_rounds}});
         return r;
     };
 
@@ -148,6 +152,8 @@ ToolCallLoopResult ToolCallLoop::run(
         if (future.wait_for(config.timeout) == std::future_status::timeout) {
             result.timed_out = true;
             result.error = "Tool call 循环超时 (" + std::to_string(config.timeout.count()) + "s)";
+            if (tracer_) tracer_->record("error", 0, static_cast<int>(config.timeout.count()) * 1000,
+                {{"reason", "工具调用循环超时"}, {"timeout_s", config.timeout.count()}});
             return result;
         }
         return future.get();

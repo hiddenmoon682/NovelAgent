@@ -1,8 +1,6 @@
 #include "agent/AgentSetup.h"
 
 #include "agent/ToolRegistry.h"
-#include "agent/tools/BuiltInTool.h"
-#include "project/Models.h"
 
 #include <memory>
 

@@ -115,6 +115,7 @@ void ParameterValidator::checkAdditionalProperties(
     const json& schema, const json& arguments,
     std::vector<ValidationError>& errors)
 {
+    (void)errors;  // 当前实现通过 accumulate() 返回，参数保留供后续扩展
     bool allow_extra = true;
     if (schema.contains("additionalProperties")) {
         if (schema["additionalProperties"].is_boolean()) {

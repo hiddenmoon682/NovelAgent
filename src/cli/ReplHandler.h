@@ -12,7 +12,6 @@
 #include "cli/CommandParser.h"
 #include "cli/IOutputChannel.h"
 #include "cli/TerminalGUI.h"
-#include "project/Models.h"
 
 #include <memory>
 #include <string>
