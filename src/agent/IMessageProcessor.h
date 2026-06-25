@@ -63,14 +63,38 @@ public:
     void setSystemPrompt(const std::string& p) override { system_prompt_ = p; }
 
 private:
+    /// LLM 客户端引用（由父 Agent 创建，本对象不持有所有权）。
+    /// 负责所有与 LLM API 的通信（chat/completions 接口）。
     llm::ILLMClient& client_;
+
+    /// 工具注册表引用（由父 Agent 注入）。
+    /// 包含所有已注册的工具定义及其实现；tool_call 循环从中查找并执行工具。
     ToolRegistry& registry_;
+
+    /// 系统提示词 — 设定 LLM 的角色和行为准则。
+    /// 在 process() 中会和 ContextManager 提供的动态上下文拼接成最终版 system prompt。
     std::string system_prompt_;
+
+    /// 上下文管理器（可选指针，允许为 nullptr）。
+    /// 负责处理 RAG 检索、对话历史摘要、滑动窗口等动态上下文策略。
+    /// 为 buildEffectivePrompt() 提供额外的系统级上下文。
     class ContextManager* context_manager_ = nullptr;
+
+    /// 上下文窗口上限（token 数），默认 65536。
+    /// 用于 ContextManager 做消息裁剪和摘要触发，避免超出 LLM 的上下文限制。
     int context_window_ = 65536;
+
+    /// 单轮用户请求的最大 tool_call 轮数，默认 10 轮。
+    /// 防止 LLM 陷入无限 tool_call 循环；达到上限后强制返回已有结果。
     int max_tool_rounds_ = 10;
+
+    /// 执行轨迹记录器（可选指针，允许为 nullptr）。
+    /// 记录每次 process() 的执行耗时、token 消耗等指标，用于性能监控和调试。
     class ExecutionTracer* tracer_ = nullptr;  // Fix #3
 
+    /// 构建最终发给 LLM 的系统提示词。
+    /// 将固定 system_prompt_ 与 ContextManager 提供的动态上下文拼接，
+    /// 同时将辅助消息（如工具调用结果摘要）填充到 out_messages 中一并发送。
     std::string buildEffectivePrompt(
         const llm::Conversation& conversation,
         std::vector<llm::Message>& out_messages);
