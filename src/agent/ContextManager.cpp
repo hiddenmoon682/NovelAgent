@@ -171,11 +171,32 @@ std::string ContextManager::buildSystemPrompt(
 // 预算
 // ===========================================================================
 
+/// 根据上下文窗口计算可用 token 预算。
+///
+/// 取 context_window 的 80% 作为安全预算，预留 20% 的余量用于：
+///   - Token 化后的实际长度可能超出预估
+///   - 为 system prompt、摘要注入等额外开销留出空间
+///   - 避免触及 LLM 的绝对上下文上限
+///
+/// \param context_window  LLM 上下文窗口大小（如 8192）
+/// \return 实际可用预算（context_window * 0.8）
 int ContextManager::calculateBudget(int context_window)
 {
     return static_cast<int>(context_window * 0.8);
 }
 
+/// 将总预算按 50/30/20 比例分配到三个子类别。
+///
+/// 分配规则（均由匿名命名空间中的常量定义）：
+///   - chapter_budget (50%)：     用于章节内容（system prompt 中的项目/章节上下文）
+///   - conversation_budget (30%)：用于对话历史（用户与助理的消息轮次）
+///   - summary_budget (20%)：     用于摘要信息（历史对话的压缩摘要）
+///
+/// 注意：实际运行时这些子预算为软限制，assemble() 会根据
+/// 实际 token 消耗动态调整，必要时触发降级策略。
+///
+/// \param context_window  LLM 上下文窗口大小
+/// \return BudgetAllocation 结构体，包含总预算和各子预算
 BudgetAllocation ContextManager::allocateBudget(int context_window) const
 {
     BudgetAllocation alloc;
