@@ -18,16 +18,27 @@ class Conversation;
 namespace agent {
 
 /// 会话元数据（跨重启恢复的状态）。
+///
+/// 与 conversation.json（完整对话历史）配对存储为 session_meta.json，
+/// 使 /exit 后重启可以无缝恢复上下文管理器的内部状态（摘要、token 统计等）。
 struct SessionMeta {
-    std::string compacted_summary;
-    int compaction_marker = 0;
-    SessionTokenState token_state;
-    std::string last_chapter_id;
-    std::vector<size_t> preserved_indices;
-    int64_t project_mtime = 0;  // Project 最后修改时间戳（用于检测设定变更）
+    std::string compacted_summary;          ///< LLM 生成的压缩摘要文本（空 = 无）
+    int compaction_marker = 0;              ///< 被 compact() 压缩的消息数，/rewind 跨边界检测用
+    SessionTokenState token_state;          ///< 累计 token 消耗统计（输入/输出/请求数）
+    std::string last_chapter_id;            ///< 上次会话关闭时的活跃章节 ID
+    std::vector<size_t> preserved_indices;  ///< /pin 保留的消息在 conversation 中的索引
+    int64_t project_mtime = 0;              ///< project.json 最后修改时间戳（检测设定变更）
+    bool vector_store_dirty = false;        ///< 向量索引是否已被 /rewind 标记为脏
 };
 
 /// 会话持久化管理器。
+///
+/// 两份持久化文件（均位于 .novelagent/ 下）：
+///   - conversation.json → save()/load()，完整对话历史（Messages JSON 数组）
+///   - session_meta.json  → saveMeta()/loadMeta()，轻量元数据（摘要/token/章节等）
+///
+/// 分离设计的好处：元数据很小（<1KB），启动时快速读取恢复上下文状态；
+/// 对话历史可能很大（>100KB），按需加载。
 class SessionPersistence {
 public:
     /// 构造函数注入存储后端。

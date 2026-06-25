@@ -1,5 +1,27 @@
 # Changelog
 
+## [2026-06-25] 3 项代码审查修复 + 上下文模块注释补充
+
+### Bug 修复（f64c304 提交后审查）
+
+- **修复** — `vector_store_dirty_` 未持久化到 `SessionMeta`：`/rewind` 后重启应用导致向量脏标记丢失
+  - `SessionMeta` 新增 `vector_store_dirty` 字段
+  - `saveMeta()` / `loadMeta()` 对称序列化/反序列化
+  - `saveSessionState()` / `loadSessionState()` 写入/恢复该字段
+- **修复** — `Agent::execute()` 未做输入校验：`execute()` 补充 `validateInput()` 调用，与 `processUserMessage()` 保持一致
+- **修复** — `compact()` 中 `ctx.substr(0, 500)` 可能在 UTF-8 多字节字符中间截断：添加 UTF-8 续字节检测循环
+
+### 注释补充
+
+- **ContextManager.h** — `assemble()` 文档扩展为完整 7 步流水线
+- **ContextManager.cpp** — 补充 `buildSystemPrompt`、`compact`、`isVectorStoreStale`、`setRetrievalBackend`、`vector_store_dirty_` 的详细中文注释
+- **SessionPersistence.h** — `SessionMeta` 所有字段添加 Doxygen 注释；`SessionPersistence` 类补充双文件设计说明
+- **SessionPersistence.cpp** — `save()` / `load()` 补充序列化格式和防御式解析说明
+- **ToolCallLoop.h** — `run()` 的 `initial_messages` 参数补充完整文档（为什么存在 + 首轮/后续轮次行为差异）
+- **Agent.h** — `compactConversation` / `rewindTo` / `saveSessionState` / `loadSessionState` / `maybeAutoCompact` 扩展 docstring
+- **Agent.cpp** — `validateInput`（两层防御说明）、`resetSession`（级联注释）、`saveSessionState`/`loadSessionState`（流程注释）
+- **IMessageProcessor.cpp** — 同步 compact 步骤补充逃生阀设计原理注释
+
 ## [2026-06-20] LLMClientFactory — 实例级线程隔离 + 5 个预存在 Bug 修复
 
 ### Phase 4 线程安全：实例级隔离

@@ -135,6 +135,7 @@ void ContextManager::saveSessionState(
     meta.last_chapter_id = chapter_id;
     meta.preserved_indices = preserved_indices;
     meta.project_mtime = mtime;
+    meta.vector_store_dirty = vector_store_dirty_;
     persistence_.saveMeta(meta);
 
     spdlog::info("[ContextManager] 完整会话状态已保存 (mtime={})", mtime);
@@ -167,6 +168,7 @@ void ContextManager::loadSessionState(
     compacted_summary_ = meta.compacted_summary;
     compaction_marker_ = meta.compaction_marker;
     token_state_ = meta.token_state;
+    vector_store_dirty_ = meta.vector_store_dirty;
     out_chapter_id = meta.last_chapter_id;
 
     // 恢复 preserved 标记
@@ -204,9 +206,11 @@ void ContextManager::setRetrievalBackend(
     retrieval::IEmbeddingGenerator* gen,
     int top_k)
 {
+    // 三个指针均为非拥有，生命周期由 NovelAgentApp 管理。
+    // EmbeddingGenerator 将用户查询文本转为向量，IVectorStore 执行语义相似度搜索。
     vector_store_ = store;
     embedding_gen_ = gen;
-    retrieval_top_k_ = top_k > 0 ? top_k : 3;
+    retrieval_top_k_ = top_k > 0 ? top_k : 3;  // 默认召回 top-3 最相似章节片段
 }
 
 bool ContextManager::isVectorStoreStale() const {
@@ -214,8 +218,11 @@ bool ContextManager::isVectorStoreStale() const {
     std::error_code ec;
     auto proj_time = std::filesystem::last_write_time(project_->path + "/project.json", ec);
     if (ec) return false;
+    // vectors.json 由 /index 命令生成，存储章节片段的向量嵌入。
+    // 比较 project.json 和 vectors.json 的 mtime：若 Project 在索引构建后被修改，
+    // 说明向量可能引用了过期的角色/章节/设定 → 判定为 stale。
     auto vec_time = std::filesystem::last_write_time(project_->path + "/.novelagent/vectors.json", ec);
-    if (ec) return false;  // vectors.json 不存在，不算 stale
+    if (ec) return false;  // vectors.json 不存在，可能从未执行过 /index
     return proj_time > vec_time;
 }
 
@@ -354,7 +361,13 @@ ContextAssembly ContextManager::assemble(
 }
 
 // ===========================================================================
-// buildSystemPrompt
+// buildSystemPrompt — 构建项目/章节的静态上下文
+//
+// 两种模式（由 chapter_id 区分）：
+//   1. chapter_id 为空 → 返回项目级概要（标题、Logline、主题），用于无章节上下文时
+//   2. chapter_id 有效 → 通过 PromptContextBuilder::buildForChapter() 构建完整上下文
+//      包含：角色列表（6级优先级排序）、大纲节点、前情提要、世界观设定等
+//   构建失败时回退到模式 1。
 // ===========================================================================
 
 std::string ContextManager::buildSystemPrompt(
@@ -376,14 +389,25 @@ std::string ContextManager::buildSystemPrompt(
     auto ctx = prompt::PromptContextBuilder::buildForChapter(project, options);
     if (!ctx) {
         spdlog::warn("[ContextManager] 章节 '{}' 上下文构建失败，回退", chapter_id);
-        return buildSystemPrompt(project);
+        return buildSystemPrompt(project);  // 回退到项目级概要
     }
 
     return ctx->rendered_prompt;
 }
 
 // ===========================================================================
-// compact — LLM 驱动的对话压缩
+// compact — LLM 驱动的对话压缩（中期记忆层）
+//
+// 流程：
+//   1. 边界判定 — 消息数 ≤ kCompactKeepExchanges*2 时跳过（消息不足）
+//   2. 消息提取 — 取前 N-K 条消息拼接为角色标注文本 [用户]/[助手]/[工具]
+//   3. Prompt 拼接 — 双层摘要指令 + 项目设定参考（截断 ≤500 字节） + 可选焦点
+//   4. LLM 调用 — 非流式生成摘要（情节事实 + 风格样本，≤500 字）
+//   5. 状态更新 — 存入 compacted_summary_ + 设置 compaction_marker_
+//      + 清除 vector_store_dirty_（压缩后对话已重排）
+//
+// 副作用：compacted_summary_（后续 assemble() 注入）、compaction_marker_
+//   （/rewind 跨边界检测）、vector_store_dirty_ = false（恢复向量检索）
 // ===========================================================================
 
 CompactResult ContextManager::compact(
@@ -430,7 +454,15 @@ CompactResult ContextManager::compact(
     if (project_) {
         std::string ctx = buildSystemPrompt(*project_, current_chapter_id_);
         if (!ctx.empty()) {
-            if (ctx.size() > 500) ctx = ctx.substr(0, 500) + "...";
+            if (ctx.size() > 500) {
+                size_t trunc_len = 500;
+                // 不在 UTF-8 多字节字符中间截断：
+                // UTF-8 续字节（0x80-0xBF）不能独立存在，向前回退到字符边界
+                while (trunc_len > 0 && (static_cast<unsigned char>(ctx[trunc_len]) & 0xC0) == 0x80) {
+                    --trunc_len;
+                }
+                ctx = ctx.substr(0, trunc_len) + "...";
+            }
             compact_prompt += "\n\n当前项目设定参考（用于正确识别人物指代）：\n" + ctx;
         }
     }
@@ -450,8 +482,10 @@ CompactResult ContextManager::compact(
 
         // 存储摘要 + 标记
         compacted_summary_ = result.summary;
-        compaction_marker_ = compact_count;
-        vector_store_dirty_ = false;  // 压缩完成，重新启用向量检索
+        compaction_marker_ = compact_count;  // 被压缩的消息数，/rewind 检测用
+        // 压缩后对话历史已重新整理，向量索引对应的旧消息位置不再有效。
+        // 清除脏标记以恢复向量检索（下次 assemble() 基于新消息位置进行语义召回）。
+        vector_store_dirty_ = false;
 
         spdlog::info("[ContextManager] compact 完成: {} 条 → 摘要 ({} → {} tokens, {:.0f}%)",
                      compact_count, result.tokens_before, result.tokens_after,

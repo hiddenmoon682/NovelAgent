@@ -26,7 +26,14 @@ const std::vector<std::string> kDangerousPatterns = {
     "<|endoftext|>",                       // GPT 系列 EOS token
 };
 
-/// 校验用户输入，返回 false 表示输入不合法（reason 说明原因）。
+/// 上下文中毒防御 — 校验用户输入。
+///
+/// 两层防护：
+///   1. 长度上限 64K（防止内存耗尽型 DoS）
+///   2. 危险模式匹配（LLM 特殊 token 注入 / prompt injection / 伪 system 消息）
+///
+/// 注意：这是尽力而为的防御，不提供绝对安全保证。
+/// @return false 表示输入不合法，reason 说明具体原因。
 bool validateInput(const std::string& input, std::string& reason) {
     if (input.size() > kMaxInputLength) {
         reason = "输入过长（最大 64K 字符）";
@@ -75,6 +82,7 @@ void Agent::clearConversation() { conversation_.clear(); }
 void Agent::resetSession() {
     conversation_.clear();
     tracer_.clear();
+    // 级联到 ContextManager：清空 token 统计、压缩摘要、警告缓存、向量脏标记
     if (context_manager_) context_manager_->resetSession();
 }
 
@@ -142,14 +150,23 @@ std::vector<size_t> Agent::checkpointIndices() const {
 
 void Agent::saveSessionState() {
     if (!context_manager_) return;
+    // 收集当前 preserved 索引（/pin 标记），通过 ContextManager 持久化
     auto pinned = conversation_.pinnedIndices();
+    // ContextManager::saveSessionState 负责：
+    //   1. 保存 conversation.json（完整对话）
+    //   2. 构建 SessionMeta（摘要/token/chapter/preserved/mtime/dirty）并调 saveMeta
     context_manager_->saveSessionState(conversation_, last_chapter_id_, pinned);
 }
 
 void Agent::loadSessionState() {
     if (!context_manager_) return;
     conversation_.clear();
+    // ContextManager::loadSessionState 负责：
+    //   1. 加载 conversation.json → 写入 conversation_
+    //   2. 加载 session_meta.json → 恢复内部状态（摘要/token/脏标记等）
+    //   3. 恢复 preserved 标记到对应 Message 对象
     context_manager_->loadSessionState(conversation_, last_chapter_id_);
+    // last_chapter_id_ 由 loadSessionState 通过 out_chapter_id 传回
     if (!last_chapter_id_.empty()) {
         context_manager_->setCurrentChapter(last_chapter_id_);
     }
@@ -346,6 +363,15 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
 llm::LLMResponse Agent::execute(const std::string& command,
                                  llm::StreamCallbacks callbacks)
 {
+    // ── 输入校验（上下文中毒防御）──
+    {
+        std::string reason;
+        if (!validateInput(command, reason)) {
+            spdlog::warn("[Agent] execute 输入校验失败: {}", reason);
+            return {};
+        }
+    }
+
     state_.transition(AgentState::Thinking);
 
     std::vector<llm::Message> messages = { llm::Message::user(command) };

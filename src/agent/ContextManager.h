@@ -52,11 +52,15 @@ public:
     ///
     /// 使用内部存储的 project_ 和 current_chapter_id_（由 setProject/setCurrentChapter 设置）。
     ///
-    /// 流程：
-    ///   1. 构建 system prompt（项目/章节上下文 + 向量检索 + 压缩摘要）
-    ///   2. 计算消息预算 = max_context_tokens - system_prompt_tokens
-    ///   3. 从最新消息反向截断（preserved 消息优先保留）
-    ///   4. 生成降级警告（截断/接近限制等）
+    /// 7 步流水线：
+    ///   1. 构建系统提示词（项目上下文 + 当前章节的角色/大纲/世界观）
+    ///   1.5. 向量检索（取最后一条 user 消息做语义召回，注入"仅作事实参考"标签）
+    ///   2. 注入压缩摘要（如果 compact() 已执行，"当前风格参照"标签）
+    ///   3. 计算消息预算 = max_context_tokens - system_prompt_tokens
+    ///   4. 生成告警（用量临界 / 预算耗尽 / 向量过期 / 超出窗口）
+    ///   5. 截断消息（preserved 优先保留，最新消息贪心保留）
+    ///   6. 统计总 token + 最终预检（超出模型窗口则追加警告）
+    ///   7. 缓存警告/截断数/当前大小（供 Agent/REPL 在下一次请求前读取）
     ContextAssembly assemble(
         const llm::Conversation& conversation,
         int max_context_tokens);
@@ -185,10 +189,10 @@ private:
     // ── 会话级状态 ──
     SessionTokenState token_state_;
     std::string compacted_summary_;   ///< LLM 生成的压缩摘要（空 = 无）
-    int compaction_marker_ = 0;       ///< 被压缩的消息数标记
+    int compaction_marker_ = 0;       ///< 被压缩的消息数标记，/rewind 检测用
     std::vector<std::string> last_warnings_;  ///< 最后一次 assemble() 的警告缓存
     int last_truncated_count_ = 0;            ///< 最后一次 assemble() 的截断数
-    int current_context_size_ = 0;            ///< 最后一次请求的实际上下文 token 数（用于阈值检查）
+    int current_context_size_ = 0;            ///< 最后一次请求的实际上下文 token 数（非累计值，用于阈值检查）
 
     // ── 向量检索后端（非拥有）──
     retrieval::IVectorStore* vector_store_ = nullptr;

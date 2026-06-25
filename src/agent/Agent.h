@@ -62,29 +62,37 @@ public:
 
     // ── 上下文管理便捷方法 ──
     /// 执行对话压缩（委托 ContextManager::compact）。
+    /// 保留最近 ~20 条消息，将其余消息交由 LLM 生成双层摘要（情节事实 + 风格样本）。
+    /// 摘要存储在 ContextManager 内部，后续 assemble() 自动注入到 system prompt。
+    /// @param focus 可选压缩焦点（如"重点关注角色张三的动机变化"）
     agent::CompactResult compactConversation(std::optional<std::string> focus = std::nullopt);
     /// 保留指定消息（按 Conversation::all() 索引）。
+    /// preserved 消息在 truncateMessages 中优先保留但不免 token 预算。
     bool pinMessage(size_t index);
     /// 取消保留。
     bool unpinMessage(size_t index);
-    /// 获取上下文统计。
+    /// 获取上下文统计（累计 token 消耗、请求次数、模型窗口上限）。
     agent::SessionTokenState contextStats() const;
-    /// 获取最后一次上下文组装的警告列表（截断/用量临界等）。
+    /// 获取最后一次上下文组装的警告列表（截断/用量临界/向量过期/预算溢出等）。
     std::vector<std::string> contextWarnings() const;
     /// 设置当前活跃章节（供章节边界检测使用）。
     void setCurrentChapter(const std::string& chapter_id);
 
     // ── 对话回滚 ──
     /// 回滚到指定消息索引（保留 [0, index]），丢弃之后的所有消息。
+    /// 自动检测是否回滚到压缩点之前 → 清空失效摘要。
+    /// 同时标记向量库为脏 → 防止检索到"未来"章节片段。
     /// 返回 false 表示索引越界。
     bool rewindTo(size_t index);
-    /// 返回所有用户消息的索引列表（可作为回滚点）。
+    /// 返回所有 user 消息的索引列表（可作为 /rewind 的回滚点）。
     std::vector<size_t> checkpointIndices() const;
 
     // ── 会话持久化（灾难恢复）──
-    /// 保存完整会话状态（对话 + 元数据）。
+    /// 保存完整会话状态到 .novelagent/ 目录。
+    /// conversation.json（对话历史）+ session_meta.json（摘要/token/chapter/preserved/向量脏标记）。
     void saveSessionState();
-    /// 加载完整会话状态并恢复。
+    /// 加载完整会话状态并恢复到 Agent + ContextManager 内部状态。
+    /// 自动对比 project_mtime：若 Project 在保存后被修改则清空压缩摘要。
     void loadSessionState();
 
     // ── 处理器策略 ──
@@ -134,7 +142,15 @@ private:
     StateMachine state_;
 
     // ── 章节边界检测 ──
-    std::string last_chapter_id_;               ///< 上一轮检测到的章节 ID
+    std::string last_chapter_id_;               ///< 上一轮检测到的活跃章节 ID
+    /// 章节边界自动 compact。
+    ///
+    /// 在 LLM 响应返回后检查 tool_calls 中是否包含 create_chapter 或 read_chapter，
+    /// 提取 chapter_id 并与 last_chapter_id_ 对比。若检测到章节切换：
+    ///   1. 对旧章节对话执行 compact（保留关键情节决策 + 写作风格）
+    ///   2. 更新 last_chapter_id_ 和 ContextManager::current_chapter_id_
+    ///
+    /// 首次进入章节时（last_chapter_id_ 为空）不触发 compact。
     void maybeAutoCompact(const llm::LLMResponse& response);
 };
 

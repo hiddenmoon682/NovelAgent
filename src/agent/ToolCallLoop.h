@@ -32,8 +32,8 @@ struct ToolCallLoopResult {
     std::string error;
     int rounds_executed = 0;
     int total_tokens_used = 0;
-    int input_tokens = 0;          ///< 累计 prompt_tokens（所有轮次）
-    int output_tokens = 0;         ///< 累计 completion_tokens（所有轮次）
+    int input_tokens = 0;          ///< 累计 prompt_tokens（所有轮次），供 ContextManager::recordUsage 使用
+    int output_tokens = 0;         ///< 累计 completion_tokens（所有轮次），供 ContextManager::recordUsage 使用
     bool loop_detected = false;
 };
 
@@ -42,6 +42,13 @@ public:
     ToolCallLoop(llm::ILLMClient& client, IToolProvider& tools,
                  ExecutionTracer* tracer = nullptr);
 
+    /// 执行 tool_call 循环。
+    ///
+    /// @param initial_messages 可选的外部消息列表（通常为 ContextManager 截断后的消息）。
+    ///   首轮 LLM 调用优先使用此列表而非 conversation.messages()，
+    ///   确保 token 截断策略真正生效（否则截断后的消息从未被使用）。
+    ///   后续轮次（tool_call → tool_result 往返）仍使用 conversation.messages()
+    ///   以携带完整的工具执行链。传 nullptr 或空 vector 退化为使用原始对话。
     ToolCallLoopResult run(
         llm::Conversation& conversation,
         const std::vector<llm::ToolDefinition>& tools,

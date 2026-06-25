@@ -86,6 +86,15 @@ SerialProcessor::Result SerialProcessor::process(
     auto effective_prompt = buildEffectivePrompt(conversation, effective_messages);
 
     // ── 步骤 4.5: 同步压缩检查（截断 ≥5 条时立即 compact，不等下一轮）
+    //
+    // 这是一个逃生阀：当单次请求截断大量消息时，说明上下文严重超出预算。
+    // 不等下一轮用户输入就立即压缩，防止关键信息在多轮截断中永久丢失。
+    //
+    // 流程：
+    //   1. 检测 lastTruncatedCount() >= 5（阈值：截断 5+ 条 = 约 10 轮对话丢失）
+    //   2. 调用 compact() 将旧消息压缩为摘要并存入 ContextManager
+    //   3. 重新调用 buildEffectivePrompt() —— 新摘要已注入 system prompt，截断量大幅减少
+    //   4. 如果 compact 失败（LLM 调用异常），使用原始 effective_prompt（不阻塞主流程）
     if (context_manager_ && context_manager_->lastTruncatedCount() >= 5) {
         spdlog::info("[SerialProcessor] 截断 {} 条，立即触发 compact",
                      context_manager_->lastTruncatedCount());
@@ -94,7 +103,7 @@ SerialProcessor::Result SerialProcessor::process(
         if (cr.messages_compacted > 0) {
             spdlog::info("[SerialProcessor] 同步 compact 完成: {} 条 → {} tokens",
                          cr.messages_compacted, cr.tokens_after);
-            // 重建提示词（摘要已注入，截断量大幅减少）
+            // 重建提示词：新 compacted_summary_ 已注入，截断量将大幅减少
             effective_prompt = buildEffectivePrompt(conversation, effective_messages);
         }
     }

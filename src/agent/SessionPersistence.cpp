@@ -15,6 +15,8 @@ namespace agent {
 
 void SessionPersistence::save(const llm::Conversation& conversation)
 {
+    // 序列化为 JSON 数组：[{role, content, tool_calls?, tool_call_id?}, ...]
+    // preserved 标记不持久化（由 session_meta.json 的 preserved_indices 管理）
     nlohmann::json j = nlohmann::json::array();
     for (const auto& msg : conversation.all()) {
         nlohmann::json msg_json;
@@ -45,8 +47,9 @@ llm::Conversation SessionPersistence::load()
     llm::Conversation conv;
     std::string path = utils::file::joinPath(storage_.agentDir(), kConversationFile);
     nlohmann::json j = storage_.loadJson(path);
-    if (!j.is_array()) return conv;
+    if (!j.is_array()) return conv;  // 文件不存在或格式异常 → 返回空对话
 
+    // 防御式解析：每个字段独立提取，缺失时使用 getOrDefault 兜底
     for (const auto& msg_json : j) {
         std::string role_str = utils::json::getOrDefault(msg_json, "role", std::string{});
         std::string content = utils::json::getOrDefault(msg_json, "content", std::string{});
@@ -110,6 +113,7 @@ void SessionPersistence::saveMeta(const SessionMeta& meta)
     j["last_chapter_id"] = meta.last_chapter_id;
     j["preserved_indices"] = meta.preserved_indices;
     j["project_mtime"] = meta.project_mtime;
+    j["vector_store_dirty"] = meta.vector_store_dirty;
 
     std::string path = utils::file::joinPath(storage_.agentDir(), kSessionMetaFile);
     storage_.saveJson(path, j);
@@ -141,6 +145,7 @@ SessionMeta SessionPersistence::loadMeta() const
         meta.preserved_indices = j["preserved_indices"].get<std::vector<size_t>>();
     }
     meta.project_mtime = utils::json::getOrDefault(j, "project_mtime", static_cast<int64_t>(0));
+    meta.vector_store_dirty = utils::json::getOrDefault(j, "vector_store_dirty", false);
 
     spdlog::info("[SessionPersistence] 会话元数据已加载 ({} preserved, compact={} chars, requests={})",
                  meta.preserved_indices.size(), meta.compacted_summary.size(), meta.token_state.request_count);
