@@ -7,6 +7,8 @@
 #include "config/AppConfig.h"
 #include "llm/LLMClientFactory.h"
 #include "project/FileStorageBackend.h"
+#include "retrieval/VectorStore.h"
+#include "retrieval/EmbeddingGenerator.h"
 
 #include "cli/IOutputChannel.h"
 
@@ -27,9 +29,9 @@ public:
 
     void runRepl(const std::string& welcomeMessage = "");
     void runExec(const std::string& command);
-    void runTui();
 
     agent::Agent& agent() { return agent_; }
+    agent::ContextManager& contextManager() { return cm_; }
     agent::ToolRegistry& registry() { return registry_; }
     agent::TemplateManager& templateManager() { return template_mgr_; }
     std::shared_ptr<Project> project() { return project_; }
@@ -43,6 +45,8 @@ private:
     std::shared_ptr<Project> project_;
     FileStorageBackend storage_;   // 必须在 cm_ 之前初始化
     agent::ContextManager cm_;
+    retrieval::VectorStore vector_store_;               // 向量存储（语义检索）
+    retrieval::EmbeddingGenerator embedding_gen_;       // 嵌入生成器
     agent::TemplateManager template_mgr_;
 
     void setupAgent(const std::vector<std::string>& disabledTools);

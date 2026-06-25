@@ -98,4 +98,53 @@ void SessionPersistence::archive(const llm::Conversation& conversation)
     spdlog::info("[SessionPersistence] 会话已归档: {}", path);
 }
 
+void SessionPersistence::saveMeta(const SessionMeta& meta)
+{
+    nlohmann::json j;
+    j["compacted_summary"] = meta.compacted_summary;
+    j["compaction_marker"] = meta.compaction_marker;
+    j["token_state"]["total_input_tokens"] = meta.token_state.total_input_tokens;
+    j["token_state"]["total_output_tokens"] = meta.token_state.total_output_tokens;
+    j["token_state"]["request_count"] = meta.token_state.request_count;
+    j["token_state"]["model_context_limit"] = meta.token_state.model_context_limit;
+    j["last_chapter_id"] = meta.last_chapter_id;
+    j["preserved_indices"] = meta.preserved_indices;
+    j["project_mtime"] = meta.project_mtime;
+
+    std::string path = utils::file::joinPath(storage_.agentDir(), kSessionMetaFile);
+    storage_.saveJson(path, j);
+    spdlog::info("[SessionPersistence] 会话元数据已保存 ({} preserved, compact={})",
+                 meta.preserved_indices.size(), !meta.compacted_summary.empty());
+}
+
+SessionMeta SessionPersistence::loadMeta() const
+{
+    SessionMeta meta;
+    std::string path = utils::file::joinPath(storage_.agentDir(), kSessionMetaFile);
+    nlohmann::json j;
+    try {
+        j = storage_.loadJson(path);
+    } catch (...) {
+        return meta;  // 文件不存在或损坏，返回默认值
+    }
+
+    meta.compacted_summary = utils::json::getOrDefault(j, "compacted_summary", std::string{});
+    meta.compaction_marker = utils::json::getOrDefault(j, "compaction_marker", 0);
+    if (j.contains("token_state")) {
+        meta.token_state.total_input_tokens = utils::json::getOrDefault(j["token_state"], "total_input_tokens", 0);
+        meta.token_state.total_output_tokens = utils::json::getOrDefault(j["token_state"], "total_output_tokens", 0);
+        meta.token_state.request_count = utils::json::getOrDefault(j["token_state"], "request_count", 0);
+        meta.token_state.model_context_limit = utils::json::getOrDefault(j["token_state"], "model_context_limit", 131072);
+    }
+    meta.last_chapter_id = utils::json::getOrDefault(j, "last_chapter_id", std::string{});
+    if (j.contains("preserved_indices") && j["preserved_indices"].is_array()) {
+        meta.preserved_indices = j["preserved_indices"].get<std::vector<size_t>>();
+    }
+    meta.project_mtime = utils::json::getOrDefault(j, "project_mtime", static_cast<int64_t>(0));
+
+    spdlog::info("[SessionPersistence] 会话元数据已加载 ({} preserved, compact={} chars, requests={})",
+                 meta.preserved_indices.size(), meta.compacted_summary.size(), meta.token_state.request_count);
+    return meta;
+}
+
 } // namespace agent

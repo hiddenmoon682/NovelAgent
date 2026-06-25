@@ -101,6 +101,45 @@ public:
     void popBack() { messages_.pop_back(); }
     void reserve(size_t n) { messages_.reserve(n); }
 
+    /// 截断到前 N 条消息（保留 [0, keep_count)），丢弃其余。
+    void truncateTo(size_t keep_count) {
+        if (keep_count < messages_.size()) messages_.resize(keep_count);
+    }
+
+    /// 编辑指定索引的消息内容（仅允许 User 和 Assistant 消息）。
+    /// 返回 false 表示索引越界或角色不允许编辑。
+    bool editMessage(size_t index, std::string new_content) {
+        if (index >= messages_.size()) return false;
+        auto& msg = messages_[index];
+        if (msg.role != MessageRole::User && msg.role != MessageRole::Assistant)
+            return false;
+        msg.content = std::move(new_content);
+        return true;
+    }
+
+    // ── 消息保留标记（Pin）──
+    /// 按 all() 索引标记消息为"保留"，截断时优先保留。
+    /// 返回 false 表示索引越界。
+    bool pinMessage(size_t index) {
+        if (index >= messages_.size()) return false;
+        messages_[index].preserved = true;
+        return true;
+    }
+    /// 取消保留标记。
+    bool unpinMessage(size_t index) {
+        if (index >= messages_.size()) return false;
+        messages_[index].preserved = false;
+        return true;
+    }
+    /// 获取所有保留消息的索引（按 all() 顺序）。
+    std::vector<size_t> pinnedIndices() const {
+        std::vector<size_t> result;
+        for (size_t i = 0; i < messages_.size(); ++i) {
+            if (messages_[i].preserved) result.push_back(i);
+        }
+        return result;
+    }
+
     // ================================================================
     // 迭代器（只读）
     // ================================================================

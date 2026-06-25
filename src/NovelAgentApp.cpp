@@ -6,7 +6,6 @@
 #include "cli/ReplHandler.h"
 #include "cli/StreamDisplay.h"
 #include "project/ProjectIO.h"
-#include "tui/TuiApp.h"
 
 #include <iostream>
 
@@ -21,6 +20,7 @@ NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
     , project_(project ? std::move(project) : std::make_shared<Project>())
     , storage_(project_ ? project_->path : "")
     , cm_(storage_)
+    , embedding_gen_(provider)
 {
     setupAgent(std::move(disabledTools));
 }
@@ -47,6 +47,15 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
 
     agent_.setContextManager(&cm_);
     agent_.setMaxContextTokens(client_.config().max_context_tokens);
+    cm_.setModelContextLimit(client_.config().max_context_tokens);
+    cm_.setProject(project_.get());
+
+    // 初始化向量检索后端
+    if (project_ && !project_->path.empty()) {
+        std::string vec_path = project_->path + "/.novelagent/vectors.json";
+        vector_store_.init(vec_path);
+        cm_.setRetrievalBackend(&vector_store_, &embedding_gen_);
+    }
     // 默认使用串行处理器（支持完整 ToolCallLoop + 工具集）。
     // Agent 构造函数已调用 useSerialProcessor()，无需再次设置。
     // 用户可通过 REPL 中 /parallel on 切换到并行编排模式。
@@ -63,11 +72,6 @@ void NovelAgentApp::saveConversationIfNeeded(const llm::LLMResponse& /*response*
     } catch (...) {
         // 持久化失败不阻塞主流程
     }
-}
-
-void NovelAgentApp::runTui() {
-    TuiApp tui(agent_, project_);
-    tui.run();
 }
 
 void NovelAgentApp::runRepl(const std::string& welcomeMessage)

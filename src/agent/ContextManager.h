@@ -1,11 +1,13 @@
 #pragma once
 
-/// 上下文管理器（精简版 — 移除过度设计的预算分配/降级/摘要系统）。
+/// 上下文管理器（增强版 — 会话级追踪 + pin 保留 + 手动 compaction）。
 ///
 /// 核心职责：
-///   1. 构建动态 system prompt（项目/章节上下文）
-///   2. 按 token 预算截断对话历史（从最新消息反向保留）
-///   3. 会话持久化委托给 SessionPersistence
+///   1. 构建动态 system prompt（项目/章节上下文 + 压缩摘要）
+///   2. 按 token 预算截断对话历史（支持 preserved 标记优先保留）
+///   3. 会话级 token 追踪（累计输入/输出，阈值检查）
+///   4. 手动 compaction（LLM 驱动的对话摘要，形成中期记忆层）
+///   5. 会话持久化委托给 SessionPersistence
 ///
 /// 依赖：通过 IStorageBackend 抽象访问存储，不直接依赖 ProjectIO。
 
@@ -13,12 +15,22 @@
 #include "agent/SessionPersistence.h"
 #include "llm/Conversation.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
 // 前向声明
 struct Project;
 class IStorageBackend;
+
+namespace llm {
+class ILLMClient;
+}
+
+namespace retrieval {
+class IVectorStore;
+class IEmbeddingGenerator;
+}
 
 namespace agent {
 
@@ -36,22 +48,110 @@ public:
     // 核心入口
     // ================================================================
 
-    /// 组装上下文 — 一站式入口（精简版）。
+    /// 组装上下文 — 一站式入口。
+    ///
+    /// 使用内部存储的 project_ 和 current_chapter_id_（由 setProject/setCurrentChapter 设置）。
     ///
     /// 流程：
-    ///   1. 构建 system prompt（项目/章节上下文，如果提供了 Project）
+    ///   1. 构建 system prompt（项目/章节上下文 + 向量检索 + 压缩摘要）
     ///   2. 计算消息预算 = max_context_tokens - system_prompt_tokens
-    ///   3. 从最新消息反向截断到预算上限
-    ///   4. 返回 ContextAssembly
+    ///   3. 从最新消息反向截断（preserved 消息优先保留）
+    ///   4. 生成降级警告（截断/接近限制等）
     ContextAssembly assemble(
         const llm::Conversation& conversation,
-        int max_context_tokens,
-        const Project* project = nullptr,
-        const std::string& chapter_id = "");
+        int max_context_tokens);
 
     /// 构建系统提示词（委托 PromptContextBuilder）。
     std::string buildSystemPrompt(const Project& project,
                                    const std::string& chapter_id = "");
+
+    // ================================================================
+    // Project 注入（供 assemble 使用）
+    // ================================================================
+
+    /// 设置当前项目（非拥有指针，生命周期由 NovelAgentApp 管理）。
+    void setProject(const Project* p) { project_ = p; }
+
+    /// 设置当前活跃章节 ID（供 assemble 构建章节上下文）。
+    void setCurrentChapter(const std::string& id) { current_chapter_id_ = id; }
+
+    // ================================================================
+    // 会话级 Token 追踪
+    // ================================================================
+
+    /// 设置模型上下文窗口上限（从 ProviderConfig 获取）。
+    void setModelContextLimit(int limit);
+
+    /// 累计一次请求的 token 消耗。
+    void recordUsage(int input_tokens, int output_tokens);
+
+    /// 请求前检查上下文用量状态。
+    PreRequestResult checkThresholds() const;
+
+    /// 返回累计统计。
+    SessionTokenState sessionStats() const;
+
+    /// 返回当前用量百分比 [0, 100]。
+    int usagePercent() const;
+
+    /// 重置会话统计（/clear 时调用）。
+    void resetSession();
+
+    // ================================================================
+    // Compaction（中期记忆层）
+    // ================================================================
+
+    /// 执行对话压缩 — 用 LLM 将旧消息摘要为一段文本。
+    ///
+    /// 保留最近 ~20 条消息不动，将更早的消息发送给 LLM 生成摘要。
+    /// 摘要存入内部状态，后续 assemble() 会自动注入到 system prompt。
+    ///
+    /// @param conversation  当前对话历史
+    /// @param llm_client    用于生成摘要的 LLM 客户端（非流式调用）
+    /// @param focus         可选压缩焦点（如"重点关注角色张三的动机变化"）
+    CompactResult compact(
+        const llm::Conversation& conversation,
+        llm::ILLMClient& llm_client,
+        std::optional<std::string> focus = std::nullopt);
+
+    /// 当前是否有压缩摘要。
+    bool hasCompactedSummary() const { return !compacted_summary_.empty(); }
+
+    /// 清除压缩摘要。
+    void clearCompactedSummary() { compacted_summary_.clear(); compaction_marker_ = 0; }
+
+    /// 返回压缩标记位（被 compact() 压缩的消息数，0 = 无压缩）。
+    int compactionMarker() const { return compaction_marker_; }
+
+    /// 设置自动 compaction（达到阈值自动触发）。
+    void setAutoCompact(bool enabled, int threshold_pct = 70);
+
+    /// 是否应该触发自动 compaction。
+    bool shouldAutoCompact() const;
+
+    /// 返回最后一次 assemble() 产生的警告列表。
+    const std::vector<std::string>& lastWarnings() const { return last_warnings_; }
+
+    /// 返回最后一次 assemble() 截断的消息数。
+    int lastTruncatedCount() const { return last_truncated_count_; }
+
+    // ================================================================
+    // 向量检索（长期记忆层）
+    // ================================================================
+
+    /// 设置向量检索后端（非拥有指针，生命周期由 NovelAgentApp 管理）。
+    void setRetrievalBackend(retrieval::IVectorStore* store,
+                             retrieval::IEmbeddingGenerator* gen,
+                             int top_k = 3);
+
+    /// 是否有可用的检索后端。
+    bool hasRetrievalBackend() const { return vector_store_ && embedding_gen_; }
+
+    /// 在检索前检查 Project 是否比向量库更新（在 assemble 内部调用）。
+    bool isVectorStoreStale() const;
+
+    /// /rewind 后标记向量库为脏，下次检索前提示 /index 重建。
+    void clearVectorStore() { vector_store_dirty_ = true; }
 
     // ================================================================
     // 会话持久化（委托 SessionPersistence）
@@ -63,11 +163,44 @@ public:
     llm::Conversation loadSession() { return persistence_.load(); }
     void archiveSession(const llm::Conversation& conv) { persistence_.archive(conv); }
 
+    /// 保存完整会话状态（对话 + 元数据），供灾难恢复。
+    /// project_mtime 自动从 project_ 获取。
+    void saveSessionState(const llm::Conversation& conv,
+                          const std::string& chapter_id,
+                          const std::vector<size_t>& preserved_indices);
+
+    /// 加载完整会话状态并恢复到 ContextManager 内部状态。
+    /// 自动对比 project_mtime，如果 Project 被修改过则清空压缩摘要。
+    void loadSessionState(llm::Conversation& conv,
+                          std::string& out_chapter_id);
+
 private:
     IStorageBackend& storage_;
     SessionPersistence persistence_;
 
-    /// 按 token 预算从新到旧截断消息（保留最新消息）。
+    // ── Project 注入（非拥有）──
+    const Project* project_ = nullptr;
+    std::string current_chapter_id_;
+
+    // ── 会话级状态 ──
+    SessionTokenState token_state_;
+    std::string compacted_summary_;   ///< LLM 生成的压缩摘要（空 = 无）
+    int compaction_marker_ = 0;       ///< 被压缩的消息数标记
+    std::vector<std::string> last_warnings_;  ///< 最后一次 assemble() 的警告缓存
+    int last_truncated_count_ = 0;            ///< 最后一次 assemble() 的截断数
+    int current_context_size_ = 0;            ///< 最后一次请求的实际上下文 token 数（用于阈值检查）
+
+    // ── 向量检索后端（非拥有）──
+    retrieval::IVectorStore* vector_store_ = nullptr;
+    retrieval::IEmbeddingGenerator* embedding_gen_ = nullptr;
+    int retrieval_top_k_ = 3;
+    bool vector_store_dirty_ = false;  // /rewind 后标记，跳过检索并提示 /index
+
+    // ── 自动 compaction ──
+    bool auto_compact_ = false;
+    int auto_compact_threshold_ = 70;  // 用量百分比阈值
+
+    /// 按 token 预算从新到旧截断消息（preserved 消息优先保留）。
     static std::vector<llm::Message> truncateMessages(
         const std::vector<llm::Message>& messages,
         int budget,

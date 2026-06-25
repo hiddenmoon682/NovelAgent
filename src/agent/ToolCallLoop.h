@@ -32,6 +32,8 @@ struct ToolCallLoopResult {
     std::string error;
     int rounds_executed = 0;
     int total_tokens_used = 0;
+    int input_tokens = 0;          ///< 累计 prompt_tokens（所有轮次）
+    int output_tokens = 0;         ///< 累计 completion_tokens（所有轮次）
     bool loop_detected = false;
 };
 
@@ -45,7 +47,8 @@ public:
         const std::vector<llm::ToolDefinition>& tools,
         const std::string& system_prompt,
         llm::StreamCallbacks callbacks,
-        const ToolCallLoopConfig& config = {});
+        const ToolCallLoopConfig& config = {},
+        const std::vector<llm::Message>* initial_messages = nullptr);
 
 private:
     llm::ILLMClient& client_;

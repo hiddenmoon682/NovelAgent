@@ -19,10 +19,11 @@ struct ProviderConfig {
     int max_context_tokens = 131072; // 每次请求发送给 LLM 的最大上下文 token 数（应用层预算上限，非模型上下文窗口大小）
     double temperature = 0.7;
     int max_tokens = 4096;
+    bool supports_cache_control = false; // 是否支持显式 cache_control 标记（Anthropic API 需开启）
 
     // 使用 nlohmann 宏自动生成 to_json/from_json。
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProviderConfig,
-        name, api_key, base_url, model, max_context_tokens, temperature, max_tokens)
+        name, api_key, base_url, model, max_context_tokens, temperature, max_tokens, supports_cache_control)
 };
 
 struct AppConfig {

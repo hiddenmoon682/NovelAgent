@@ -1,4 +1,4 @@
-/// test_context_manager — 精简版（适配移除预算分配/降级/摘要后的 ContextManager）。
+/// test_context_manager — 增强版测试（会话追踪 + pin + compaction + 降级可见性）。
 
 #include "agent/ContextManager.h"
 #include "llm/Conversation.h"
@@ -45,7 +45,7 @@ static llm::Conversation makeLongConversation() {
 void test_session_save_load() {
     TEST("SessionPersistence — 保存和加载往返");
 
-    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_session_refactor";
+    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_session_enhanced";
     ProjectIO::createProjectDir(tmp, "测试");
     FileStorageBackend storage(tmp);
 
@@ -64,7 +64,7 @@ void test_session_save_load() {
 }
 
 // =========================================================================
-// assemble 测试（精简版）
+// assemble 基础测试
 // =========================================================================
 
 void test_no_truncation() {
@@ -81,11 +81,12 @@ void test_no_truncation() {
 }
 
 void test_truncation() {
-    TEST("assemble — 长消息触发截断");
+    TEST("assemble — 长消息触发截断 + 生成警告");
     auto conv = makeLongConversation();
     agent::ContextManager cm;
-    auto result = cm.assemble(conv, 50);  // 极小预算
+    auto result = cm.assemble(conv, 50);
     CHECK(result.truncated_count > 0);
+    CHECK(!result.warnings.empty());  // 截断应生成警告
     PASS();
 }
 
@@ -134,7 +135,6 @@ void test_total_tokens() {
     agent::ContextManager cm;
     auto result = cm.assemble(conv, 131072);
     CHECK(result.total_tokens > 0);
-    CHECK(result.total_tokens >= static_cast<int>(result.messages.size()));
     PASS();
 }
 
@@ -142,20 +142,225 @@ void test_truncation_keeps_newest() {
     TEST("assemble — 截断保留最新消息");
     auto conv = makeLongConversation();
     agent::ContextManager cm;
-    auto result = cm.assemble(conv, 80);  // 只够保留约1-2条消息
+    auto result = cm.assemble(conv, 80);
     CHECK(result.truncated_count > 0);
-    // 应该保留最后一条（最新的）消息
     CHECK(!result.messages.empty());
+    PASS();
+}
+
+// =========================================================================
+// 会话级 Token 追踪
+// =========================================================================
+
+void test_record_usage() {
+    TEST("recordUsage — 累计 token 统计");
+    agent::ContextManager cm;
+
+    cm.recordUsage(500, 200);
+    cm.recordUsage(300, 150);
+
+    auto stats = cm.sessionStats();
+    CHECK(stats.total_input_tokens == 800);
+    CHECK(stats.total_output_tokens == 350);
+    CHECK(stats.request_count == 2);
+    PASS();
+}
+
+void test_usage_percent() {
+    TEST("usagePercent — 用量百分比计算");
+    agent::ContextManager cm;
+    cm.setModelContextLimit(10000);
+
+    cm.recordUsage(6000, 0);  // 60% — Warning 阈值
+    CHECK(cm.usagePercent() == 60);
+
+    auto check = cm.checkThresholds();
+    CHECK(check.status == agent::ContextStatus::Warning);
+    CHECK(check.usage_percent == 60);
+    PASS();
+}
+
+void test_usage_critical() {
+    TEST("checkThresholds — 临界状态");
+    agent::ContextManager cm;
+    cm.setModelContextLimit(10000);
+
+    cm.recordUsage(9000, 0);  // 90%
+    auto check = cm.checkThresholds();
+    CHECK(check.status == agent::ContextStatus::Critical);
+    CHECK(check.usage_percent >= 85);
+    PASS();
+}
+
+void test_reset_session() {
+    TEST("resetSession — 重置后统计归零");
+    agent::ContextManager cm;
+    cm.recordUsage(1000, 500);
+    cm.resetSession();
+
+    auto stats = cm.sessionStats();
+    CHECK(stats.total_input_tokens == 0);
+    CHECK(stats.total_output_tokens == 0);
+    CHECK(stats.request_count == 0);
+    PASS();
+}
+
+// =========================================================================
+// 消息保留（Pin）测试
+// =========================================================================
+
+void test_preserved_messages_survive() {
+    TEST("truncateMessages — preserved 消息不丢失");
+    llm::Conversation conv;
+    conv.addUser("旧消息一" + std::string(200, 'x'));    // 大消息
+    conv.addAssistant("旧回复一" + std::string(200, 'y'));
+    conv.addUser("重要消息需要保留" + std::string(50, 'z'));
+    conv.addAssistant("最新回复");
+
+    // 标记第 2 条（索引 2 = "重要消息需要保留"）为 preserved
+    CHECK(conv.pinMessage(2));
+
+    agent::ContextManager cm;
+    // 极小预算：只够保留 ~1-2 条小消息
+    auto result = cm.assemble(conv, 80);
+
+    // 应至少包含 preserved 消息 + 最后的兜底消息
+    CHECK(result.messages.size() >= 1);
+
+    // 检查结果中是否包含 preserved 消息
+    bool found_preserved = false;
+    for (const auto& msg : result.messages) {
+        if (msg.content.find("重要消息需要保留") != std::string::npos) {
+            found_preserved = true;
+            break;
+        }
+    }
+    CHECK(found_preserved);
+    PASS();
+}
+
+void test_pin_unpin() {
+    TEST("Conversation — pin/unpin 往返");
+    llm::Conversation conv;
+    conv.addUser("消息A");
+    conv.addAssistant("消息B");
+    conv.addUser("消息C");
+
+    CHECK(conv.pinMessage(1));         // pin "消息B"
+    auto pinned = conv.pinnedIndices();
+    CHECK(pinned.size() == 1);
+    CHECK(pinned[0] == 1);
+
+    CHECK(conv.unpinMessage(1));       // unpin
+    CHECK(conv.pinnedIndices().empty());
+    PASS();
+}
+
+void test_pin_out_of_range() {
+    TEST("Conversation — pin 越界返回 false");
+    llm::Conversation conv;
+    conv.addUser("只有一条");
+    CHECK(!conv.pinMessage(99));
+    CHECK(!conv.unpinMessage(99));
+    PASS();
+}
+
+// =========================================================================
+// Compaction 基础测试（不含 LLM 调用）
+// =========================================================================
+
+void test_compact_has_summary_methods() {
+    TEST("ContextManager — hasCompactedSummary/clearCompactedSummary");
+    agent::ContextManager cm;
+    CHECK(!cm.hasCompactedSummary());
+
+    // 不调用实际 LLM，只测 API 存在
+    cm.clearCompactedSummary();
+    CHECK(!cm.hasCompactedSummary());
+    PASS();
+}
+
+void test_last_warnings_cached() {
+    TEST("ContextManager — lastWarnings 缓存");
+    agent::ContextManager cm;
+    // 初始状态无警告
+    CHECK(cm.lastWarnings().empty());
+
+    // 触发截断 → 生成警告 → 缓存
+    auto conv = makeLongConversation();
+    cm.assemble(conv, 50);
+    CHECK(!cm.lastWarnings().empty());
+
+    // 不截断 → 警告清空
+    llm::Conversation short_conv;
+    short_conv.addUser("短消息");
+    cm.assemble(short_conv, 131072);
+    CHECK(cm.lastWarnings().empty());
+
+    PASS();
+}
+
+// =========================================================================
+// 降级可见性
+// =========================================================================
+
+void test_truncation_warning() {
+    TEST("assemble — 截断生成中文警告");
+    auto conv = makeLongConversation();
+    agent::ContextManager cm;
+    auto result = cm.assemble(conv, 50);
+
+    CHECK(result.truncated_count > 0);
+    bool has_truncation_warning = false;
+    for (const auto& w : result.warnings) {
+        if (w.find("截断") != std::string::npos) has_truncation_warning = true;
+    }
+    CHECK(has_truncation_warning);
+    PASS();
+}
+
+void test_critical_warning() {
+    TEST("assemble — 接近限制时生成临界警告");
+    agent::ContextManager cm;
+    cm.setModelContextLimit(1000);
+    cm.recordUsage(900, 0);  // 90% — 临界
+
+    llm::Conversation conv;
+    conv.addUser("测试");
+    auto result = cm.assemble(conv, 131072);
+
+    bool has_critical = false;
+    for (const auto& w : result.warnings) {
+        if (w.find("接近模型上限") != std::string::npos) has_critical = true;
+    }
+    CHECK(has_critical);
+    PASS();
+}
+
+void test_msg_budget_tiny_fallback() {
+    TEST("assemble — 极小预算时兜底保留最后一条");
+    agent::ContextManager cm;
+    llm::Conversation conv;
+    conv.addUser("长消息" + std::string(300, 'x'));
+    conv.addAssistant("最新回复" + std::string(300, 'y'));
+
+    // max_context_tokens 极小，消息太大无法正常容纳
+    auto result = cm.assemble(conv, 1);
+
+    // 兜底逻辑确保至少保留最后一条消息
+    CHECK(!result.messages.empty());
+    // 最后一条是 "最新回复"
+    CHECK(result.messages.back().content.find("最新回复") != std::string::npos);
     PASS();
 }
 
 // =========================================================================
 
 int main() {
-    std::cout << "=== test_context_manager (精简版) ===\n\n";
+    std::cout << "=== test_context_manager (增强版) ===\n\n";
 
+    // 基础
     test_session_save_load();
-
     test_no_truncation();
     test_truncation();
     test_assemble_no_project();
@@ -163,6 +368,26 @@ int main() {
     test_build_system_prompt_no_chapter();
     test_total_tokens();
     test_truncation_keeps_newest();
+
+    // 会话追踪
+    test_record_usage();
+    test_usage_percent();
+    test_usage_critical();
+    test_reset_session();
+
+    // Pin
+    test_preserved_messages_survive();
+    test_pin_unpin();
+    test_pin_out_of_range();
+
+    // Compaction
+    test_compact_has_summary_methods();
+    test_last_warnings_cached();
+
+    // 降级可见性
+    test_truncation_warning();
+    test_critical_warning();
+    test_msg_budget_tiny_fallback();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;

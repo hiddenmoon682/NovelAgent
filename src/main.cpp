@@ -54,15 +54,13 @@ int main(int argc, char** argv) {
     CLI::App app{"NovelAgent - AI-Powered Novel Writing Assistant"};
 
     std::string projectPath, backendProjectPath, execCommand, providerName = "deepseek";
-    bool verbose = false, replMode = false;
+    bool verbose = false;
     int wsPort = 8899;
 
     app.add_option("-p,--project", projectPath, "项目目录路径");
     app.add_option("-e,--exec", execCommand, "执行单次命令后退出");
     app.add_option("--provider", providerName, "LLM provider (deepseek, kimi, claude)");
     app.add_flag("-v,--verbose", verbose, "启用调试日志");
-    app.add_flag("--repl", replMode, "使用传统 REPL 模式（默认启动 TUI 终端界面）");
-
     // Phase 6: backend 子命令
     auto* backendCmd = app.add_subcommand("backend", "启动后端 HTTP+SSE 服务器");
     backendCmd->add_option("-p,--project", backendProjectPath, "项目目录路径")->required();
@@ -173,13 +171,8 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        if (replMode) {
-            novelAgent.runRepl();
-            return 0;
-        }
-
-        // 默认：启动 TUI 终端界面
-        novelAgent.runTui();
+        // 默认：启动 REPL 交互模式
+        novelAgent.runRepl();
 
     } catch (const std::exception& e) {
         std::cerr << Ansi::error() << "\n致命错误: " << e.what()

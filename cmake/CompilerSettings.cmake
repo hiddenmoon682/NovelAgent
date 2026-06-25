@@ -28,7 +28,7 @@ else()
     #   -O1:       基础链接时优化（哈希表/重定位，代价极低）
     add_link_options($<$<CONFIG:Release>:-Wl,--icf=safe>)
     add_link_options($<$<CONFIG:Release>:-Wl,-O1>)
-    # 动态链接 C++ 运行时——spdlog/ftxui 只有 DLL 版本，
+    # 动态链接 C++ 运行时——spdlog 只有 DLL 版本，
     # 混用静态运行时会导致 ODR 违规（双份 std::string/exception 实现）。
     # DLL 由 POST_BUILD 自动复制到 exe 旁边，无需手动分发。
 endif()

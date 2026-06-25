@@ -32,7 +32,8 @@ ToolCallLoopResult ToolCallLoop::run(
     const std::vector<llm::ToolDefinition>& tools,
     const std::string& system_prompt,
     llm::StreamCallbacks callbacks,
-    const ToolCallLoopConfig& config)
+    const ToolCallLoopConfig& config,
+    const std::vector<llm::Message>* initial_messages)
 {
     ToolCallLoopResult result;
     ToolPipeline pipeline(tools_, conversation);  // Fix #1: tools_ 是 IToolProvider&
@@ -44,16 +45,21 @@ ToolCallLoopResult ToolCallLoop::run(
         ToolCallLoopResult r;
 
         // ── 首轮 ──
+        // Fix: 如果提供了 initial_messages（截断后的消息），优先使用
+        const auto& first_msgs = (initial_messages && !initial_messages->empty())
+            ? *initial_messages : conversation.messages();
         auto t1 = std::chrono::steady_clock::now();
         llm::LLMResponse response;
         if (config.first_round_streaming || config.all_rounds_streaming)
-            response = client_.chat(conversation.messages(), tools, system_prompt, callbacks);
+            response = client_.chat(first_msgs, tools, system_prompt, callbacks);
         else
-            response = client_.chatNonStreaming(conversation.messages(), tools, system_prompt);
+            response = client_.chatNonStreaming(first_msgs, tools, system_prompt);
         auto t2 = std::chrono::steady_clock::now();
         int round_ms = static_cast<int>(
             std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
         r.total_tokens_used += response.total_tokens;
+        r.input_tokens += response.prompt_tokens;
+        r.output_tokens += response.completion_tokens;
         if (tracer_) tracer_->record("llm_response", response.total_tokens, round_ms);
 
         // Token 预算告警
@@ -129,6 +135,8 @@ ToolCallLoopResult ToolCallLoop::run(
             round_ms = static_cast<int>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(t6 - t5).count());
             r.total_tokens_used += response.total_tokens;
+            r.input_tokens += response.prompt_tokens;
+            r.output_tokens += response.completion_tokens;
 
             if (tracer_) tracer_->record("llm_response", response.total_tokens, round_ms);
 

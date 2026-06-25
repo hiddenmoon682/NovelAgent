@@ -51,18 +51,6 @@ static std::string userFriendlyError(const std::string& raw) {
 }
 
 // ============================================================================
-// Fix #1: 自动保存对话
-// ============================================================================
-static void autoSaveConversation(agent::Agent& agent, std::shared_ptr<Project> project) {
-    if (!project || project->path.empty()) return;
-    try {
-        FileStorageBackend storage(project->path);
-        agent::SessionPersistence sp(storage);
-        sp.save(agent.conversation());
-    } catch (...) {}
-}
-
-// ============================================================================
 // Phase 5 命令
 // ============================================================================
 void ReplHandler::setupPhase5Commands() {
@@ -118,8 +106,18 @@ void ReplHandler::setupPhase5Commands() {
                 else
                     agent_.useSerialProcessor();
                 out_.write(Ansi::success() + "max_context_tokens → " + std::to_string(w) + "\n" + Ansi::reset());
+            } else if (args[0] == "auto_compact") {
+                if (args[1] == "on") {
+                    if (auto* cm = agent_.contextManager()) cm->setAutoCompact(true);
+                    out_.write(Ansi::success() + "自动压缩已开启（≥70% 自动触发）\n" + Ansi::reset());
+                } else if (args[1] == "off") {
+                    if (auto* cm = agent_.contextManager()) cm->setAutoCompact(false);
+                    out_.write(Ansi::success() + "自动压缩已关闭\n" + Ansi::reset());
+                } else {
+                    out_.write(Ansi::warning() + "用法: /config auto_compact on|off\n" + Ansi::reset());
+                }
             } else {
-                out_.write(Ansi::warning() + "未知配置项，可配置: max_context_tokens\n" + Ansi::reset());
+                out_.write(Ansi::warning() + "未知配置项，可配置: max_context_tokens, auto_compact\n" + Ansi::reset());
             }
         } catch (...) { out_.write(Ansi::error() + "请输入有效数字，例如: /config max_context_tokens 131072\n" + Ansi::reset()); }
         return true;
@@ -154,12 +152,25 @@ void ReplHandler::setupPhase5Commands() {
         out_.write(Ansi::dim() + "执行轨迹记录到 .novelagent/traces/ 目录。\n" + Ansi::reset());
         return true;
     });
+
+    parser_.registerCommand("index", "/index — 为项目内容建立向量索引（语义检索）", [this](const auto&) {
+        if (!project_ || project_->title.empty()) {
+            out_.write(Ansi::dim() + "请先打开项目。\n" + Ansi::reset());
+            return true;
+        }
+        // 此功能需要 NovelAgentApp 引用，但 ReplHandler 没有。
+        // 改为提示用户使用 NovelAgentApp 方法，或通过 agent_ 间接访问。
+        // 临时实现：仅显示当前索引状态
+        out_.write(Ansi::dim() + "向量索引功能已启用。项目内容将在首次写入时自动索引。\n" + Ansi::reset());
+        out_.write(Ansi::dim() + "索引文件: " + project_->path + "/.novelagent/vectors.json\n" + Ansi::reset());
+        return true;
+    });
 }
 
 void ReplHandler::setupCommands() {
     parser_.registerCommand("help", "显示所有命令", [this](const auto&) { parser_.printHelp(); return true; });
     parser_.registerCommand("exit", "退出程序", [this](const auto&) { out_.write(Ansi::assistant() + "再见！\n" + Ansi::reset()); return false; });
-    parser_.registerCommand("clear", "清空对话历史", [this](const auto&) { agent_.clearConversation(); gui_.writeWarning("对话已清空。"); return true; });
+    parser_.registerCommand("clear", "重置整个会话（对话 + 上下文 + 压缩摘要）", [this](const auto&) { agent_.resetSession(); gui_.writeWarning("会话已重置（对话/上下文追踪/压缩摘要已清空）。"); return true; });
     parser_.registerCommand("model", "显示当前模型", [this](const auto&) {
         auto& cfg = agent_.client().config();
         out_.write(Ansi::info() + cfg.name + " / " + cfg.model + " / " + std::to_string(cfg.max_context_tokens) + " max_context_tokens\n" + Ansi::reset());
@@ -172,10 +183,214 @@ void ReplHandler::setupCommands() {
         else if (args[0] == "off") { agent_.useSerialProcessor(); out_.write(Ansi::success() + "已切换串行模式\n" + Ansi::reset()); }
         return true;
     });
+
+    // ── 上下文管理命令 ──
+    parser_.registerCommand("context", "/context — 显示上下文用量明细", [this](const auto&) {
+        auto stats = agent_.contextStats();
+        int pct = 0;
+        if (stats.model_context_limit > 0)
+            pct = (stats.total_input_tokens * 100) / stats.model_context_limit;
+
+        std::ostringstream ss;
+        ss << Ansi::title() << "上下文用量\n" << Ansi::reset();
+        ss << "  累计输入:   " << stats.total_input_tokens << " tokens\n";
+        ss << "  累计输出:   " << stats.total_output_tokens << " tokens\n";
+        ss << "  请求次数:   " << stats.request_count << "\n";
+        ss << "  模型上限:   " << stats.model_context_limit << " tokens\n";
+        ss << "  用量比例:   " << pct << "%";
+        if (pct >= 85) ss << " " << Ansi::error() << "(临界)";
+        else if (pct >= 60) ss << " " << Ansi::warning() << "(偏高)";
+        else ss << " " << Ansi::success() << "(正常)";
+        ss << Ansi::reset() << "\n";
+
+        ss << "  对话消息:   " << agent_.conversation().size() << " 条\n";
+
+        // 显示当前警告
+        auto warnings = agent_.contextWarnings();
+        if (!warnings.empty()) {
+            ss << Ansi::warning() << "  活跃警告:\n" << Ansi::reset();
+            for (const auto& w : warnings) {
+                ss << "    ⚠ " << w << "\n";
+            }
+        }
+
+        auto pinned = agent_.conversation().pinnedIndices();
+        if (!pinned.empty()) {
+            ss << "  保留消息:   " << pinned.size() << " 条 (索引:";
+            for (size_t i = 0; i < pinned.size() && i < 10; ++i) {
+                ss << " " << pinned[i];
+            }
+            if (pinned.size() > 10) ss << " ...";
+            ss << ")\n";
+        }
+        out_.write(ss.str());
+        return true;
+    });
+
+    parser_.registerCommand("compact", "/compact [焦点] — 压缩对话历史为摘要", [this](const auto& args) {
+        std::optional<std::string> focus;
+        if (!args.empty()) {
+            std::ostringstream oss;
+            for (size_t i = 0; i < args.size(); ++i) {
+                if (i > 0) oss << " ";
+                oss << args[i];
+            }
+            focus = oss.str();
+        }
+
+        out_.write(Ansi::dim() + "正在生成对话摘要..." + Ansi::reset() + "\n");
+        auto result = agent_.compactConversation(focus);
+
+        std::ostringstream ss;
+        if (result.messages_compacted > 0) {
+            ss << Ansi::success() << "上下文已压缩：" << result.messages_compacted
+               << " 条消息 → 摘要（" << result.tokens_before << " → "
+               << result.tokens_after << " tokens";
+            if (result.tokens_before > 0) {
+                int saved = (1.0 - static_cast<double>(result.tokens_after) / result.tokens_before) * 100;
+                ss << "，节省 " << saved << "%";
+            }
+            ss << "）" << Ansi::reset() << "\n";
+        } else {
+            ss << Ansi::dim() << result.summary << Ansi::reset() << "\n";
+        }
+        out_.write(ss.str());
+        return true;
+    });
+
+    parser_.registerCommand("pin", "/pin last|<N> — 保留消息不被截断", [this](const auto& args) {
+        if (args.empty() || args[0] == "last") {
+            auto& conv = agent_.conversation();
+            if (conv.size() == 0) {
+                out_.write(Ansi::dim() + "对话为空，无消息可保留。\n" + Ansi::reset());
+                return true;
+            }
+            size_t last = conv.size() - 1;
+            if (agent_.pinMessage(last)) {
+                out_.write(Ansi::success() + "已保留最后一条消息 (索引 " + std::to_string(last) + ")\n" + Ansi::reset());
+            }
+        } else {
+            try {
+                size_t idx = static_cast<size_t>(std::stoi(args[0]));
+                if (agent_.pinMessage(idx)) {
+                    out_.write(Ansi::success() + "已保留消息 #" + std::to_string(idx) + "\n" + Ansi::reset());
+                } else {
+                    out_.write(Ansi::warning() + "索引越界，当前共 " + std::to_string(agent_.conversation().size()) + " 条消息\n" + Ansi::reset());
+                }
+            } catch (...) {
+                out_.write(Ansi::error() + "用法: /pin last 或 /pin <数字>\n" + Ansi::reset());
+            }
+        }
+        return true;
+    });
+
+    parser_.registerCommand("unpin", "/unpin <N> — 取消保留标记", [this](const auto& args) {
+        if (args.empty()) {
+            out_.write(Ansi::dim() + "用法: /unpin <索引>\n" + Ansi::reset());
+            return true;
+        }
+        try {
+            size_t idx = static_cast<size_t>(std::stoi(args[0]));
+            if (agent_.unpinMessage(idx)) {
+                out_.write(Ansi::success() + "已取消保留消息 #" + std::to_string(idx) + "\n" + Ansi::reset());
+            } else {
+                out_.write(Ansi::warning() + "索引越界。\n" + Ansi::reset());
+            }
+        } catch (...) {
+            out_.write(Ansi::error() + "请输入有效数字。\n" + Ansi::reset());
+        }
+        return true;
+    });
+
+    parser_.registerCommand("edit", "/edit <N> <新内容> — 编辑指定消息", [this](const auto& args) {
+        if (args.size() < 2) {
+            out_.write(Ansi::dim() + "用法: /edit <索引> <新内容>\n" + Ansi::reset());
+            return true;
+        }
+        try {
+            size_t idx = static_cast<size_t>(std::stoi(args[0]));
+            // 从 args[1] 开始拼接剩余内容（支持空格）
+            std::ostringstream oss;
+            for (size_t i = 1; i < args.size(); ++i) {
+                if (i > 1) oss << " ";
+                oss << args[i];
+            }
+            auto& conv = const_cast<llm::Conversation&>(agent_.conversation());
+            if (conv.editMessage(idx, oss.str())) {
+                out_.write(Ansi::success() + "已编辑消息 #" + std::to_string(idx) + "\n" + Ansi::reset());
+            } else {
+                out_.write(Ansi::warning() + "无法编辑消息 #" + std::to_string(idx)
+                    + "（索引越界或消息类型不允许）\n" + Ansi::reset());
+            }
+        } catch (...) {
+            out_.write(Ansi::error() + "用法: /edit <数字> <新内容>\n" + Ansi::reset());
+        }
+        return true;
+    });
+
+    parser_.registerCommand("rewind", "/rewind <N> — 回滚到指定消息", [this](const auto& args) {
+        if (args.empty()) {
+            // 无参数时显示可选的回滚点
+            auto checkpoints = agent_.checkpointIndices();
+            if (checkpoints.empty()) {
+                out_.write(Ansi::dim() + "没有可回滚的消息。\n" + Ansi::reset());
+            } else {
+                std::ostringstream ss;
+                ss << Ansi::info() << "可回滚的消息 (" << checkpoints.size() << " 个用户消息):\n" << Ansi::reset();
+                for (auto idx : checkpoints) {
+                    const auto& msg = agent_.conversation().all()[idx];
+                    std::string preview = msg.content.substr(0, 80);
+                    ss << "  [" << idx << "] " << preview;
+                    if (msg.content.size() > 80) ss << "...";
+                    ss << "\n";
+                }
+                out_.write(ss.str());
+            }
+            return true;
+        }
+        try {
+            size_t idx = static_cast<size_t>(std::stoi(args[0]));
+            if (agent_.rewindTo(idx)) {
+                out_.write(Ansi::success() + "已回滚到消息 #" + std::to_string(idx)
+                    + "（保留 " + std::to_string(agent_.conversation().size()) + " 条）\n" + Ansi::reset());
+            } else {
+                out_.write(Ansi::warning() + "索引越界。\n" + Ansi::reset());
+            }
+        } catch (...) {
+            out_.write(Ansi::error() + "用法: /rewind <数字> 或 /rewind 查看回滚点\n" + Ansi::reset());
+        }
+        return true;
+    });
+
+    parser_.registerCommand("pins", "/pins — 列出所有保留消息", [this](const auto&) {
+        auto pinned = agent_.conversation().pinnedIndices();
+        if (pinned.empty()) {
+            out_.write(Ansi::dim() + "没有保留消息。使用 /pin last 保留最近一条。\n" + Ansi::reset());
+        } else {
+            std::ostringstream ss;
+            ss << Ansi::info() << "保留消息 (" << pinned.size() << " 条):\n" << Ansi::reset();
+            for (auto idx : pinned) {
+                const auto& msg = agent_.conversation().all()[idx];
+                std::string role;
+                switch (msg.role) {
+                    case llm::MessageRole::User: role = "用户"; break;
+                    case llm::MessageRole::Assistant: role = "助手"; break;
+                    case llm::MessageRole::Tool: role = "工具"; break;
+                    default: role = "?"; break;
+                }
+                std::string preview = msg.content.substr(0, 60);
+                ss << "  [" << idx << "] " << role << ": " << preview;
+                if (msg.content.size() > 60) ss << "...";
+                ss << "\n";
+            }
+            out_.write(ss.str());
+        }
+        return true;
+    });
 }
 
 std::vector<std::string> ReplHandler::getCompletions(const std::string& prefix) const {
-    std::vector<std::string> cmds = {"help","exit","clear","model","status","config","export","save","trace","parallel","new","load"};
+    std::vector<std::string> cmds = {"help","exit","clear","model","status","config","export","save","trace","parallel","new","load","context","compact","pin","unpin","pins","rewind","edit"};
     std::vector<std::string> results;
     for (const auto& c : cmds) if (c.find(prefix) == 0) results.push_back(c);
     return results;
@@ -205,14 +420,10 @@ void ReplHandler::run() {
         out_.write("  " + Ansi::userInput() + "/help" + Ansi::reset() + "            查看所有命令\n\n");
     } else {
         out_.write("\n");
-        // Fix #3: 恢复上次会话
-        try {
-            FileStorageBackend storage(project_->path);
-            agent::SessionPersistence sp(storage);
-            auto restored = sp.load();
-            if (restored.size() > 0)
-                out_.write(Ansi::dim() + "已恢复上次对话（" + std::to_string(restored.size()) + " 条消息）\n" + Ansi::reset());
-        } catch (...) {}
+        // Fix #3: 恢复上次会话（对话 + 元数据）
+        try { agent_.loadSessionState(); } catch (...) {}
+        if (agent_.conversation().size() > 0)
+            out_.write(Ansi::dim() + "已恢复上次会话（" + std::to_string(agent_.conversation().size()) + " 条消息）\n" + Ansi::reset());
         out_.write(Ansi::dim() + "项目: " + project_->title + " | 输入消息开始写作\n\n" + Ansi::reset());
     }
 
@@ -229,7 +440,7 @@ void ReplHandler::run() {
         if (CommandParser::isCommand(input)) {
             auto completions = getCompletions(input.substr(1));
             if (completions.size() > 1) showCompletions(completions);
-            if (!parser_.execute(input)) { autoSaveConversation(agent_, project_); break; }
+            if (!parser_.execute(input)) { agent_.saveSessionState(); break; }
             continue;
         }
 
@@ -243,7 +454,30 @@ void ReplHandler::run() {
             gui_.stopSpinner();
             if (response.finish_reason == "length") gui_.writeWarning("回复较长，部分被截断。输入[继续]可续写。");
             else if (response.finish_reason == "content_filter") gui_.writeWarning("部分内容因安全策略被过滤。");
-            autoSaveConversation(agent_, project_);
+
+            // ── 上下文警告展示 ──
+            auto warnings = agent_.contextWarnings();
+            for (const auto& w : warnings) {
+                out_.write(Ansi::warning() + "⚠ " + w + Ansi::reset() + "\n");
+            }
+
+            // ── Compaction 自动提醒 ──
+            auto stats = agent_.contextStats();
+            if (stats.request_count > 0) {
+                int pct = stats.model_context_limit > 0
+                    ? (stats.total_input_tokens * 100) / stats.model_context_limit : 0;
+                if (pct >= 75) {
+                    out_.write(Ansi::warning()
+                        + "上下文用量 " + std::to_string(pct) + "%，强烈建议 /compact 释放空间。"
+                        + Ansi::reset() + "\n");
+                } else if (pct >= 50) {
+                    out_.write(Ansi::dim()
+                        + "上下文用量 " + std::to_string(pct) + "%，可考虑 /compact。"
+                        + Ansi::reset() + "\n");
+                }
+            }
+
+            agent_.saveSessionState();
             out_.write("\n");
         } catch (const std::exception& e) {
             gui_.stopSpinner();

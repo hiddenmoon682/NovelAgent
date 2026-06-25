@@ -9,6 +9,7 @@
 /// 不再共享外部引用。每个 Agent 拥有自己的 HTTP 连接状态，确保并行隔离。
 
 #include "agent/AgentState.h"
+#include "agent/ContextManagerTypes.h"
 #include "agent/ExecutionTracer.h"
 #include "agent/IMessageProcessor.h"
 #include "llm/Conversation.h"
@@ -39,6 +40,8 @@ public:
     void setMaxToolRounds(int n);
     /// 设置上下文管理器（知识库检索、动态上下文注入）。
     void setContextManager(ContextManager* cm);
+    /// 获取上下文管理器（非拥有指针，可能为 nullptr）。
+    ContextManager* contextManager() const { return context_manager_; }
     /// 设置每次请求的最大上下文 token 数（应用层预算上限），旧消息超出将被截断。
     void setMaxContextTokens(int tokens);
 
@@ -54,6 +57,35 @@ public:
     const llm::Conversation& conversation() const { return conversation_; }
     /// 清空对话历史，开始全新的对话。
     void clearConversation();
+    /// 重置整个会话（清空对话 + 重置上下文追踪 + 清除压缩摘要）。
+    void resetSession();
+
+    // ── 上下文管理便捷方法 ──
+    /// 执行对话压缩（委托 ContextManager::compact）。
+    agent::CompactResult compactConversation(std::optional<std::string> focus = std::nullopt);
+    /// 保留指定消息（按 Conversation::all() 索引）。
+    bool pinMessage(size_t index);
+    /// 取消保留。
+    bool unpinMessage(size_t index);
+    /// 获取上下文统计。
+    agent::SessionTokenState contextStats() const;
+    /// 获取最后一次上下文组装的警告列表（截断/用量临界等）。
+    std::vector<std::string> contextWarnings() const;
+    /// 设置当前活跃章节（供章节边界检测使用）。
+    void setCurrentChapter(const std::string& chapter_id);
+
+    // ── 对话回滚 ──
+    /// 回滚到指定消息索引（保留 [0, index]），丢弃之后的所有消息。
+    /// 返回 false 表示索引越界。
+    bool rewindTo(size_t index);
+    /// 返回所有用户消息的索引列表（可作为回滚点）。
+    std::vector<size_t> checkpointIndices() const;
+
+    // ── 会话持久化（灾难恢复）──
+    /// 保存完整会话状态（对话 + 元数据）。
+    void saveSessionState();
+    /// 加载完整会话状态并恢复。
+    void loadSessionState();
 
     // ── 处理器策略 ──
     /// 使用串行处理器——每轮 tool_call 逐一执行，等待 LLM 返回后再执行下一个。
@@ -100,6 +132,10 @@ private:
 
     // Fix #6: 显式状态机 — 管理 Agent 生命周期状态（Idle/Processing/WaitingTool 等）
     StateMachine state_;
+
+    // ── 章节边界检测 ──
+    std::string last_chapter_id_;               ///< 上一轮检测到的章节 ID
+    void maybeAutoCompact(const llm::LLMResponse& response);
 };
 
 } // namespace agent

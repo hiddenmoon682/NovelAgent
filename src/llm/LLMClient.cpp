@@ -57,14 +57,37 @@ nlohmann::json LLMClient::buildRequestBody(
     nlohmann::json msgs = nlohmann::json::array();
 
     if (!system_prompt.empty()) {
-        msgs.push_back({
+        nlohmann::json sys_msg = {
             {"role", "system"},
             {"content", system_prompt}
-        });
+        };
+        // cache_control: system prompt 始终标记缓存断点
+        if (config_.supports_cache_control) {
+            sys_msg["content"] = nlohmann::json::array({
+                {{"type", "text"}, {"text", system_prompt},
+                 {"cache_control", {{"type", "ephemeral"}}}}
+            });
+        }
+        msgs.push_back(std::move(sys_msg));
     }
 
-    for (const auto& msg : messages) {
-        msgs.push_back(msg); // ADL → llm::to_json
+    // 标记最后 2 条消息为缓存断点（仅当 provider 支持时）
+    int cache_mark_count = config_.supports_cache_control ? 2 : 0;
+    int cache_start = std::max(0, static_cast<int>(messages.size()) - cache_mark_count);
+    for (int i = 0; i < static_cast<int>(messages.size()); ++i) {
+        const auto& msg = messages[i];
+        if (i >= cache_start && config_.supports_cache_control) {
+            // 对带缓存标记的消息用 content 数组格式
+            nlohmann::json cached_msg = msg;  // ADL → to_json
+            std::string text = msg.content;
+            cached_msg["content"] = nlohmann::json::array({
+                {{"type", "text"}, {"text", text},
+                 {"cache_control", {{"type", "ephemeral"}}}}
+            });
+            msgs.push_back(std::move(cached_msg));
+        } else {
+            msgs.push_back(msg);
+        }
     }
 
     body["messages"] = msgs;

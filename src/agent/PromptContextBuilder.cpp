@@ -144,13 +144,20 @@ std::vector<const Character*> selectCharacters(
         }
     }
 
+    // 优先：本章有角色发展记录的角色
     for (const auto& character : project.characters) {
-        if (selected.size() >= maxCount) {
-            break;
+        if (selected.size() >= maxCount) break;
+        if (!character.generation.enabled) continue;
+        bool has_dev = false;
+        for (const auto& dev : character.development) {
+            if (dev.chapter_id == chapter.id) { has_dev = true; break; }
         }
-        if (!character.generation.enabled) {
-            continue;
-        }
+        if (has_dev) appendUnique(&character, selected, seen);
+    }
+    // 其次：本章有出场记录的角色
+    for (const auto& character : project.characters) {
+        if (selected.size() >= maxCount) break;
+        if (!character.generation.enabled) continue;
         if (containsId(character.chapter_appearances, chapter.id)) {
             appendUnique(&character, selected, seen);
         }

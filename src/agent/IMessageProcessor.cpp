@@ -82,12 +82,22 @@ SerialProcessor::Result SerialProcessor::process(
     auto tools = registry_.getToolDefinitions();
 
     // ── 步骤 4: 构建最终提示词 ──
-    // buildEffectivePrompt() 内部逻辑：
-    //   - 无 ContextManager：直接返回 system_prompt_，消息列表 = conversation
-    //   - 有 ContextManager：调用 assemble() 做消息裁剪/摘要，
-    //     然后通过 PromptComposer 将 personality + context 组合成最终提示词
     std::vector<llm::Message> effective_messages;
     auto effective_prompt = buildEffectivePrompt(conversation, effective_messages);
+
+    // ── 步骤 4.5: 同步压缩检查（截断 ≥5 条时立即 compact，不等下一轮）
+    if (context_manager_ && context_manager_->lastTruncatedCount() >= 5) {
+        spdlog::info("[SerialProcessor] 截断 {} 条，立即触发 compact",
+                     context_manager_->lastTruncatedCount());
+        auto cr = context_manager_->compact(conversation, client_,
+            "自动压缩：单次截断" + std::to_string(context_manager_->lastTruncatedCount()) + "条消息");
+        if (cr.messages_compacted > 0) {
+            spdlog::info("[SerialProcessor] 同步 compact 完成: {} 条 → {} tokens",
+                         cr.messages_compacted, cr.tokens_after);
+            // 重建提示词（摘要已注入，截断量大幅减少）
+            effective_prompt = buildEffectivePrompt(conversation, effective_messages);
+        }
+    }
 
     // ── 步骤 5: 配置 ToolCallLoop ──
     // 创建 ToolCallLoop 实例并设置运行参数。
@@ -104,9 +114,14 @@ SerialProcessor::Result SerialProcessor::process(
     //   若返回 tool_call → 执行工具 → 结果追加到 conversation → 再次调用 LLM
     //   重复直到 LLM 返回纯文本回复或达到 max_rounds
     auto result = loop.run(conversation, tools, effective_prompt,
-                           std::move(callbacks), config);
+                           std::move(callbacks), config, &effective_messages);
 
-    // ── 步骤 7: 处理结果 ──
+    // ── 步骤 7: 记录 token 消耗（会话级追踪）
+    if (context_manager_) {
+        context_manager_->recordUsage(result.input_tokens, result.output_tokens);
+    }
+
+    // ── 步骤 8: 处理结果 ──
     // 将 LLM 的最终响应保存到 Result，同时追加到对话历史中，
     // 以便下一轮用户输入能携带完整的上下文。
     Result r;
@@ -175,7 +190,8 @@ std::string SerialProcessor::buildEffectivePrompt(
     }
 
     // ── 路径 B：有 ContextManager（动态上下文模式） ──
-    // assemble() 内部根据 max_context_tokens_ 做消息裁剪，
+    // assemble() 内部根据 max_context_tokens_ 做消息裁剪和警告生成，
+    // 警告通过 ContextManager::lastWarnings() 传递到 Agent → REPL 展示。
     // 返回组装后的消息列表和附加的系统提示词。
     // TODO 上下文压缩问题
     auto assembly = context_manager_->assemble(conversation, max_context_tokens_);

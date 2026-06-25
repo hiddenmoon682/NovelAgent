@@ -85,6 +85,7 @@ struct Message {
     std::vector<ToolCall> tool_calls;  // 工具调用列表（仅 assistant 角色使用）
     std::string tool_call_id;          // 关联的工具调用 ID（仅 tool 角色使用）
     std::string name;                  // 可选参与者名称
+    bool preserved = false;            // 内部标记：截断时优先保留（不参与 JSON 序列化）
 
     // ── 便捷工厂方法 ──
 

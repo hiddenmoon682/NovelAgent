@@ -43,11 +43,6 @@ if(NOT spdlog_FOUND)
     FetchContent_MakeAvailable(spdlog)
 endif()
 
-# --- FTXUI (Terminal UI) ---
-# MSYS2 提供预编译包: mingw-w64-x86_64-ftxui 6.1.9
-# 安装: pacman -S mingw-w64-x86_64-ftxui
-find_package(ftxui REQUIRED)
-
 # --- cpp-httplib ---
 # 轻量级 C++ HTTP(S) 库，header-only。本地副本，无需网络下载。
 add_library(httplib INTERFACE)
