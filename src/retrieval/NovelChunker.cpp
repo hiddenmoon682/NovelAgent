@@ -28,7 +28,8 @@ TextChunk TextChunk::chapterChunk(
     chunk.metadata = {
         {"type", "chapter"},
         {"chapter_id", chapter_id},
-        {"chunk_index", chunk_index}
+        {"chunk_index", chunk_index},
+        {"text", text}
     };
     return chunk;
 }
@@ -42,7 +43,8 @@ TextChunk TextChunk::characterChunk(
     chunk.text = text;
     chunk.metadata = {
         {"type", "character"},
-        {"character_id", character_id}
+        {"character_id", character_id},
+        {"text", text}
     };
     return chunk;
 }
@@ -56,7 +58,8 @@ TextChunk TextChunk::settingChunk(
     chunk.text = text;
     chunk.metadata = {
         {"type", "setting"},
-        {"setting_id", setting_id}
+        {"setting_id", setting_id},
+        {"text", text}
     };
     return chunk;
 }
@@ -70,7 +73,8 @@ TextChunk TextChunk::worldRuleChunk(
     chunk.text = text;
     chunk.metadata = {
         {"type", "world_rule"},
-        {"rule_id", rule_id}
+        {"rule_id", rule_id},
+        {"text", text}
     };
     return chunk;
 }
@@ -385,8 +389,12 @@ std::string NovelChunker::overlapFromPrevious(const std::string& prev_chunk_text
         return tail.substr(last_period + 1);
     }
 
-    return prev_chunk_text.substr(
-        prev_chunk_text.size() - overlap_size);
+    // 未找到合适的句子边界 → 回退字节截断，但确保在 UTF-8 字符边界
+    // （A11 修复：避免在多字节字符中间截断产生乱码）
+    size_t cut = prev_chunk_text.size() - overlap_size;
+    while (cut > 0 && (static_cast<unsigned char>(prev_chunk_text[cut]) & 0xC0) == 0x80)
+        --cut;
+    return prev_chunk_text.substr(cut);
 }
 
 } // namespace retrieval

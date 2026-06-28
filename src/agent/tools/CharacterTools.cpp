@@ -378,6 +378,67 @@ json UpdateCharacterRelationshipsTool::execute(const json& args) {
     return {{"success", true}, {"character_id", ch->id}, {"relationship_count", ch->relationships.size()}};
 }
 
+// ===========================================================================
+// AddCharacterDevelopmentTool
+// ===========================================================================
+
+json AddCharacterDevelopmentTool::parameters() const {
+    return utils::schema::object({
+        {"character_id", utils::schema::stringProp("角色 ID")},
+        {"chapter_id", utils::schema::stringProp("关联章节 ID")},
+        {"summary", utils::schema::stringProp("发展变化简述")},
+        {"category", utils::schema::stringEnum("变化类别",
+            {"personality", "relationship", "goal", "motivation", "appearance",
+             "background", "arc", "other"})},
+        {"affected_fields", utils::schema::stringArrayProp("受影响的角色字段列表（可选）")}
+    }, {"character_id", "chapter_id", "summary"});
+}
+
+json AddCharacterDevelopmentTool::execute(const json& args) {
+    std::string char_id    = args.value("character_id", "");
+    std::string chapter_id = args.value("chapter_id", "");
+    std::string summary    = args.value("summary", "");
+    if (char_id.empty())    return {{"error", "character_id 不能为空"}};
+    if (chapter_id.empty()) return {{"error", "chapter_id 不能为空"}};
+    if (summary.empty())    return {{"error", "summary 不能为空"}};
+
+    auto* ch = findCharacter(project_->characters, char_id);
+    if (!ch) return {{"error", "角色不存在: " + char_id}};
+
+    // 软校验章节存在性
+    auto cit = std::find_if(project_->outline.chapters.begin(),
+        project_->outline.chapters.end(),
+        [&](const Chapter& c) { return c.id == chapter_id; });
+    if (cit == project_->outline.chapters.end()) {
+        spdlog::warn("[add_character_development] 章节 {} 不存在，但允许记录", chapter_id);
+    }
+
+    int max_dev = 0;
+    std::string prefix = "dev-" + char_id + "-";
+    for (const auto& dev : ch->development) {
+        if (dev.id.size() > prefix.size() && dev.id.substr(0, prefix.size()) == prefix) {
+            try { max_dev = std::max(max_dev, std::stoi(dev.id.substr(prefix.size()))); }
+            catch (...) {}
+        }
+    }
+
+    CharacterDevelopment dev;
+    dev.id         = prefix + std::to_string(max_dev + 1);
+    dev.chapter_id = chapter_id;
+    dev.summary    = summary;
+    dev.category   = args.value("category", "other");
+    if (args.contains("affected_fields") && args["affected_fields"].is_array()) {
+        for (const auto& f : args["affected_fields"])
+            dev.affected_fields.push_back(f.get<std::string>());
+    }
+
+    ch->development.push_back(std::move(dev));
+    ProjectIO::save(*project_);
+    spdlog::info("[add_character_development] {}: {} → {} (category={})",
+                 ch->development.back().id, char_id, chapter_id, ch->development.back().category);
+    return {{"success", true}, {"development_id", ch->development.back().id}};
+}
+
 } // namespace agent
 
 REGISTER_TOOL(agent::GetCharacterTool, "get_character", get_character)
@@ -386,3 +447,4 @@ REGISTER_TOOL(agent::CreateCharacterTool, "create_character", create_character)
 REGISTER_TOOL(agent::UpdateCharacterTool, "update_character", update_character)
 REGISTER_TOOL(agent::DeleteCharacterTool, "delete_character", delete_character)
 REGISTER_TOOL(agent::UpdateCharacterRelationshipsTool, "update_character_relationships", update_character_relationships)
+REGISTER_TOOL(agent::AddCharacterDevelopmentTool, "add_character_development", add_character_development)

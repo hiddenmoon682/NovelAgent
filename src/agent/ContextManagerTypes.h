@@ -20,6 +20,7 @@ struct ContextAssembly {
     int total_tokens = 0;                   ///< system_prompt + messages 的总 token 数
     int truncated_count = 0;                ///< 被截断的消息数（0 = 未截断）
     bool has_compacted_context = false;     ///< 是否注入了压缩摘要
+    bool has_semantic_context = false;       ///< A3: 是否注入了语义检索结果
     std::vector<std::string> warnings;      ///< 降级/问题警告列表（供 CLI/TUI 展示）
 };
 

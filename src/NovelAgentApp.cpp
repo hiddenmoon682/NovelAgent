@@ -71,6 +71,7 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
 void NovelAgentApp::runRepl(const std::string& welcomeMessage)
 {
     ReplHandler repl(agent_, out_, project_);
+    repl.setApp(this);  // A2: 使 /index 命令可访问向量存储和嵌入生成器
     if (!welcomeMessage.empty()) {
         repl.setWelcomeMessage(welcomeMessage);
     } else {

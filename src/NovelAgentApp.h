@@ -36,6 +36,10 @@ public:
     agent::TemplateManager& templateManager() { return template_mgr_; }
     std::shared_ptr<Project> project() { return project_; }
 
+    // A2: 暴露检索组件供 ReplHandler 的 /index 命令使用
+    retrieval::VectorStore& vectorStore() { return vector_store_; }
+    retrieval::EmbeddingGenerator& embeddingGenerator() { return embedding_gen_; }
+
 private:
     std::unique_ptr<IOutputChannel> ownedOutput_;
     IOutputChannel& out_;

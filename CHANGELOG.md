@@ -1,5 +1,35 @@
 # Changelog
 
+## [2026-06-28] 设计评审批次⑤（最终轮）：语义检索激活 + 顺手修复（A2/A3/A9/A11/A13/A14）
+
+> 最后一轮。A2+A3 是整个评审最大的"承诺 vs 现实"落差——向量检索子系统代码全写好了但从未接入。
+> 顺带修 A9 设定消息自动 pin、A13 word_count 假数据、A14 CharacterDevelopment 通道、A11 NovelChunker 中文适配。
+
+### A2+A3 — 语义检索管线激活
+- `ReplHandler.cpp`：`/index` 命令从桩变成真实现（遍历章节/角色/设定/规则→NovelChunker切分→EmbeddingGenerator生成嵌入→VectorStore.insert→saveToFile持久化）
+- `NovelAgentApp.h`：暴露 `vectorStore()` 和 `embeddingGenerator()` accessor
+- `ReplHandler.h`：加 `setApp(NovelAgentApp*)` 后向引用
+- `VectorStore.h`：`saveToFile()` 从 private 改为 public
+- `ContextManager.cpp`：assemble() 语义召回加 chapter_id 去重 + 分层标签 "[补充记忆]"
+- `ContextManagerTypes.h`：`ContextAssembly` 加 `has_semantic_context`
+
+### A11 — NovelChunker 修复
+- `NovelChunker.cpp`：4个工厂方法 metadata 加 `{"text", text}` 字段（修复两个消费者找不到 text 导致整条召回链路白费的 bug）
+- `NovelChunker.cpp`：`overlapFromPrevious` 加 UTF-8 安全截断回退（续字节 0x80-0xBF 检测）
+- `EmbeddingGenerator.cpp`：`preprocessText` 加 UTF-8 安全截断回退
+
+### A9 — 设定消息自动 pin
+- `ToolPipeline.cpp`：`executeAndAppend` 加设定工具白名单，执行后自动 `pinMessage`
+
+### A13 — word_count 自动维护
+- `ChapterTools.cpp`：`WriteChapterTool` 和 `AppendChapterTool` 写完正文后用 TokenCounter 更新 `Chapter::word_count` 和 `Project::current_word_count`
+
+### A14 — CharacterDevelopment 通道
+- `CharacterTools.h/.cpp`：新增 `AddCharacterDevelopmentTool`（参数 character_id/chapter_id/summary/category/affected_fields，ID=dev-char_id-N）
+
+### 测试
+- 全量 16/16 通过
+
 ## [2026-06-28] 设计评审批次④：状态机实现 + Shell 白名单 + 并行编排修复（D1/C1C2/A18）
 
 > 将三项"装饰/过度/误判"补建成真正可用。全量 16/16 通过。

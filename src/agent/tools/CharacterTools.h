@@ -103,4 +103,18 @@ public:
     ToolCategory category() const override { return ToolCategory::Character; }
 };
 
+/// 为角色添加发展记录（弧光追踪）。
+class AddCharacterDevelopmentTool : public BuiltInTool {
+    std::shared_ptr<Project> project_;
+public:
+    explicit AddCharacterDevelopmentTool(std::shared_ptr<Project> p) : project_(p) {}
+    std::string name() const override { return "add_character_development"; }
+    std::string description() const override {
+        return "为指定角色添加一条发展记录，记录该角色在特定章节中的变化。";
+    }
+    nlohmann::json parameters() const override;
+    nlohmann::json execute(const nlohmann::json& args) override;
+    ToolCategory category() const override { return ToolCategory::Character; }
+};
+
 } // namespace agent

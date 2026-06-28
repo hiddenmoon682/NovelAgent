@@ -91,17 +91,17 @@ public:
     /// @return 条目指针；不存在时返回 nullptr（调用方不得持有此指针超过下一次修改操作）
     const VectorEntry* get(const std::string& id) const;
 
+    /// 将内存中的向量持久化到 JSON 文件（/index 命令结束后调用）。
+    void saveToFile() const;
+
 private:
     std::string db_path_;
-    std::vector<VectorEntry> entries_;     // 内存中的向量列表
-    bool dirty_ = false;                   // 标记是否有未保存的变更
+    std::vector<VectorEntry> entries_;
+    bool dirty_ = false;
     bool initialized_ = false;
 
     /// 从 JSON 文件加载所有向量到内存。
     void loadFromFile();
-
-    /// 将内存中的向量保存到 JSON 文件。
-    void saveToFile() const;
 
     /// 计算两个向量的余弦相似度。
     /// @return [0, 1] 区间内的相似度值

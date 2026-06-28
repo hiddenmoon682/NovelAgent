@@ -175,6 +175,12 @@ std::string EmbeddingGenerator::preprocessText(const std::string& text) const
     // 截断到 max_text_length 字符，优先在句子边界处截断
     std::string truncated = text.substr(0, embed_config_.max_text_length);
 
+    // A11: UTF-8 安全回退——避免在多字节字符中间截断产生乱码
+    while (!truncated.empty() &&
+           (static_cast<unsigned char>(truncated.back()) & 0xC0) == 0x80) {
+        truncated.pop_back();
+    }
+
     auto last_period = truncated.find_last_of(".。！？!?");
     if (last_period != std::string::npos
         && static_cast<int>(last_period) > embed_config_.max_text_length / 2) {

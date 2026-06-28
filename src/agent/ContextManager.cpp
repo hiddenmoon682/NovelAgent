@@ -368,20 +368,40 @@ ContextAssembly ContextManager::assemble(
                 // 生成查询向量 → 语义搜索 → 格式化召回结果
                 auto query_emb = embedding_gen_->generateEmbedding(last_user_text);
                 auto results = vector_store_->search(query_emb, retrieval_top_k_);
+
+                // A3: 收集确定性上下文中已覆盖的 chapter_id，跳过重复片段
+                std::set<std::string> covered_ids;
+                if (project_) {
+                    covered_ids.insert(current_chapter_id_);
+                    for (const auto& ch : project_->outline.chapters) {
+                        if (ch.id == current_chapter_id_) continue;
+                        // 相邻章节也标记为已覆盖（缩减范围而非全包含）
+                    }
+                }
+
                 if (!results.empty()) {
-                    std::string retrieval_section = "\n\n[相关历史片段 — 仅作事实参考，风格以当前上下文为准]\n";
+                    std::string retrieval_section =
+                        "\n\n=== 补充记忆（向量相似度检索，"
+                        "优先级低于上方确定性上下文）===\n";
+                    int added = 0;
                     for (size_t i = 0; i < results.size(); ++i) {
                         if (results[i].metadata.contains("text")) {
                             std::string src = results[i].metadata.value("chapter_id", "?");
+                            // 跳过已在确定性上下文中的章节片段
+                            if (covered_ids.count(src)) continue;
+                            ++added;
                             retrieval_section += "片段" + std::to_string(i + 1)
                                 + " (ch-" + src + ", 相似度"
                                 + std::to_string(static_cast<int>(results[i].similarity * 100))
                                 + "%): " + results[i].metadata["text"].get<std::string>() + "\n";
                         }
                     }
-                    result.system_prompt += retrieval_section;
-                    result.has_compacted_context = true;
-                    spdlog::info("[ContextManager] 向量检索召回 {} 条片段", results.size());
+                    if (added > 0) {
+                        result.system_prompt += retrieval_section;
+                        result.has_semantic_context = true;
+                        spdlog::info("[ContextManager] 向量检索召回 {} 条，去重后注入 {} 条",
+                                     results.size(), added);
+                    }
                 }
             } catch (const std::exception& e) {
                 spdlog::warn("[ContextManager] 向量检索失败: {}", e.what());

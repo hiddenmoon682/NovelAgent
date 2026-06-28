@@ -1,5 +1,6 @@
 #include "agent/tools/ChapterTools.h"
 
+#include "llm/TokenCounter.h"
 #include "project/ProjectIO.h"
 #include "utils/FileUtils.h"
 #include "utils/SchemaUtils.h"
@@ -69,12 +70,12 @@ json WriteChapterTool::execute(const json& args) {
     std::string chapter_id = args.value("chapter_id", "");
     std::string content = args.value("content", "");
 
-    const auto* ch = findChapter(project_->outline.chapters, chapter_id);
+    auto* ch = findChapter(project_->outline.chapters, chapter_id);
     if (!ch) {
         return {{"error", "章节 '" + chapter_id + "' 不存在"}};
     }
 
-    // D1.2: 覆写前检查 — 章节已有内容时需确认（allow_auto_overwrite 为 false 时）
+    // D1.2: 覆写前检查
     std::string existing = ProjectIO::readChapter(project_->path, ch->file_path);
     if (!existing.empty() && !project_->allow_auto_overwrite) {
         spdlog::warn("[write_chapter] {} 已有内容 ({} 字)，需确认覆写", chapter_id, existing.size());
@@ -88,7 +89,15 @@ json WriteChapterTool::execute(const json& args) {
     }
 
     ProjectIO::writeChapter(project_->path, ch->file_path, content);
-    spdlog::info("[write_chapter] {} ← {} 字", chapter_id, content.size());
+
+    // A13: 更新字数统计
+    int old_count = ch->word_count;
+    ch->word_count = llm::TokenCounter::estimateChineseChars(content)
+                   + llm::TokenCounter::estimateEnglishWords(content);
+    project_->current_word_count += (ch->word_count - old_count);
+    ProjectIO::save(*project_);
+    spdlog::info("[write_chapter] {} ← {} 字节, 字数 {} → {}", chapter_id, content.size(),
+                 old_count, ch->word_count);
 
     return {{"success", true}, {"chapter_id", chapter_id}};
 }
@@ -108,7 +117,7 @@ json AppendChapterTool::execute(const json& args) {
     std::string chapter_id = args.value("chapter_id", "");
     std::string append_content = args.value("content", "");
 
-    const auto* ch = findChapter(project_->outline.chapters, chapter_id);
+    auto* ch = findChapter(project_->outline.chapters, chapter_id);
     if (!ch) {
         return {{"error", "章节 '" + chapter_id + "' 不存在"}};
     }
@@ -124,8 +133,17 @@ json AppendChapterTool::execute(const json& args) {
     }
 
     ProjectIO::writeChapter(project_->path, ch->file_path, combined);
-    spdlog::info("[append_to_chapter] {} += {} 字 (总计 {} 字)",
-                 chapter_id, append_content.size(), combined.size());
+
+    // A13: 更新字数统计
+    int old_count = ch->word_count;
+    ch->word_count = llm::TokenCounter::estimateChineseChars(combined)
+                   + llm::TokenCounter::estimateEnglishWords(combined);
+    project_->current_word_count += (ch->word_count - old_count);
+    ProjectIO::save(*project_);
+    spdlog::info("[append_to_chapter] {} += {} 字节, 字数 {} → {}",
+                 chapter_id, append_content.size(), old_count, ch->word_count);
+
+    return {{"success", true}, {"chapter_id", chapter_id}};
 
     return {{"success", true}, {"chapter_id", chapter_id}};
 }

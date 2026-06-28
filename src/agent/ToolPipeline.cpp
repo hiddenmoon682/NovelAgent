@@ -5,15 +5,29 @@
 
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
+#include <set>
 
 namespace agent {
 
 void ToolPipeline::executeAndAppend(const std::vector<llm::ToolCall>& tool_calls)
 {
+    // A9: 设定类工具——执行结果对长篇小说一致性至关重要
+    static const std::set<std::string> kSettingTools = {
+        "create_character", "update_character",
+        "create_setting",   "update_setting",
+        "create_world_rule","update_world_rule",
+        "add_character_development"
+    };
+
     for (const auto& tc : tool_calls) {
         spdlog::info("[ToolPipeline] 执行: {} (id={})", tc.function_name, tc.id);
         std::string result = executeOne(tc);
         conversation_.addToolResult(tc.id, std::move(result));
+
+        // A9：设定类工具结果自动 pin，防止 token 截断时丢失关键世界设定
+        if (kSettingTools.count(tc.function_name)) {
+            conversation_.pinMessage(conversation_.size() - 1);
+        }
     }
 }
 
