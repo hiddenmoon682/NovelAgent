@@ -26,6 +26,47 @@ Chapter* findChapter(std::vector<Chapter>& chapters,
     return (it != chapters.end()) ? &(*it) : nullptr;
 }
 
+// A6: 校验单值 string ID 和 vector<string> ID 是否存在。
+// 采用软校验——不存在时 warn 但不阻断（允许 LLM 先创建实体再关联）。
+static void validateChapterId(const std::vector<Chapter>& chapters, const std::string& id, const std::string& field, const std::string& caller) {
+    if (!id.empty()) {
+        auto it = std::find_if(chapters.begin(), chapters.end(), [&](const Chapter& c) { return c.id == id; });
+        if (it == chapters.end()) spdlog::warn("[{}] {} 引用的章节 {} 不存在", caller, field, id);
+    }
+}
+static void validateCharId(const std::vector<Character>& chars, const std::string& id, const std::string& field, const std::string& caller) {
+    if (!id.empty()) {
+        auto it = std::find_if(chars.begin(), chars.end(), [&](const Character& c) { return c.id == id; });
+        if (it == chars.end()) spdlog::warn("[{}] {} 引用的角色 {} 不存在", caller, field, id);
+    }
+}
+static void validateSettingId(const std::vector<Setting>& settings, const std::string& id, const std::string& field, const std::string& caller) {
+    if (!id.empty()) {
+        auto it = std::find_if(settings.begin(), settings.end(), [&](const Setting& s) { return s.id == id; });
+        if (it == settings.end()) spdlog::warn("[{}] {} 引用的设定 {} 不存在", caller, field, id);
+    }
+}
+static void validateVolumeId(const std::vector<Volume>& vols, const std::string& id, const std::string& field, const std::string& caller) {
+    if (!id.empty()) {
+        auto it = std::find_if(vols.begin(), vols.end(), [&](const Volume& v) { return v.id == id; });
+        if (it == vols.end()) spdlog::warn("[{}] {} 引用的卷 {} 不存在", caller, field, id);
+    }
+}
+static void validatePlotThreadId(const std::vector<PlotThread>& pts, const std::string& id, const std::string& field, const std::string& caller) {
+    if (!id.empty()) {
+        auto it = std::find_if(pts.begin(), pts.end(), [&](const PlotThread& p) { return p.id == id; });
+        if (it == pts.end()) spdlog::warn("[{}] {} 引用的剧情线 {} 不存在", caller, field, id);
+    }
+}
+template<typename T>
+static void validateIdArray(const T& container, const std::vector<std::string>& ids, const std::string& field, const std::string& caller) {
+    for (const auto& id : ids) {
+        if (id.empty()) continue;
+        auto it = std::find_if(container.begin(), container.end(), [&](const auto& e) { return e.id == id; });
+        if (it == container.end()) spdlog::warn("[{}] {} 引用的 {} 不存在", caller, field, id);
+    }
+}
+
 } // namespace
 
 // ===========================================================================
@@ -239,8 +280,10 @@ json CreateChapterTool::execute(const json& args) {
 
     // ── 时空定位 ──
     new_ch.location_id     = args.value("location_id", "");
+    validateSettingId(project_->settings, new_ch.location_id, "location_id", "create_chapter");
     new_ch.time_marker     = args.value("time_marker", "");
     new_ch.volume_id       = args.value("volume_id", "");
+    validateVolumeId(project_->outline.volumes, new_ch.volume_id, "volume_id", "create_chapter");
 
     // ── 项目管理 ──
     new_ch.status          = args.value("status", "outlined");
@@ -330,11 +373,19 @@ json UpdateChapterTool::execute(const json& args) {
 
         if (auto si = kStringMap.find(key); si != kStringMap.end() && value.is_string()) {
             ch->*si->second = value.get<std::string>();
+            // A6: 校验单值 string ID 引用
+            if (key == "location_id") validateSettingId(project_->settings, value.get<std::string>(), key, "update_chapter");
+            if (key == "volume_id") validateVolumeId(project_->outline.volumes, value.get<std::string>(), key, "update_chapter");
             updated.push_back(key);
         } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && value.is_array()) {
             auto& arr = ch->*ai->second;
             arr.clear();
             for (const auto& v : value) arr.push_back(v.get<std::string>());
+            // A6: 校验数组 string ID 引用
+            if (key == "pov_characters") validateIdArray(project_->characters, arr, key, "update_chapter");
+            if (key == "focus_characters") validateIdArray(project_->characters, arr, key, "update_chapter");
+            if (key == "focus_settings") validateIdArray(project_->settings, arr, key, "update_chapter");
+            if (key == "active_plot_threads") validateIdArray(project_->outline.plot_threads, arr, key, "update_chapter");
             updated.push_back(key);
         }
         // 不在白名单中的字段 → 静默忽略（包括 id/order/scenes/metadata）

@@ -12,6 +12,16 @@ WorldRule* findRule(std::vector<WorldRule>& r, const std::string& id) {
     auto it = std::find_if(r.begin(), r.end(), [&](const WorldRule& x) { return x.id == id; });
     return (it != r.end()) ? &(*it) : nullptr;
 }
+
+// A6: 软校验——warn 不阻断
+template<typename T>
+static void validateIdArray(const T& container, const std::vector<std::string>& ids, const std::string& field, const std::string& caller) {
+    for (const auto& id : ids) {
+        if (id.empty()) continue;
+        auto it = std::find_if(container.begin(), container.end(), [&](const auto& e) { return e.id == id; });
+        if (it == container.end()) spdlog::warn("[{}] {} 引用的 ID {} 不存在", caller, field, id);
+    }
+}
 }
 
 json GetWorldRuleTool::parameters() const {
@@ -74,6 +84,7 @@ json UpdateWorldRuleTool::execute(const json& args) {
             auto& arr = r->*ai->second;
             arr.clear();
             for (const auto& v : it.value()) arr.push_back(v.get<std::string>());
+            if (key == "related_settings") validateIdArray(project_->settings, arr, "related_settings", "update_world_rule");
             n++;
         }
     }

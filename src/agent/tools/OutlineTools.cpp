@@ -17,6 +17,22 @@ PlotThread* findPlotThread(std::vector<PlotThread>& pts, const std::string& id) 
     auto it = std::find_if(pts.begin(), pts.end(), [&](const PlotThread& p) { return p.id == id; });
     return (it != pts.end()) ? &(*it) : nullptr;
 }
+
+// A6: 软校验——warn 不阻断
+template<typename T>
+static void validateIdArray(const T& container, const std::vector<std::string>& ids, const std::string& field, const std::string& caller) {
+    for (const auto& id : ids) {
+        if (id.empty()) continue;
+        auto it = std::find_if(container.begin(), container.end(), [&](const auto& e) { return e.id == id; });
+        if (it == container.end()) spdlog::warn("[{}] {} 引用的 ID {} 不存在", caller, field, id);
+    }
+}
+static void validateChapterId(const std::vector<Chapter>& chapters, const std::string& id, const std::string& field, const std::string& caller) {
+    if (!id.empty()) {
+        auto it = std::find_if(chapters.begin(), chapters.end(), [&](const Chapter& c) { return c.id == id; });
+        if (it == chapters.end()) spdlog::warn("[{}] {} 引用的章节 {} 不存在", caller, field, id);
+    }
+}
 }
 
 json GetOutlineTool::parameters() const {
@@ -121,13 +137,19 @@ json CreateVolumeTool::execute(const json& args) {
     vol.theme             = args.value("theme", "");
     vol.goal              = args.value("goal", "");
     vol.start_chapter_id  = args.value("start_chapter_id", "");
+    validateChapterId(project_->outline.chapters, vol.start_chapter_id, "start_chapter_id", "create_volume");
     vol.end_chapter_id    = args.value("end_chapter_id", "");
+    validateChapterId(project_->outline.chapters, vol.end_chapter_id, "end_chapter_id", "create_volume");
     if (args.contains("key_events") && args["key_events"].is_array())
         for (const auto& v : args["key_events"]) vol.key_events.push_back(v.get<std::string>());
-    if (args.contains("focus_characters") && args["focus_characters"].is_array())
+    if (args.contains("focus_characters") && args["focus_characters"].is_array()) {
         for (const auto& v : args["focus_characters"]) vol.focus_characters.push_back(v.get<std::string>());
-    if (args.contains("active_plot_threads") && args["active_plot_threads"].is_array())
+        validateIdArray(project_->characters, vol.focus_characters, "focus_characters", "create_volume");
+    }
+    if (args.contains("active_plot_threads") && args["active_plot_threads"].is_array()) {
         for (const auto& v : args["active_plot_threads"]) vol.active_plot_threads.push_back(v.get<std::string>());
+        validateIdArray(project_->outline.plot_threads, vol.active_plot_threads, "active_plot_threads", "create_volume");
+    }
 
     project_->outline.volumes.push_back(vol);
     ProjectIO::save(*project_);
@@ -234,11 +256,17 @@ json CreatePlotThreadTool::execute(const json& args) {
     pt.central_question = args.value("central_question", "");
     pt.resolution       = args.value("resolution", "");
     pt.start_chapter_id = args.value("start_chapter_id", "");
+    validateChapterId(project_->outline.chapters, pt.start_chapter_id, "start_chapter_id", "create_plot_thread");
     pt.end_chapter_id   = args.value("end_chapter_id", "");
-    if (args.contains("related_characters") && args["related_characters"].is_array())
+    validateChapterId(project_->outline.chapters, pt.end_chapter_id, "end_chapter_id", "create_plot_thread");
+    if (args.contains("related_characters") && args["related_characters"].is_array()) {
         for (const auto& v : args["related_characters"]) pt.related_characters.push_back(v.get<std::string>());
-    if (args.contains("related_settings") && args["related_settings"].is_array())
+        validateIdArray(project_->characters, pt.related_characters, "related_characters", "create_plot_thread");
+    }
+    if (args.contains("related_settings") && args["related_settings"].is_array()) {
         for (const auto& v : args["related_settings"]) pt.related_settings.push_back(v.get<std::string>());
+        validateIdArray(project_->settings, pt.related_settings, "related_settings", "create_plot_thread");
+    }
 
     project_->outline.plot_threads.push_back(pt);
     ProjectIO::save(*project_);
@@ -283,13 +311,18 @@ json UpdatePlotThreadTool::execute(const json& args) {
     for (auto it = f.begin(); it != f.end(); ++it) {
         const std::string& key = it.key();
         if (auto si = kStringMap.find(key); si != kStringMap.end() && it.value().is_string()) {
-            pt->*si->second = it.value().get<std::string>(); n++;
+            pt->*si->second = it.value().get<std::string>();
+            if (key == "start_chapter_id") validateChapterId(project_->outline.chapters, it.value().get<std::string>(), key, "update_plot_thread");
+            if (key == "end_chapter_id") validateChapterId(project_->outline.chapters, it.value().get<std::string>(), key, "update_plot_thread");
+            n++;
         } else if (key == "priority" && it.value().is_number_integer()) {
             pt->priority = it.value().get<int>(); n++;
         } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && it.value().is_array()) {
             auto& arr = pt->*ai->second;
             arr.clear();
             for (const auto& v : it.value()) arr.push_back(v.get<std::string>());
+            if (key == "related_characters") validateIdArray(project_->characters, arr, "related_characters", "update_plot_thread");
+            if (key == "related_settings") validateIdArray(project_->settings, arr, "related_settings", "update_plot_thread");
             n++;
         }
     }

@@ -12,6 +12,16 @@ Setting* findSetting(std::vector<Setting>& s, const std::string& id) {
     auto it = std::find_if(s.begin(), s.end(), [&](const Setting& x) { return x.id == id; });
     return (it != s.end()) ? &(*it) : nullptr;
 }
+
+// A6: 软校验——warn 不阻断
+template<typename T>
+static void validateIdArray(const T& container, const std::vector<std::string>& ids, const std::string& field, const std::string& caller) {
+    for (const auto& id : ids) {
+        if (id.empty()) continue;
+        auto it = std::find_if(container.begin(), container.end(), [&](const auto& e) { return e.id == id; });
+        if (it == container.end()) spdlog::warn("[{}] {} 引用的 ID {} 不存在", caller, field, id);
+    }
+}
 }
 
 json GetSettingTool::parameters() const {
@@ -78,6 +88,9 @@ json UpdateSettingTool::execute(const json& args) {
             auto& arr = s->*ai->second;
             arr.clear();
             for (const auto& v : it.value()) arr.push_back(v.get<std::string>());
+            if (key == "related_characters") validateIdArray(project_->characters, arr, "related_characters", "update_setting");
+            if (key == "related_plot_threads") validateIdArray(project_->outline.plot_threads, arr, "related_plot_threads", "update_setting");
+            if (key == "related_rule_ids") validateIdArray(project_->world_rules, arr, "related_rule_ids", "update_setting");
             n++;
         }
     }

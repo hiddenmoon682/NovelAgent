@@ -23,6 +23,16 @@ Character* findCharacter(std::vector<Character>& chars, const std::string& id) {
     return (it != chars.end()) ? &(*it) : nullptr;
 }
 
+// A6: 校验数组 ID 存在性（软校验——warn，不阻断）
+template<typename T>
+static void validateIdArray(const T& container, const std::vector<std::string>& ids, const std::string& field, const std::string& caller) {
+    for (const auto& id : ids) {
+        if (id.empty()) continue;
+        auto it = std::find_if(container.begin(), container.end(), [&](const auto& e) { return e.id == id; });
+        if (it == container.end()) spdlog::warn("[{}] {} 引用的 ID {} 不存在", caller, field, id);
+    }
+}
+
 } // namespace
 
 // ===========================================================================
@@ -224,6 +234,9 @@ json UpdateCharacterTool::execute(const json& args) {
             auto& arr = ch->*ai->second;
             arr.clear();
             for (const auto& v : value) arr.push_back(v.get<std::string>());
+            // A6: 校验 chapter_appearances 中的章节 ID
+            if (key == "chapter_appearances")
+                validateIdArray(project_->outline.chapters, arr, "chapter_appearances", "update_character");
             updated.push_back(key);
         }
         // 不在白名单中的字段 → 静默忽略
