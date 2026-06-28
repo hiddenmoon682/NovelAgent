@@ -354,14 +354,20 @@ ContextAssembly ContextManager::assemble(
                 "Project 已更新，向量索引可能过期。建议 /index 重建。");
             spdlog::warn("[ContextManager] 向量索引可能过期");
         }
-        // 从对话尾部反向扫描，找到最后一条用户消息作为语义查询的源文本
+        // 从对话尾部反向扫描，找到最后一条用户消息作为语义查询的源文本。
+        // A10: 拼接最近 3 条 user 消息做查询（而非只用最后一条），
+        // 避免"继续""改得更有张力"这类短句召回质量差。
         const auto& msgs = conversation.messages();
-        std::string last_user_text;
-        for (auto it = msgs.rbegin(); it != msgs.rend(); ++it) {
+        std::vector<std::string> recent_user_texts;
+        for (auto it = msgs.rbegin(); it != msgs.rend() && recent_user_texts.size() < 3; ++it) {
             if (it->role == llm::MessageRole::User) {
-                last_user_text = it->content;
-                break;
+                recent_user_texts.push_back(it->content);
             }
+        }
+        std::string last_user_text;
+        for (int i = static_cast<int>(recent_user_texts.size()) - 1; i >= 0; --i) {
+            if (!last_user_text.empty()) last_user_text += " [SEP] ";
+            last_user_text += recent_user_texts[i];
         }
         if (!last_user_text.empty()) {
             try {

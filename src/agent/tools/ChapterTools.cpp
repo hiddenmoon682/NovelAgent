@@ -199,13 +199,19 @@ json ListChaptersTool::parameters() const {
 
 json ListChaptersTool::execute(const json& /*args*/) {
     json chapters = json::array();
-    for (const auto& ch : project_->outline.chapters) {
+    // A17: 按 order 排序后输出，确保 LLM 看到有序的章节列表
+    std::vector<Chapter*> sorted;
+    sorted.reserve(project_->outline.chapters.size());
+    for (auto& ch : project_->outline.chapters) sorted.push_back(&ch);
+    std::sort(sorted.begin(), sorted.end(),
+        [](const Chapter* a, const Chapter* b) { return a->order < b->order; });
+    for (const auto* ch : sorted) {
         chapters.push_back({
-            {"id", ch.id},
-            {"title", ch.title},
-            {"order", ch.order},
-            {"file_path", ch.file_path},
-            {"synopsis", ch.synopsis}
+            {"id", ch->id},
+            {"title", ch->title},
+            {"order", ch->order},
+            {"file_path", ch->file_path},
+            {"synopsis", ch->synopsis}
         });
     }
 
@@ -258,9 +264,20 @@ json CreateChapterTool::execute(const json& args) {
     }
 
     Chapter new_ch;
-    new_ch.id = "ch-" + std::to_string(max_ch_num + 1);
-    if (max_ch_num + 1 < 10)      new_ch.id = "ch-00" + std::to_string(max_ch_num + 1);
-    else if (max_ch_num + 1 < 100) new_ch.id = "ch-0" + std::to_string(max_ch_num + 1);
+    // C6: 生成 ID 后校验唯一性（防御非标准 ID 格式导致的编号冲突）
+    int candidate_num = max_ch_num + 1;
+    std::string candidate_id = "ch-" + std::to_string(candidate_num);
+    if (candidate_num < 10)      candidate_id = "ch-00" + std::to_string(candidate_num);
+    else if (candidate_num < 100) candidate_id = "ch-0" + std::to_string(candidate_num);
+    if (findChapter(project_->outline.chapters, candidate_id)) {
+        // 编号冲突（手动创建的 ID 与自增编号重叠），递增到下一个可用编号
+        while (findChapter(project_->outline.chapters, "ch-" + std::to_string(++candidate_num))) {}
+        if (candidate_num < 10)      candidate_id = "ch-00" + std::to_string(candidate_num);
+        else if (candidate_num < 100) candidate_id = "ch-0" + std::to_string(candidate_num);
+        else                           candidate_id = "ch-" + std::to_string(candidate_num);
+        spdlog::warn("[create_chapter] ID 冲突，改为 {}", candidate_id);
+    }
+    new_ch.id = candidate_id;
     new_ch.title = title;
     new_ch.order = max_order + 1;
 
