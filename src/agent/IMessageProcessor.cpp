@@ -110,7 +110,7 @@ SerialProcessor::Result SerialProcessor::process(
 
     // ── 步骤 5: 配置 ToolCallLoop ──
     // 创建 ToolCallLoop 实例并设置运行参数。
-    ToolCallLoop loop(client_, registry_, tracer_);    // Fix #3: 传递 tracer
+    ToolCallLoop loop(client_, registry_, tracer_, state_); // D1.1: 传递 StateMachine 用于工具执行状态转换
     ToolCallLoopConfig config;
     config.max_rounds = max_tool_rounds_;              // 最大 tool_call 轮数
     config.all_rounds_streaming = false;               // 首轮流式 + 后续非流式
@@ -240,6 +240,21 @@ ParallelProcessor::Result ParallelProcessor::process(
     llm::StreamCallbacks callbacks)
 {
     Result r;
+
+    // A18.3: 并行模式补 ContextManager — 与 SerialProcessor 一样注入动态上下文
+    try {
+        std::string effective_prompt = system_prompt_;
+        if (context_manager_) {
+            llm::Conversation tempConv;
+            tempConv.addUser(input);
+            auto assembly = context_manager_->assemble(tempConv, 131072);
+            if (!assembly.system_prompt.empty())
+                effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
+        }
+        orchestrator_->setMainPrompt(effective_prompt);
+    } catch (const std::exception& e) {
+        spdlog::warn("[ParallelProcessor] 上下文组装失败，使用原始 prompt: {}", e.what());
+    }
 
     try {
         auto text = orchestrator_->processMessage(input);

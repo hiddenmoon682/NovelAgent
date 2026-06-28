@@ -74,6 +74,19 @@ json WriteChapterTool::execute(const json& args) {
         return {{"error", "章节 '" + chapter_id + "' 不存在"}};
     }
 
+    // D1.2: 覆写前检查 — 章节已有内容时需确认（allow_auto_overwrite 为 false 时）
+    std::string existing = ProjectIO::readChapter(project_->path, ch->file_path);
+    if (!existing.empty() && !project_->allow_auto_overwrite) {
+        spdlog::warn("[write_chapter] {} 已有内容 ({} 字)，需确认覆写", chapter_id, existing.size());
+        return {
+            {"action", "confirm_overwrite"},
+            {"message", "章节 " + chapter_id + " 已有 " + std::to_string(existing.size())
+                      + " 字内容。如需覆写请将 allow_auto_overwrite 设为 true 后重试，"
+                        "或使用 append_to_chapter 追加内容。"},
+            {"preview", existing.substr(0, 200)}
+        };
+    }
+
     ProjectIO::writeChapter(project_->path, ch->file_path, content);
     spdlog::info("[write_chapter] {} ← {} 字", chapter_id, content.size());
 

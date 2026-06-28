@@ -17,6 +17,7 @@ struct SubTask {
     std::string result;
     std::string status;   // pending|running|completed|failed|timed_out
     std::string error;
+    int suggested_max_rounds = 3;  ///< A18: 从模板差分配，控制子Agent的多轮tool_call上限
 };
 
 } // namespace agent

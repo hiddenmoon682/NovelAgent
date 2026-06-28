@@ -11,7 +11,7 @@ class RunPowerShellTool : public BuiltInTool {
 public:
     std::string name() const override { return "run_powershell"; }
     std::string description() const override {
-        return "执行 PowerShell 命令并返回结果（stdout/stderr/exit_code）。用于文件操作、系统查询等。";
+        return "执行只读 PowerShell 查询命令并返回结果。仅允许 Get-ChildItem/Get-Content/Select-String 等安全 cmdlet。用于文件列表、文本搜索等。";
     }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;

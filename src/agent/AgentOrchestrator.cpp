@@ -31,6 +31,7 @@ std::vector<SubTask> TemplateDecomposition::decompose(
                     st.description = tmpl.name + ": " + input;
                     st.system_prompt = tmpl.system_prompt;
                     st.allowed_tools = tmpl.allowed_tools;
+                    st.suggested_max_rounds = tmpl.suggested_max_rounds;
                     st.status = "pending";
                     tasks.push_back(std::move(st));
                 }
@@ -59,7 +60,7 @@ AgentOrchestrator::AgentOrchestrator(
     : factory_(factory), client_(factory.create()), registry_(registry), main_prompt_(std::move(mainPrompt))
 {
     detector_ = std::make_unique<KeywordParallelDetector>();
-    synthesis_ = std::make_unique<LlmSynthesis>(*client_, main_prompt_);
+    synthesis_ = std::make_unique<LlmSynthesis>(*client_, main_prompt_, 3000);
 }
 
 AgentOrchestrator::~AgentOrchestrator() = default;
@@ -160,7 +161,7 @@ void AgentOrchestrator::executeParallel(std::vector<SubTask>& tasks)
             config.system_prompt = task.system_prompt;
             config.allowed_tools = task.allowed_tools;
             config.timeout = std::chrono::seconds(120);
-            config.max_tool_rounds = 3;
+            config.max_tool_rounds = task.suggested_max_rounds;
 
             // P0 改进：SubAgent 通过 RestrictedToolProvider 受限视图访问工具
             RestrictedToolProvider tools(registry_, task.allowed_tools);

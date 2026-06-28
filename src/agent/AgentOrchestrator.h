@@ -44,9 +44,17 @@ public:
 class KeywordParallelDetector : public IParallelDetector {
 public:
     bool shouldParallelize(const std::string& input) const override {
-        return input.find("所有") != std::string::npos ||
-               input.find("检查") != std::string::npos ||
-               input.find("分析") != std::string::npos;
+        // A18 修复：负向规则 — 明确的写作/修订意图不触发并行编排
+        if (input.find("语气") != std::string::npos ||
+            input.find("错别字") != std::string::npos ||
+            input.find("改") != std::string::npos ||
+            input.find("写") != std::string::npos) return false;
+        // 正向规则：双关键词联合命中才触发并行
+        int hits = 0;
+        if (input.find("所有") != std::string::npos) ++hits;
+        if (input.find("检查") != std::string::npos) ++hits;
+        if (input.find("分析") != std::string::npos) ++hits;
+        return hits >= 2;
     }
 };
 
@@ -94,6 +102,9 @@ public:
     int maxParallel() const { return max_parallel_; }
 
     void setTemplateManager(TemplateManager* tm);
+
+    /// A18.3: 运行时更新主提示词（供 ParallelProcessor 注入动态上下文）。
+    void setMainPrompt(const std::string& p) { main_prompt_ = p; }
 
     /// 注入自定义策略
     void setParallelDetector(std::unique_ptr<IParallelDetector> detector);

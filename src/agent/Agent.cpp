@@ -221,12 +221,16 @@ void Agent::useSerialProcessor() {
     sp->setMaxToolRounds(max_tool_rounds_);
     // Fix #3: 传递 tracer 给 SerialProcessor
     sp->setTracer(&tracer_);
+    // D1.1: 传递状态机
+    sp->setStateMachine(&state_);
     processor_ = std::move(sp);
 }
 
 void Agent::useParallelProcessor(TemplateManager* tm) {
     auto pp = std::make_unique<ParallelProcessor>(factory_, registry_, system_prompt_);
     if (tm) pp->setTemplateManager(tm);
+    // A18.3: 并行模式也传递 ContextManager
+    pp->setContextManager(context_manager_);
     processor_ = std::move(pp);
     spdlog::info("[Agent] 切换到并行处理器");
 }

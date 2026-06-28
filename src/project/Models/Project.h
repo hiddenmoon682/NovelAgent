@@ -48,6 +48,7 @@ struct Project {
     int target_word_count = 0;           ///< 目标总字数
     int current_word_count = 0;          ///< 当前已写字数
     std::string status = "planning";     ///< 项目状态：planning / writing / revising / done
+    bool allow_auto_overwrite = false;   ///< D1.2: 允许 Agent 自动覆写已有章节（false=覆写前需确认）
 
     // ── 时间戳 ──
     std::string created;                 ///< 创建时间（ISO 8601 字符串）
@@ -84,7 +85,8 @@ inline void to_json(nlohmann::json& j, const Project& p) {
         {"ending_type", p.ending_type},
         {"target_word_count", p.target_word_count},
         {"current_word_count", p.current_word_count},
-        {"status", p.status}, {"created", p.created}, {"modified", p.modified},
+        {"status", p.status}, {"allow_auto_overwrite", p.allow_auto_overwrite},
+        {"created", p.created}, {"modified", p.modified},
         {"metadata", p.metadata}
     };
 }
@@ -96,8 +98,8 @@ inline void from_json(const nlohmann::json& j, Project& p) {
         "theme", "central_question", "target_audience", "genre", "comps",
         "content_rating", "must_have_elements", "must_avoid_elements",
         "narrative_promises", "world_rules_summary", "ending_type",
-        "target_word_count", "current_word_count", "status", "created",
-        "modified", "metadata"
+        "target_word_count", "current_word_count", "status", "allow_auto_overwrite",
+        "created", "modified", "metadata"
     };
     p.format_version = utils::json::getOrDefault(j, "format_version", 1);
     p.title = utils::json::getOrDefault(j, "title", std::string{});
@@ -118,6 +120,7 @@ inline void from_json(const nlohmann::json& j, Project& p) {
     p.target_word_count = utils::json::getOrDefault(j, "target_word_count", 0);
     p.current_word_count = utils::json::getOrDefault(j, "current_word_count", 0);
     p.status = utils::json::getOrDefault(j, "status", std::string{"planning"});
+    p.allow_auto_overwrite = utils::json::getOrDefault(j, "allow_auto_overwrite", false);
     p.created = utils::json::getOrDefault(j, "created", std::string{});
     p.modified = utils::json::getOrDefault(j, "modified", std::string{});
     p.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);

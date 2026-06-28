@@ -1,5 +1,25 @@
 # Changelog
 
+## [2026-06-28] 设计评审批次④：状态机实现 + Shell 白名单 + 并行编排修复（D1/C1C2/A18）
+
+> 将三项"装饰/过度/误判"补建成真正可用。全量 16/16 通过。
+
+### C1+C2 — Shell 黑名单→白名单
+- `ShellTools.cpp`：52 条黑名单 → 16 安全 cmdlet 白名单 + token 级管道解析；拦截 ` $() `` ` `. ` 注入
+- `ShellTools.h`：description 更新为"只读 PowerShell 查询命令"
+
+### D1 — 状态机可用
+- `ToolCallLoop`：工具执行前后 `transition(AwaitingTool/Thinking)`
+- `AgentState.cpp`：`AwaitingTool→Idle` 合法化
+- `ChapterTools.cpp`：`WriteChapterTool` 覆写前检查（`allow_auto_overwrite=false` 时返回 confirm_overwrite）
+- `Project.h`：加 `allow_auto_overwrite` 字段
+
+### A18 — 并行编排修复
+- `KeywordParallelDetector`：负向规则 + 双关键词联合命中
+- `SubAgentTemplate`：`suggested_max_rounds` 差分配（3-8）
+- `ParallelProcessor`：补 `ContextManager::assemble()` 注入
+- `LlmSynthesis`：`max_result_chars` 800→3000
+
 ## [2026-06-28] 设计评审批次②：修复内存安全与死锁（B3/B5/B8）
 
 > 依据 `docs/review/DESIGN_REVIEW.md` 评审报告，修复第二批「内存安全/死锁」类高严重度问题。

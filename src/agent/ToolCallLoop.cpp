@@ -1,6 +1,7 @@
 /// ToolCallLoop 实现 — Fix #1: 接受 IToolProvider&。
 
 #include "agent/ToolCallLoop.h"
+#include "agent/AgentState.h"
 #include "agent/ToolPipeline.h"
 
 #include <spdlog/spdlog.h>
@@ -11,8 +12,8 @@
 namespace agent {
 
 ToolCallLoop::ToolCallLoop(llm::ILLMClient& client, IToolProvider& tools,
-                           ExecutionTracer* tracer)
-    : client_(client), tools_(tools), tracer_(tracer)
+                           ExecutionTracer* tracer, StateMachine* state)
+    : client_(client), tools_(tools), tracer_(tracer), state_(state)
 {}
 
 bool ToolCallLoop::isRepeatedCall(
@@ -116,10 +117,16 @@ ToolCallLoopResult ToolCallLoop::run(
                         {{"name", tc.function_name}, {"args", tc.arguments}});
             }
 
+            // D1.1: 工具执行前 → AwaitingTool
+            if (state_) state_->transition(AgentState::AwaitingTool);
+
             // 执行工具
             auto t3 = std::chrono::steady_clock::now();
             pipeline.executeAndAppend(response.tool_calls);
             auto t4 = std::chrono::steady_clock::now();
+
+            // D1.1: 工具执行后 → Thinking
+            if (state_) state_->transition(AgentState::Thinking);
             int tool_ms = static_cast<int>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(t4 - t3).count());
 

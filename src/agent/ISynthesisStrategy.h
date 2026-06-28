@@ -40,7 +40,7 @@ public:
     /// @param main_prompt  主 Agent 的 system prompt
     /// @param max_result_chars 每个子任务结果的最大展示字符数（默认 800）
     LlmSynthesis(llm::ILLMClient& client, std::string main_prompt,
-                 int max_result_chars = 800);
+                 int max_result_chars = 3000);
 
     std::string synthesize(
         const std::vector<SubTask>& tasks,

@@ -37,10 +37,14 @@ struct ToolCallLoopResult {
     bool loop_detected = false;
 };
 
+class StateMachine;
+
 class ToolCallLoop {
 public:
+    /// @param state 可选状态机指针（D1.1：工具执行前后触发状态转换，nullptr=不触发）
     ToolCallLoop(llm::ILLMClient& client, IToolProvider& tools,
-                 ExecutionTracer* tracer = nullptr);
+                 ExecutionTracer* tracer = nullptr,
+                 StateMachine* state = nullptr);
 
     /// 执行 tool_call 循环。
     ///
@@ -61,6 +65,7 @@ private:
     llm::ILLMClient& client_;
     IToolProvider& tools_;  // Fix #1: IToolProvider& 替代 ToolRegistry&
     ExecutionTracer* tracer_;
+    StateMachine* state_;   // D1.1
 
     bool isRepeatedCall(const std::string& tool_name, const std::string& args_json,
                         std::unordered_map<std::string, int>& call_history,

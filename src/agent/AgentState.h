@@ -51,7 +51,7 @@ inline const char* agentStateName(AgentState s) {
 ///   StateMachine sm;
 ///   sm.transition(AgentState::Thinking);     // Idle → Thinking ✅
 ///   sm.transition(AgentState::AwaitingTool); // Thinking → AwaitingTool ✅
-///   sm.transition(AgentState::Idle);         // AwaitingTool → Idle ❌ 非法
+///   sm.transition(AgentState::Idle);         // AwaitingTool → Idle ✅ 允许（用户中断）
 class StateMachine {
 public:
     StateMachine() : state_(AgentState::Idle) {}

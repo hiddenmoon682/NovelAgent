@@ -107,6 +107,7 @@ void test_write_chapter() {
     TEST("write_chapter — 覆写章节内容");
 
     TestProject tp;
+    tp.project.allow_auto_overwrite = true;  // D1.2: 测试需跳过覆写确认
     agent::WriteChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
 
     auto result = tool.execute({

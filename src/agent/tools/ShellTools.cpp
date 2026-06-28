@@ -20,28 +20,43 @@ json RunPowerShellTool::parameters() const {
 
 namespace {
 
-bool isDangerousCommand(const std::string& cmd) {
-    static const std::set<std::string> blocked = {
-        "remove-item", "ri ", "rm ", "del ", "rmdir", "rd ", "rdr ",
-        "erase", "delete", "clear-content", "clear-item",
-        "format", "diskpart", "initialize-disk", "clear-disk",
-        "stop-process", "kill", "spps ", "stop-service", "sasv ",
-        "set-content", "set-itemproperty", "set-service",
-        "out-file", "out-printer",
-        "invoke-webrequest", "iwr ", "invoke-restmethod", "irm ",
-        "curl", "wget", "start-process", "saps ",
-        "iex ", "invoke-expression", "invoke-command", "icm ",
-        "new-object", "download", "upload",
-        "net user", "net localgroup", "net group",
-        "new-localuser", "add-localgroupmember",
-        "reg add", "reg delete", "reg import",
-        "shutdown", "restart-computer", "stop-computer", "logoff",
+/// C1/C2 修复：白名单替代黑名单，仅允许只读查询 cmdlet。
+/// 安全声明：此白名单不提供绝对安全（LLM 仍可能通过管道组合绕过），
+/// 它只是纵深防御的一层。Shell 工具存在的主要价值是为高级用户提供
+/// 文件列表/文本搜索等便捷查询能力。
+static bool isAllowedCommand(const std::string& cmd) {
+    // 拦截脚本注入字符（在任何 token 提取之前检测）
+    if (cmd.find("$(") != std::string::npos ||
+        cmd.find("`") != std::string::npos ||
+        (cmd.find(". ") != std::string::npos && cmd.find(".\\") == std::string::npos))
+        return false;
+
+    // 仅允许只读查询 cmdlet 和常见别名
+    static const std::set<std::string> allowed = {
+        "get-childitem", "get-content", "get-item", "test-path",
+        "select-string", "get-location", "get-date", "get-filehash",
+        "measure-object", "select-object", "where-object",
+        "foreach-object", "sort-object", "group-object",
+        "get-command", "get-help",
+        "ls", "dir", "cat", "type", "gi", "pwd", "sls", "sort", "group",
     };
     std::string lower = cmd;
     for (char& c : lower) c = static_cast<char>(std::tolower(c));
-    for (const auto& kw : blocked)
-        if (lower.find(kw) != std::string::npos) return true;
-    return false;
+
+    // 提取管道中每段的第一个 token（cmdlet 名或别名）
+    std::string token;
+    size_t pos = 0;
+    while (pos < lower.size()) {
+        while (pos < lower.size() && lower[pos] == ' ') ++pos;
+        token.clear();
+        while (pos < lower.size() && lower[pos] != ' ' && lower[pos] != '|') {
+            token += lower[pos]; ++pos;
+        }
+        if (!token.empty() && allowed.find(token) == allowed.end())
+            return false;
+        while (pos < lower.size() && (lower[pos] == ' ' || lower[pos] == '|')) ++pos;
+    }
+    return !token.empty();
 }
 
 /// 使用 CreateProcess 执行命令，支持超时（Windows）。
@@ -119,9 +134,9 @@ json RunPowerShellTool::execute(const json& args) {
     std::string cmd = args.value("command", "");
     if (cmd.empty()) return {{"error", "命令不能为空"}};
 
-    if (isDangerousCommand(cmd)) {
-        spdlog::warn("[run_powershell] 拦截危险命令: {}", cmd);
-        return {{"error", "命令被安全策略拦截"}, {"blocked", true}};
+    if (!isAllowedCommand(cmd)) {
+        spdlog::warn("[run_powershell] 拦截非白名单命令: {}", cmd);
+        return {{"error", "命令不在允许的白名单中（仅允许 Get-ChildItem/Get-Content/Select-String 等只读查询）"}, {"blocked", true}};
     }
 
     spdlog::info("[run_powershell] {}", cmd);

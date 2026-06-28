@@ -44,10 +44,11 @@ bool isValidTransition(AgentState from, AgentState to) {
 
         case AgentState::AwaitingTool:
             // 工具返回继续 LLM → Thinking，工具失败 → Error
-            // 不可恢复 → Fatal
+            // 不可恢复 → Fatal，用户中断 → Idle
             return to == AgentState::Thinking
                 || to == AgentState::Error
-                || to == AgentState::Fatal;
+                || to == AgentState::Fatal
+                || to == AgentState::Idle;
 
         case AgentState::WaitingUser:
             // 用户确认/输入 → Thinking，取消/超时 → Idle

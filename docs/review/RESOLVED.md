@@ -1,5 +1,18 @@
 # 已修复问题记录
 
+## 设计评审批次④（2026-06-28） — 状态机实现 + Shell 白名单 + 并行编排
+
+### C1+C2 — Shell 白名单 ✅
+`isDangerousCommand` 52 条黑名单 → `isAllowedCommand` 16 安全 cmdlet 白名单 + token 级管道解析 + 脚本注入拦截。
+
+### D1 — 状态机可用 ✅
+`ToolCallLoop` 工具执行前后 `transition(AwaitingTool/Thinking)`；`AwaitingTool→Idle` 合法化；`WriteChapterTool` 覆写前检查 `allow_auto_overwrite`。
+
+### A18 — 并行编排修复 ✅
+`KeywordParallelDetector` 负向规则+双关键词；`SubAgentTemplate` `suggested_max_rounds=3-8` 差分配；`ParallelProcessor` 补 `ContextManager`；汇总截断 800→3000。
+
+---
+
 ## 设计评审批次②（2026-06-28） — 内存安全与死锁
 
 > 依据 [`DESIGN_REVIEW.md`](./DESIGN_REVIEW.md) 评审报告，修复第二批高严重度问题。

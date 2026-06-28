@@ -58,6 +58,7 @@ public:
     void setMaxContextTokens(int tokens) { max_context_tokens_ = tokens; }
     void setMaxToolRounds(int n) { max_tool_rounds_ = n; }
     void setTracer(class ExecutionTracer* t) { tracer_ = t; }
+    void setStateMachine(class StateMachine* s) { state_ = s; }  // D1.1
 
     // Fix #3: 实现接口
     void setSystemPrompt(const std::string& p) override { system_prompt_ = p; }
@@ -91,6 +92,7 @@ private:
     /// 执行轨迹记录器（可选指针，允许为 nullptr）。
     /// 记录每次 process() 的执行耗时、token 消耗等指标，用于性能监控和调试。
     class ExecutionTracer* tracer_ = nullptr;  // Fix #3
+    class StateMachine* state_ = nullptr;       // D1.1
 
     /// 构建最终发给 LLM 的系统提示词。
     /// 将固定 system_prompt_ 与 ContextManager 提供的动态上下文拼接，
@@ -116,11 +118,15 @@ public:
     AgentOrchestrator& orchestrator() { return *orchestrator_; }
     void setTemplateManager(class TemplateManager* tm);
 
+    // A18.3: 并行模式补 ContextManager — 在 process 中动态注入项目上下文
+    void setContextManager(class ContextManager* cm) { context_manager_ = cm; }
+
 private:
     llm::LLMClientFactory& factory_;
     ToolRegistry& registry_;
     std::unique_ptr<AgentOrchestrator> orchestrator_;
     std::string system_prompt_;
+    class ContextManager* context_manager_ = nullptr;  // A18.3
 };
 
 } // namespace agent
