@@ -1,6 +1,6 @@
 # 待修复问题
 
-> 创建时间: 2026-05-28 | 最后更新: 2026-06-25
+> 创建时间: 2026-05-28 | 最后更新: 2026-06-28
 > 用途: 记录代码审查中发现的、尚未修复或暂缓的问题
 >
 > 已修复的问题请记录在 `RESOLVED.md`。
@@ -9,9 +9,7 @@
 
 ## 当前状态
 
-**有 2 个活跃待议项。** 以下为新审查中发现的设计待议问题，尚未做出修复决定。
-
-此前累计发现 39 个问题：34 个已修复 → `RESOLVED.md`，5 个暂缓 → `DEFERRED.md`。
+**有 1 个活跃待议项。**
 
 审查历史:
 
@@ -28,101 +26,70 @@
 > 注: 2 个暂缓项已通过后续修复解决（PCH → 对象库优化，CreateChapter 部分保存 → 全量保存），
 > 最终 5 个活跃暂缓项移入 `DEFERRED.md`。
 
+> 2026-06-28: Token 预算分配策略已移除（commit 51b7616），`context_window` 已重命名为 `max_context_tokens`。
+> 两个待议项已关闭，剩余 1 个活跃待议项。
+
 ---
 
-## 待议：Token 预算分配策略（可能过度设计）
+## 待议：`GenerationControl` + `tags` 过度设计（可能为死代码）
 
-> 日期: 2026-06-25 | 状态: 待议
+> 日期: 2026-06-28 | 状态: 待议
 
-`ContextManager` 当前采用显式预算分配策略：取 `max_tokens * 0.8` 为总预算，按 **50/30/20** 硬比例分给章节/对话/摘要。
+`GenerationControl` 结构体与所有模型上的 `tags` 字段构成了一套复杂的 prompt 裁剪系统，但在当前实现中几乎没有任何实质作用。
 
-### 根本问题：为什么要在输入侧做上下文控制？
+### 设计意图
 
-这套设计的核心前提是 **"应用层必须在发送前主动裁剪上下文"**。但这个前提本身就值得质疑：
+系统本意是通过两层过滤来控制哪些数据进入 prompt：
+- **对象级**：`required_tags` / `blocked_tags` — 按对象 `tags` 决定整个对象是否跳过
+- **字段级**：`include_fields` / `exclude_fields` — 对象通过后，再逐字段筛选
 
-- 现代 LLM 普遍支持 **1M tokens 上下文窗口**，项目小说内容加对话历史远不至此
-- 应用层在输入侧做预算分配、降级、截断，本质上是**替 LLM 做它自己能做的事**
-- 成本控制应放在 **API 调用层面**（如按 token 计费），而不是在输入拼装时预先阉割
+### 实际问题
 
-如果把上下文控制交给 LLM 自己（或者不做控制），设计可以简化为：
+**1. `tags` 无人维护 — 标签过滤形同虚设**
 
-```
-1. 构建 system prompt
-2. 拼接完整对话历史
-3. 直接发送 —— 让 LLM 自行处理长上下文
-```
+`tags` 字段散布在 14 个模型 struct 中（`Project`、`Chapter`、`Character`、`Scene`、`Outline`、`Volume`、`Style`、`Setting`、`WorldRule`、`PlotThread`、`Relationship`、`CharacterDevelopment` 等），但没有任何自动化机制来填充它们。让用户手动维护不现实，结果就是 `tags` 全部为空，`required_tags` / `blocked_tags` 因空列表永不触发。
 
-### 更深层问题：并非真正的会话级上下文管理
+**2. `generation` 只能人配 — 无人会配置**
 
-进一步分析代码后发现，这套系统看起来有完整的上下文管理链路（预算分配 → 降级 → 摘要 → 截断），但实际上**每次 `assemble()` 调用都是从零开始的静态截断**，并非真正的会话级跟踪：
+所有 Agent 工具的字段白名单中都显式排除了 `generation`（注释写"静默忽略"），LLM 无法修改。而期望用户直接编辑 JSON 来配置 `include_fields` / `exclude_fields` 也不现实。结果就是全部保持默认值（`enabled=true`，其余为空），不过滤任何字段。
 
-| 应有的功能 | 实际情况 |
-|-------------|---------|
-| 追踪"已消耗多少 tokens" | ❌ 不存在，每次从零算 |
-| 追踪"剩余多少 tokens" | ❌ 不存在 |
-| Token 消耗反馈到下轮决策 | ❌ `ExecutionTracer` 有数据但不回写 |
-| 跨请求的累积统计 | ❌ `TuiStatusBar` 仅显示用，不影响逻辑 |
-| `ChapterSummaryCache` 用于 assemble | ❌ 存了但从未被读回 |
+**3. LLM 可通过工具完全绕过**
 
-实际做的事情只是：
+即使配置了过滤，LLM 只需调用 `get_character`、`get_setting` 等工具即可获取完整数据（`json(*ch)`，不做任何过滤）。所以这套系统作为"安全墙"也不成立——它只是一个可被轻易绕过的 prompt 预装优化器。
+
+**4. `prompt_hint` 存而不用**
+
+`prompt_hint` 字段在 `shouldUseField()` 过滤逻辑中从未被使用，仅 `StyleTools.cpp` 读取后暴露给 LLM 看。
+
+### 实际效果
 
 ```
-每次请求 → 拿到完整 conversation → 算所有消息的 token
-→ 从最新消息反向保留到 budget 上限 → 丢掉旧的
+generation: enabled=true, 其余全空 → 不过滤
+tags: 全空 → required_tags/blocked_tags 永不触发
+prompt_hint: 存了但过滤逻辑不用
 ```
 
-和 `while (total > limit) pop_front()` 没有本质区别，只是绕了个大圈（预算分配、降级阶梯、子预算检查都未真正发挥作用）。
+等于什么都没做。`filterObject()` 的实际有效操作只剩：跳过 `"generation"`/`"metadata"` 键 + 保留 `alwaysInclude` 字段 + 去掉空值。
 
-### 次生问题：即使要控制，也不该用 50/30/20
+### 删除可影响的文件
 
-即使仍然认为应用层需要裁剪，当前的设计也有问题：
-
-1. **比例没有数据支撑** — 50/30/20 是拍脑袋定的。新对话 vs 长对话的最优比例完全不同。
-2. **降级策略几乎不会触发** — `assemble()` 中降级条件依赖"原始未截断消息超出预算"。只要 `max_tokens` 设得合理，这个路径很少走到。
-3. **子预算语义模糊** — 子预算仅用于降级触发判断，实际 `assemble()` 以 `total_budget` 为准动态调整，子预算并未真正约束行为。
-4. **语义矛盾** — `max_tokens` 远小于模型窗口时，预算永远不会超；贴近模型窗口时，50/30/20 又未必合理。
-
-### 与同类工具对比
-
-| 维度 | Claude Code | NovelAgent |
-|------|-------------|------------|
-| 上下文控制 | 不预分配，超了直接截尾巴 | 50/30/20 预分配 + 5 级降级 |
-| 摘要策略 | 无独立预算，截得多才摘要 | 有独立 20% 摘要预算 |
-| 设计哲学 | 信任 LLM 处理长上下文 | 应用层替 LLM 做决策 |
+| 文件 | 影响 |
+|------|------|
+| `GenerationControl.h` | 整文件删除（struct + to_json + from_json + shouldUseField） |
+| 14 个 Model 头文件 | 删除 `tags`、`generation` 字段及 `#include` |
+| `PromptContextBuilder.cpp` | 简化 `filterObject()`，删除所有 `generation`/`tags` 参数 |
+| `StyleTools.cpp` | 删除 `generation_prompt_hint` 读取逻辑 |
+| 各 Agent Tool 源文件 | 删除 `tags` 白名单条目 |
+| `ModelDetail.h` | 评估 `hasAnyTag()` 是否可删 |
 
 ### 建议方向
 
-- **首选**：不再在输入侧控制上下文，直接发送完整内容，信任 LLM 的处理能力
-- **备选**：如果因成本考虑仍需限制，改为简单的 `max_tokens + 尾部截断`，去掉预算分配和降级系统
+- **首选**：直接删除 `GenerationControl` 和所有模型上的 `tags` 字段，将 `filterObject()` 简化为仅做空值检查和 `alwaysInclude` 保留
+- **备选**：保留架构但补充 AI 自动打标签机制，使标签过滤真正可用
+- **保留现状**：仅关闭此议题，承认这是预留扩展点
 
 ### 后续行动
 
-- [ ] 决定是否彻底移除输入侧的上下文控制，改为直接发送完整内容
-- [ ] 若保留，是否简化 `assemble()`：去掉 `BudgetAllocation`、`DegradationPipeline`、子预算检查
-- [ ] 或确认当前设计在特定场景下有价值，关闭此议题
-
----
-
-## 待议：`context_window` 参数命名歧义
-
-> 日期: 2026-06-25 | 状态: 待议
-
-`ContextManager::assemble()` 及各预算函数的参数名为 `context_window`，但其实际语义并非 LLM 的最大上下文窗口（现代模型普遍支持 1M tokens），而是**应用层人为设定的上下文预算上限**——即每次请求愿意发送给 LLM 的最大 token 数。默认值 65536 (64K) 远小于模型真实窗口。
-
-### 问题
-
-1. **命名误导** — `context_window` 易被误解为模型上下文窗口大小或当前会话剩余量。
-2. **默认值缺乏依据** — 64K 的默认值来源不明确，未与具体模型特性挂钩。
-3. **所有调用方共享同一值** — `Agent::context_window_` 和 `SerialProcessor::context_window_` 均硬编码为 65536，未根据实际使用的 LLM 模型自适应。
-
-### 可能的改进方向
-
-- 将参数重命名为 `max_tokens` 或 `budget_limit` 以消除歧义
-- 改为从 LLM 客户端查询模型实际窗口大小，再取其一定比例
-- 或确认当前设计合理（人为设限以控制成本），仅更新注释澄清语义
-
-### 后续行动
-
-- [ ] 决定是否重命名参数（`context_window` → `max_tokens` / `budget_limit`）
-- [ ] 更新相关注释，明确其语义为"应用层预算上限"而非"模型窗口大小"
-- [ ] 评估是否让默认值与实际使用的 LLM 模型挂钩
+- [ ] 决定是否删除 `GenerationControl` 和 `tags`，或保留作为预留扩展点
+- [ ] 若删除，评估 `hasAnyTag()` / `contains()` 等辅助函数是否仍有其他用途
+- [ ] 简化 `filterObject()`：去掉 `generation`/`tags` 参数，仅保留 `alwaysInclude` + 空值检查
