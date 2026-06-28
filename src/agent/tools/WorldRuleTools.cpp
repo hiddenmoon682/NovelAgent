@@ -137,8 +137,49 @@ json CreateWorldRuleTool::execute(const json& args) {
     };
 }
 
+// ===========================================================================
+// DeleteWorldRuleTool
+// ===========================================================================
+
+json DeleteWorldRuleTool::parameters() const {
+    return utils::schema::object({
+        {"rule_id", utils::schema::stringProp("要删除的世界规则 ID")}
+    }, {"rule_id"});
+}
+
+json DeleteWorldRuleTool::execute(const json& args) {
+    const std::string rid = args.value("rule_id", "");
+    if (rid.empty()) return {{"error", "rule_id 不能为空"}};
+
+    // 1) 从 world_rules 中移除
+    auto it = std::find_if(project_->world_rules.begin(), project_->world_rules.end(),
+        [&](const WorldRule& r) { return r.id == rid; });
+    if (it == project_->world_rules.end()) return {{"error", "世界规则不存在: " + rid}};
+    project_->world_rules.erase(it);
+
+    // 2) 级联清理：所有 Setting.related_rule_ids 中移除该 ID
+    int cascade_settings = 0;
+    for (auto& s : project_->settings) {
+        auto& rr = s.related_rule_ids;
+        auto before = rr.size();
+        rr.erase(std::remove(rr.begin(), rr.end(), rid), rr.end());
+        if (rr.size() < before) cascade_settings += static_cast<int>(before - rr.size());
+    }
+
+    ProjectIO::save(*project_);
+    spdlog::info("[delete_world_rule] {} 已删除 (cascade: settings={})", rid, cascade_settings);
+    return {
+        {"success", true},
+        {"deleted_id", rid},
+        {"cascade", {
+            {"settings_cleaned", cascade_settings}
+        }}
+    };
+}
+
 } // namespace agent
 REGISTER_TOOL(agent::GetWorldRuleTool, "get_world_rule", get_world_rule)
 REGISTER_TOOL(agent::ListWorldRulesTool, "get_world_rules", get_world_rules)
 REGISTER_TOOL(agent::UpdateWorldRuleTool, "update_world_rule", update_world_rule)
 REGISTER_TOOL(agent::CreateWorldRuleTool, "create_world_rule", create_world_rule)
+REGISTER_TOOL(agent::DeleteWorldRuleTool, "delete_world_rule", delete_world_rule)

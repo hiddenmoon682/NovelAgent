@@ -71,4 +71,36 @@ public:
     ToolCategory category() const override { return ToolCategory::Character; }
 };
 
+/// 删除指定角色，并级联清理其他角色 Relationships / Setting / PlotThread / Volume / Chapter / Scene 中对该角色的引用。
+/// 参数: character_id (string, required)
+/// 返回: { success, deleted_id, cascade: { ... } }
+class DeleteCharacterTool : public BuiltInTool {
+    std::shared_ptr<Project> project_;
+public:
+    explicit DeleteCharacterTool(std::shared_ptr<Project> p) : project_(p) {}
+    std::string name() const override { return "delete_character"; }
+    std::string description() const override {
+        return "删除指定角色，自动清理所有角色关系网和引用。";
+    }
+    nlohmann::json parameters() const override;
+    nlohmann::json execute(const nlohmann::json& args) override;
+    ToolCategory category() const override { return ToolCategory::Character; }
+};
+
+/// 完整替换指定角色的人际关系列表。
+/// 参数: character_id (string, required), relationships (array of relationship objects, required)
+/// 返回: { success, character_id, relationship_count }
+class UpdateCharacterRelationshipsTool : public BuiltInTool {
+    std::shared_ptr<Project> project_;
+public:
+    explicit UpdateCharacterRelationshipsTool(std::shared_ptr<Project> p) : project_(p) {}
+    std::string name() const override { return "update_character_relationships"; }
+    std::string description() const override {
+        return "完整替换指定角色的人际关系列表（每项含 target_character_id/type/description/tension 等字段）。";
+    }
+    nlohmann::json parameters() const override;
+    nlohmann::json execute(const nlohmann::json& args) override;
+    ToolCategory category() const override { return ToolCategory::Character; }
+};
+
 } // namespace agent

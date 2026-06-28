@@ -110,11 +110,9 @@ public:
     /// 保留最近 ~20 条消息不动，将更早的消息发送给 LLM 生成摘要。
     /// 摘要存入内部状态，后续 assemble() 会自动注入到 system prompt。
     ///
-    /// @param conversation  当前对话历史
-    /// @param llm_client    用于生成摘要的 LLM 客户端（非流式调用）
-    /// @param focus         可选压缩焦点（如"重点关注角色张三的动机变化"）
+    /// @param conversation  当前对话历史（非const：压缩成功后会从头部删除被压缩的消息）
     CompactResult compact(
-        const llm::Conversation& conversation,
+        llm::Conversation& conversation,
         llm::ILLMClient& llm_client,
         std::optional<std::string> focus = std::nullopt);
 

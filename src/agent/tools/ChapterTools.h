@@ -106,4 +106,36 @@ public:
     ToolCategory category() const override { return ToolCategory::Content; }
 };
 
+/// 删除指定章节，并级联清理引用（PlotThread/Volume/Character/CharacterDevelopment 中对该章节 ID 的引用）。
+/// 参数: chapter_id (string, required)
+/// 返回: { success, deleted_id, cascade: { ... } }
+class DeleteChapterTool : public BuiltInTool {
+    std::shared_ptr<Project> project_;
+public:
+    explicit DeleteChapterTool(std::shared_ptr<Project> p) : project_(p) {}
+    std::string name() const override { return "delete_chapter"; }
+    std::string description() const override {
+        return "删除指定章节（含 .md 文件），自动清理大纲/角色/剧情线中对该章节的引用。";
+    }
+    nlohmann::json parameters() const override;
+    nlohmann::json execute(const nlohmann::json& args) override;
+    ToolCategory category() const override { return ToolCategory::Content; }
+};
+
+/// 更新章节的场景列表（完整替换）。
+/// 参数: chapter_id (string, required), scenes (array of scene objects, required)
+/// 返回: { success, chapter_id, scene_count }
+class UpdateChapterScenesTool : public BuiltInTool {
+    std::shared_ptr<Project> project_;
+public:
+    explicit UpdateChapterScenesTool(std::shared_ptr<Project> p) : project_(p) {}
+    std::string name() const override { return "update_chapter_scenes"; }
+    std::string description() const override {
+        return "完整替换指定章节的场景列表（每项含 goal/conflict/turning_point 等戏剧单元字段）。";
+    }
+    nlohmann::json parameters() const override;
+    nlohmann::json execute(const nlohmann::json& args) override;
+    ToolCategory category() const override { return ToolCategory::Content; }
+};
+
 } // namespace agent

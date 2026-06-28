@@ -58,7 +58,7 @@ constexpr const char* kCompactSystemPrompt =
     "2. 风格参考：摘录 2-3 句最能代表当前写作风格的原句——\n"
     "   保留其修辞手法、句式节奏、情绪氛围和对话语气\n"
     "\n"
-    "总长度控制在 500 字以内，事实与风格的比例由你判断。";
+    "总长度控制在 2000 字以内，事实与风格的比例由你判断。";
 
 /// Token 用量告警阈值。
 constexpr int kWarnPercent = 60;
@@ -514,7 +514,7 @@ ContextAssembly ContextManager::assemble(
 //
 // 调用者：
 //   ● assemble()  — 作为"步骤 0"，构建后还会叠加向量召回和压缩摘要
-//   ● compact()   — 用作项目设定参考（截断 ≤500 字节），帮助 LLM
+//   ● compact()   — 用作项目设定参考（截断 ≤1200 字节），帮助 LLM
 //                    正确识别被压缩对话中的人物指代
 //
 // 关键约定：
@@ -563,7 +563,7 @@ std::string ContextManager::buildSystemPrompt(
 // 流程：
 //   1. 边界判定 — 消息数 ≤ kCompactKeepExchanges*2 时跳过（消息不足）
 //   2. 消息提取 — 取前 N-K 条消息拼接为角色标注文本 [用户]/[助手]/[工具]
-//   3. Prompt 拼接 — 双层摘要指令 + 项目设定参考（截断 ≤500 字节） + 可选焦点
+//   3. Prompt 拼接 — 双层摘要指令 + 项目设定参考（截断 ≤1200 字节） + 可选焦点
 //   4. LLM 调用 — 非流式生成摘要（情节事实 + 风格样本，≤500 字）
 //   5. 状态更新 — 存入 compacted_summary_ + 设置 compaction_marker_
 //      + 清除 vector_store_dirty_（压缩后对话已重排）
@@ -573,7 +573,7 @@ std::string ContextManager::buildSystemPrompt(
 // ===========================================================================
 
 CompactResult ContextManager::compact(
-    const llm::Conversation& conversation,
+    llm::Conversation& conversation,
     llm::ILLMClient& llm_client,
     std::optional<std::string> focus)
 {
@@ -616,8 +616,8 @@ CompactResult ContextManager::compact(
     if (project_) {
         std::string ctx = buildSystemPrompt(*project_, current_chapter_id_);
         if (!ctx.empty()) {
-            if (ctx.size() > 500) {
-                size_t trunc_len = 500;
+            if (ctx.size() > 1200) {
+                size_t trunc_len = 1200;
                 // 不在 UTF-8 多字节字符中间截断：
                 // UTF-8 续字节（0x80-0xBF）不能独立存在，向前回退到字符边界
                 while (trunc_len > 0 && (static_cast<unsigned char>(ctx[trunc_len]) & 0xC0) == 0x80) {
@@ -645,6 +645,13 @@ CompactResult ContextManager::compact(
         // 存储摘要 + 标记
         compacted_summary_ = result.summary;
         compaction_marker_ = compact_count;  // 被压缩的消息数，/rewind 检测用
+
+        // A1 修复：摘要成功后从 conversation 头部删除已压缩的旧消息。
+        // 保留最后 keep_count 条（最近消息），摘要作为被删除范围的语义替代，
+        // 在 assemble() 中注入到 system prompt。此后 current_context_size_ 会下降，
+        // shouldAutoCompact() 不再反复触发。
+        conversation.removeOldest(compact_count);
+
         // 压缩后对话历史已重新整理，向量索引对应的旧消息位置不再有效。
         // 清除脏标记以恢复向量检索（下次 assemble() 基于新消息位置进行语义召回）。
         vector_store_dirty_ = false;

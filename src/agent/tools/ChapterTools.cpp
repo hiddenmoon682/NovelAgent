@@ -332,11 +332,132 @@ json UpdateChapterTool::execute(const json& args) {
     };
 }
 
-} // namespace agent
+// ===========================================================================
+// DeleteChapterTool
+// ===========================================================================
 
+json DeleteChapterTool::parameters() const {
+    return utils::schema::object({
+        {"chapter_id", utils::schema::stringProp("要删除的章节 ID")}
+    }, {"chapter_id"});
+}
+
+json DeleteChapterTool::execute(const json& args) {
+    const std::string cid = args.value("chapter_id", "");
+    if (cid.empty()) return {{"error", "chapter_id 不能为空"}};
+
+    auto* ch = findChapter(project_->outline.chapters, cid);
+    if (!ch) return {{"error", "章节不存在: " + cid}};
+
+    // 1) 删除 Markdown 文件
+    const std::string fullPath = ProjectIO::chapterPath(project_->path, ch->file_path);
+    utils::file::removeFile(fullPath);
+
+    // 2) 从 outline.chapters 中移除
+    project_->outline.chapters.erase(
+        std::remove_if(project_->outline.chapters.begin(), project_->outline.chapters.end(),
+            [&](const Chapter& c) { return c.id == cid; }),
+        project_->outline.chapters.end());
+
+    // 3) 级联清理
+    int cascade_pt = 0, cascade_vol = 0, cascade_char = 0, cascade_dev = 0;
+
+    // PlotThread: start_chapter_id / end_chapter_id（单值）
+    for (auto& pt : project_->outline.plot_threads) {
+        if (pt.start_chapter_id == cid) { pt.start_chapter_id.clear(); ++cascade_pt; }
+        if (pt.end_chapter_id == cid)   { pt.end_chapter_id.clear();   ++cascade_pt; }
+    }
+    // Volume: start_chapter_id / end_chapter_id
+    for (auto& v : project_->outline.volumes) {
+        if (v.start_chapter_id == cid) { v.start_chapter_id.clear(); ++cascade_vol; }
+        if (v.end_chapter_id == cid)   { v.end_chapter_id.clear();   ++cascade_vol; }
+    }
+    // Character: chapter_appearances（数组）
+    for (auto& cr : project_->characters) {
+        auto& ca = cr.chapter_appearances;
+        auto before = ca.size();
+        ca.erase(std::remove(ca.begin(), ca.end(), cid), ca.end());
+        if (ca.size() < before) cascade_char += static_cast<int>(before - ca.size());
+    }
+    // CharacterDevelopment: chapter_id（单值）→ 删除该记录
+    for (auto& cr : project_->characters) {
+        auto before = cr.development.size();
+        cr.development.erase(
+            std::remove_if(cr.development.begin(), cr.development.end(),
+                [&](const CharacterDevelopment& d) { return d.chapter_id == cid; }),
+            cr.development.end());
+        if (cr.development.size() < before) cascade_dev += static_cast<int>(before - cr.development.size());
+    }
+
+    ProjectIO::save(*project_);
+    spdlog::info("[delete_chapter] {} 已删除 (cascade: pt={} vol={} char={} dev={})",
+                 cid, cascade_pt, cascade_vol, cascade_char, cascade_dev);
+    return {
+        {"success", true},
+        {"deleted_id", cid},
+        {"cascade", {
+            {"plot_threads_cleaned", cascade_pt},
+            {"volumes_cleaned", cascade_vol},
+            {"character_appearances_cleaned", cascade_char},
+            {"developments_cleaned", cascade_dev}
+        }}
+    };
+}
+
+// ===========================================================================
+// UpdateChapterScenesTool
+// ===========================================================================
+
+json UpdateChapterScenesTool::parameters() const {
+    return utils::schema::object({
+        {"chapter_id", utils::schema::stringProp("章节 ID")},
+        {"scenes", utils::schema::stringArrayProp("场景对象数组（完整替换），每项含 id/title/summary/goal/conflict 等 Scene 字段")}
+    }, {"chapter_id", "scenes"});
+}
+
+json UpdateChapterScenesTool::execute(const json& args) {
+    auto* ch = findChapter(project_->outline.chapters, args.value("chapter_id", ""));
+    if (!ch) return {{"error", "章节不存在"}};
+
+    const auto& scenes_arr = args["scenes"];
+    if (!scenes_arr.is_array()) return {{"error", "scenes 必须是数组"}};
+
+    std::vector<Scene> parsed;
+    for (const auto& s : scenes_arr) {
+        if (!s.is_object()) continue;
+        parsed.push_back(Scene{});
+        auto& sc = parsed.back();
+        sc.id             = s.value("id", "");
+        sc.title          = s.value("title", "");
+        sc.summary        = s.value("summary", "");
+        sc.goal           = s.value("goal", "");
+        sc.conflict       = s.value("conflict", "");
+        sc.outcome        = s.value("outcome", "");
+        sc.turning_point  = s.value("turning_point", "");
+        sc.emotional_beat = s.value("emotional_beat", "");
+        sc.reveal         = s.value("reveal", "");
+        sc.foreshadowing  = s.value("foreshadowing", "");
+        sc.payoff         = s.value("payoff", "");
+        sc.pov_character_id = s.value("pov_character_id", "");
+        sc.location_id    = s.value("location_id", "");
+        sc.time_marker    = s.value("time_marker", "");
+        if (s.contains("participants") && s["participants"].is_array())
+            for (const auto& v : s["participants"]) sc.participants.push_back(v.get<std::string>());
+        if (s.contains("plot_thread_ids") && s["plot_thread_ids"].is_array())
+            for (const auto& v : s["plot_thread_ids"]) sc.plot_thread_ids.push_back(v.get<std::string>());
+    }
+    ch->scenes = std::move(parsed);
+    ProjectIO::save(*project_);
+    spdlog::info("[update_chapter_scenes] {} 更新 {} 个场景", ch->id, ch->scenes.size());
+    return {{"success", true}, {"chapter_id", ch->id}, {"scene_count", ch->scenes.size()}};
+}
+
+} // namespace agent
 REGISTER_TOOL(agent::ReadChapterTool, "read_chapter", read_chapter)
 REGISTER_TOOL(agent::WriteChapterTool, "write_chapter", write_chapter)
 REGISTER_TOOL(agent::AppendChapterTool, "append_to_chapter", append_to_chapter)
 REGISTER_TOOL(agent::ListChaptersTool, "list_chapters", list_chapters)
 REGISTER_TOOL(agent::CreateChapterTool, "create_chapter", create_chapter)
 REGISTER_TOOL(agent::UpdateChapterTool, "update_chapter", update_chapter)
+REGISTER_TOOL(agent::DeleteChapterTool, "delete_chapter", delete_chapter)
+REGISTER_TOOL(agent::UpdateChapterScenesTool, "update_chapter_scenes", update_chapter_scenes)

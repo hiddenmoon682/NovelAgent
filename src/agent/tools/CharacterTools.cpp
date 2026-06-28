@@ -252,9 +252,137 @@ json UpdateCharacterTool::execute(const json& args) {
     };
 }
 
+// ===========================================================================
+// DeleteCharacterTool
+// ===========================================================================
+
+json DeleteCharacterTool::parameters() const {
+    return utils::schema::object({
+        {"character_id", utils::schema::stringProp("要删除的角色 ID")}
+    }, {"character_id"});
+}
+
+json DeleteCharacterTool::execute(const json& args) {
+    const std::string cid = args.value("character_id", "");
+    if (cid.empty()) return {{"error", "character_id 不能为空"}};
+
+    auto* ch = findCharacter(project_->characters, cid);
+    if (!ch) return {{"error", "角色不存在: " + cid}};
+
+    project_->characters.erase(
+        std::remove_if(project_->characters.begin(), project_->characters.end(),
+            [&](const Character& c) { return c.id == cid; }),
+        project_->characters.end());
+
+    // 级联清理
+    int cascade_rel = 0, cascade_setting = 0, cascade_pt = 0, cascade_vol = 0;
+    int cascade_ch = 0, cascade_scene = 0;
+
+    // 其他角色的 Relationships
+    for (auto& cr : project_->characters) {
+        auto before = cr.relationships.size();
+        cr.relationships.erase(
+            std::remove_if(cr.relationships.begin(), cr.relationships.end(),
+                [&](const Relationship& r) { return r.target_character_id == cid; }),
+            cr.relationships.end());
+        if (cr.relationships.size() < before) cascade_rel += static_cast<int>(before - cr.relationships.size());
+    }
+    // Setting.related_characters
+    for (auto& s : project_->settings) {
+        auto before = s.related_characters.size();
+        s.related_characters.erase(std::remove(s.related_characters.begin(), s.related_characters.end(), cid), s.related_characters.end());
+        if (s.related_characters.size() < before) cascade_setting += static_cast<int>(before - s.related_characters.size());
+    }
+    // PlotThread.related_characters
+    for (auto& pt : project_->outline.plot_threads) {
+        auto before = pt.related_characters.size();
+        pt.related_characters.erase(std::remove(pt.related_characters.begin(), pt.related_characters.end(), cid), pt.related_characters.end());
+        if (pt.related_characters.size() < before) cascade_pt += static_cast<int>(before - pt.related_characters.size());
+    }
+    // Volume.focus_characters
+    for (auto& v : project_->outline.volumes) {
+        auto before = v.focus_characters.size();
+        v.focus_characters.erase(std::remove(v.focus_characters.begin(), v.focus_characters.end(), cid), v.focus_characters.end());
+        if (v.focus_characters.size() < before) cascade_vol += static_cast<int>(before - v.focus_characters.size());
+    }
+    // Chapter: pov_characters / focus_characters（数组）+ Scene: pov_character_id（单值）/ participants（数组）
+    for (auto& chapter : project_->outline.chapters) {
+        auto& pv = chapter.pov_characters;
+        auto b1 = pv.size();
+        pv.erase(std::remove(pv.begin(), pv.end(), cid), pv.end());
+        if (pv.size() < b1) cascade_ch += static_cast<int>(b1 - pv.size());
+        auto& fc = chapter.focus_characters;
+        auto b2 = fc.size();
+        fc.erase(std::remove(fc.begin(), fc.end(), cid), fc.end());
+        if (fc.size() < b2) cascade_ch += static_cast<int>(b2 - fc.size());
+        for (auto& sc : chapter.scenes) {
+            if (sc.pov_character_id == cid) { sc.pov_character_id.clear(); ++cascade_scene; }
+            auto& sp = sc.participants;
+            auto b3 = sp.size();
+            sp.erase(std::remove(sp.begin(), sp.end(), cid), sp.end());
+            if (sp.size() < b3) cascade_scene += static_cast<int>(b3 - sp.size());
+        }
+    }
+
+    ProjectIO::save(*project_);
+    spdlog::info("[delete_character] {} 已删除 (cascade: rel={} st={} pt={} vol={} ch={} sc={})",
+                 cid, cascade_rel, cascade_setting, cascade_pt, cascade_vol, cascade_ch, cascade_scene);
+    return {
+        {"success", true},
+        {"deleted_id", cid},
+        {"cascade", {
+            {"relationships_cleaned", cascade_rel},
+            {"settings_cleaned", cascade_setting},
+            {"plot_threads_cleaned", cascade_pt},
+            {"volumes_cleaned", cascade_vol},
+            {"chapters_cleaned", cascade_ch + cascade_scene}
+        }}
+    };
+}
+
+// ===========================================================================
+// UpdateCharacterRelationshipsTool
+// ===========================================================================
+
+json UpdateCharacterRelationshipsTool::parameters() const {
+    return utils::schema::object({
+        {"character_id", utils::schema::stringProp("角色 ID")},
+        {"relationships", utils::schema::stringArrayProp("完整关系列表（替换全部），每项为 object 含 target_character_id/type/description 等字段")}
+    }, {"character_id", "relationships"});
+}
+
+json UpdateCharacterRelationshipsTool::execute(const json& args) {
+    auto* ch = findCharacter(project_->characters, args.value("character_id", ""));
+    if (!ch) return {{"error", "角色不存在"}};
+
+    const auto& rels = args["relationships"];
+    if (!rels.is_array()) return {{"error", "relationships 必须是数组"}};
+
+    std::vector<Relationship> parsed;
+    for (const auto& r : rels) {
+        if (!r.is_object()) continue;
+        parsed.push_back(Relationship{});
+        auto& rel = parsed.back();
+        rel.target_character_id = r.value("target_character_id", "");
+        rel.type               = r.value("type", "");
+        rel.description        = r.value("description", "");
+        rel.public_status      = r.value("public_status", "");
+        rel.private_feeling    = r.value("private_feeling", "");
+        rel.status             = r.value("status", "active");
+        rel.tension            = r.value("tension", 0);
+    }
+
+    ch->relationships = std::move(parsed);
+    ProjectIO::save(*project_);
+    spdlog::info("[update_character_relationships] {} 更新 {} 条关系", ch->id, ch->relationships.size());
+    return {{"success", true}, {"character_id", ch->id}, {"relationship_count", ch->relationships.size()}};
+}
+
 } // namespace agent
 
 REGISTER_TOOL(agent::GetCharacterTool, "get_character", get_character)
 REGISTER_TOOL(agent::ListCharactersTool, "get_characters", get_characters)
 REGISTER_TOOL(agent::CreateCharacterTool, "create_character", create_character)
 REGISTER_TOOL(agent::UpdateCharacterTool, "update_character", update_character)
+REGISTER_TOOL(agent::DeleteCharacterTool, "delete_character", delete_character)
+REGISTER_TOOL(agent::UpdateCharacterRelationshipsTool, "update_character_relationships", update_character_relationships)

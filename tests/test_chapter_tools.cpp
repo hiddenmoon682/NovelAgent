@@ -222,6 +222,50 @@ void test_via_registry() {
     PASS();
 }
 
+// ============================================================================
+// A8 + A7 新工具测试
+// ============================================================================
+
+void test_delete_chapter() {
+    TEST("delete_chapter — 删除章节并验证级联清理");
+    TestProject tp;
+    agent::CreateChapterTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    create.execute(json{
+        {"title", "待删除章"}, {"order", 2},
+        {"goal", "测试"}, {"conflict", "测试"}
+    });
+    // TestProject 自带 ch-001，create 后 chapter 数 = 2
+    CHECK(tp.project.outline.chapters.size() == 2);
+    std::string ch_id = tp.project.outline.chapters.back().id;
+    PlotThread pt;
+    pt.id = "pt-test"; pt.name = "测试线"; pt.start_chapter_id = ch_id;
+    tp.project.outline.plot_threads.push_back(pt);
+    agent::DeleteChapterTool del(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    auto r = del.execute(json{{"chapter_id", ch_id}});
+    CHECK(r.value("success", false) == true);
+    CHECK(tp.project.outline.chapters.size() == 1);  // 回到只有 ch-001
+    CHECK(tp.project.outline.plot_threads[0].start_chapter_id.empty());
+    PASS();
+}
+
+void test_update_chapter_scenes() {
+    TEST("update_chapter_scenes — 完整替换场景列表");
+    TestProject tp;
+    agent::CreateChapterTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    create.execute(json{{"title", "场景章"}, {"order", 1}});
+    std::string ch_id = tp.project.outline.chapters[0].id;
+    agent::UpdateChapterScenesTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    json scenes = json::array();
+    scenes.push_back(json{
+        {"id", "sc-001"}, {"title", "开场"}, {"goal", "引入主角"},
+        {"conflict", "内心挣扎"}, {"outcome", "做出决定"}
+    });
+    auto r = tool.execute(json{{"chapter_id", ch_id}, {"scenes", scenes}});
+    CHECK(r.value("success", false) == true);
+    CHECK(tp.project.outline.chapters[0].scenes[0].goal == "引入主角");
+    PASS();
+}
+
 // =========================================================================
 
 int main() {
@@ -234,6 +278,8 @@ int main() {
     test_create_chapter();
     test_read_nonexistent();
     test_via_registry();
+    test_delete_chapter();
+    test_update_chapter_scenes();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;

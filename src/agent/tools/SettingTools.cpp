@@ -142,8 +142,81 @@ json CreateSettingTool::execute(const json& args) {
     };
 }
 
+// ===========================================================================
+// DeleteSettingTool
+// ===========================================================================
+
+json DeleteSettingTool::parameters() const {
+    return utils::schema::object({
+        {"setting_id", utils::schema::stringProp("要删除的设定 ID")}
+    }, {"setting_id"});
+}
+
+json DeleteSettingTool::execute(const json& args) {
+    const std::string sid = args.value("setting_id", "");
+    if (sid.empty()) return {{"error", "setting_id 不能为空"}};
+
+    // 1) 从 settings 中移除
+    auto it = std::find_if(project_->settings.begin(), project_->settings.end(),
+        [&](const Setting& s) { return s.id == sid; });
+    if (it == project_->settings.end()) return {{"error", "设定不存在: " + sid}};
+    project_->settings.erase(it);
+
+    // 2) 级联清理：各实体中引用该 setting ID 的位置
+    int cascade_chapters = 0, cascade_scenes = 0, cascade_plots = 0;
+    int cascade_rules = 0, cascade_other_settings = 0;
+
+    // Chapter: location_id（单值） / focus_settings（数组）
+    for (auto& ch : project_->outline.chapters) {
+        if (ch.location_id == sid) { ch.location_id.clear(); ++cascade_chapters; }
+        auto& fs = ch.focus_settings;
+        auto before = fs.size();
+        fs.erase(std::remove(fs.begin(), fs.end(), sid), fs.end());
+        if (fs.size() < before) cascade_chapters += static_cast<int>(before - fs.size());
+        for (auto& sc : ch.scenes) {
+            if (sc.location_id == sid) { sc.location_id.clear(); ++cascade_scenes; }
+        }
+    }
+    // PlotThread: related_settings（数组）
+    for (auto& pt : project_->outline.plot_threads) {
+        auto& rs = pt.related_settings;
+        auto before = rs.size();
+        rs.erase(std::remove(rs.begin(), rs.end(), sid), rs.end());
+        if (rs.size() < before) cascade_plots += static_cast<int>(before - rs.size());
+    }
+    // WorldRule: related_settings（数组）
+    for (auto& wr : project_->world_rules) {
+        auto& rs = wr.related_settings;
+        auto before = rs.size();
+        rs.erase(std::remove(rs.begin(), rs.end(), sid), rs.end());
+        if (rs.size() < before) cascade_rules += static_cast<int>(before - rs.size());
+    }
+    // 其他 Setting 的 related_rule_ids（虽不常见但保持完整性）
+    for (auto& s : project_->settings) {
+        auto& rr = s.related_rule_ids;
+        auto before = rr.size();
+        rr.erase(std::remove(rr.begin(), rr.end(), sid), rr.end());
+        if (rr.size() < before) cascade_other_settings += static_cast<int>(before - rr.size());
+    }
+
+    ProjectIO::save(*project_);
+    spdlog::info("[delete_setting] {} 已删除 (cascade: ch={} sc={} pt={} wr={} s={})",
+                 sid, cascade_chapters, cascade_scenes, cascade_plots, cascade_rules, cascade_other_settings);
+    return {
+        {"success", true},
+        {"deleted_id", sid},
+        {"cascade", {
+            {"chapters_cleaned", cascade_chapters + cascade_scenes},
+            {"plot_threads_cleaned", cascade_plots},
+            {"world_rules_cleaned", cascade_rules},
+            {"other_settings_cleaned", cascade_other_settings}
+        }}
+    };
+}
+
 } // namespace agent
 REGISTER_TOOL(agent::GetSettingTool, "get_setting", get_setting)
 REGISTER_TOOL(agent::ListSettingsTool, "get_settings", get_settings)
 REGISTER_TOOL(agent::UpdateSettingTool, "update_setting", update_setting)
 REGISTER_TOOL(agent::CreateSettingTool, "create_setting", create_setting)
+REGISTER_TOOL(agent::DeleteSettingTool, "delete_setting", delete_setting)

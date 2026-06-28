@@ -17,6 +17,20 @@ void ToolPipeline::executeAndAppend(const std::vector<llm::ToolCall>& tool_calls
     }
 }
 
+/// 计算 UTF-8 字符串中的可见字符数（中文算 1 字，英文单词算 1 字）。
+/// 仅用于显示提示信息，无需精确 token 计数。
+static size_t utf8CharLen(const std::string& s) {
+    size_t len = 0;
+    for (size_t i = 0; i < s.size(); ++len) {
+        auto c = static_cast<unsigned char>(s[i]);
+        if (c <= 0x7F)      i += 1;   // ASCII
+        else if (c <= 0xDF) i += 2;   // 2-byte
+        else if (c <= 0xEF) i += 3;   // 3-byte (CJK)
+        else                i += 4;   // 4-byte
+    }
+    return len;
+}
+
 std::string ToolPipeline::executeOne(const llm::ToolCall& tc)
 {
     nlohmann::json args;
@@ -50,6 +64,24 @@ std::string ToolPipeline::executeOne(const llm::ToolCall& tc)
 
     // 通过 IToolProvider 执行（支持 RestrictedToolProvider 安全约束）
     auto result = tools_.execute(tc.function_name, args);
+
+    // A15 修复：在 JSON 对象层面截断 content 字段，确保 LLM 拿到合法 JSON。
+    // 此前在 dump() 后的原始字符串上做字节级截断，preview 几乎必然非法
+    // （截在字符串值中间，引号未闭合），LLM 无法解析章节内容。
+    if (result.contains("content") && result["content"].is_string()) {
+        std::string& content = result["content"].get_ref<std::string&>();
+        if (content.size() > kMaxContentChars) {
+            const size_t orig_chars = utf8CharLen(content);
+            content.resize(kMaxContentChars);
+            // 回退到最后一个合法 UTF-8 字符边界
+            while (!content.empty() &&
+                   (static_cast<unsigned char>(content.back()) & 0xC0) == 0x80) {
+                content.pop_back();
+            }
+            content += "\n\n[... 内容过长已截断，全长约 "
+                     + std::to_string(orig_chars) + " 字。请用 read_chapter 分段读取 ...]";
+        }
+    }
 
     std::string result_str = result.dump();
     if (result_str.size() > kMaxResultChars) {

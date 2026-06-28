@@ -56,4 +56,18 @@ public:
     ToolCategory category() const override { return ToolCategory::Setting; }
 };
 
+/// 删除指定设定，并级联清理引用（Chapter/Scene/PlotThread/WorldRule/Setting 中对该 ID 的引用）。
+class DeleteSettingTool : public BuiltInTool {
+    std::shared_ptr<Project> project_;
+public:
+    explicit DeleteSettingTool(std::shared_ptr<Project> p) : project_(p) {}
+    std::string name() const override { return "delete_setting"; }
+    std::string description() const override {
+        return "删除指定世界观设定（地点/组织/物品），自动清理所有引用。";
+    }
+    nlohmann::json parameters() const override;
+    nlohmann::json execute(const nlohmann::json& args) override;
+    ToolCategory category() const override { return ToolCategory::Setting; }
+};
+
 } // namespace agent

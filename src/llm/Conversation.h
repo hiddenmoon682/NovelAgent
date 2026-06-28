@@ -106,6 +106,17 @@ public:
         if (keep_count < messages_.size()) messages_.resize(keep_count);
     }
 
+    /// 从头部删除 |count| 条消息（最旧的），保留 [count, size())。
+    /// compact() 在生成摘要后用此方法删除已压缩的旧消息。
+    void removeOldest(size_t count) {
+        if (count >= messages_.size()) {
+            messages_.clear();
+        } else {
+            messages_.erase(messages_.begin(),
+                            messages_.begin() + static_cast<ptrdiff_t>(count));
+        }
+    }
+
     /// 编辑指定索引的消息内容（仅允许 User 和 Assistant 消息）。
     /// 返回 false 表示索引越界或角色不允许编辑。
     bool editMessage(size_t index, std::string new_content) {

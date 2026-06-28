@@ -43,8 +43,8 @@ D:\C++Code\C++NovelAgent\
     CompilerSettings.cmake        # 编译选项、警告
 
   docs/
-    MODULES.md                    # 模块介绍
-    PROJECT_ANALYSIS.md           # 项目分析报告
+    DEV_GUIDE.md                  # 开发指南
+    review/                       # 评审记录
 
   src/
     main.cpp                      # 入口，CLI 参数解析，分发

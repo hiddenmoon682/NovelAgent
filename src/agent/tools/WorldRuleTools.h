@@ -56,4 +56,18 @@ public:
     ToolCategory category() const override { return ToolCategory::WorldRule; }
 };
 
+/// 删除指定世界规则，并级联清理 Setting 中对该规则 ID 的引用。
+class DeleteWorldRuleTool : public BuiltInTool {
+    std::shared_ptr<Project> project_;
+public:
+    explicit DeleteWorldRuleTool(std::shared_ptr<Project> p) : project_(p) {}
+    std::string name() const override { return "delete_world_rule"; }
+    std::string description() const override {
+        return "删除指定世界规则（魔法体系、社会法则等），自动清理关联 setting 的引用。";
+    }
+    nlohmann::json parameters() const override;
+    nlohmann::json execute(const nlohmann::json& args) override;
+    ToolCategory category() const override { return ToolCategory::WorldRule; }
+};
+
 } // namespace agent
