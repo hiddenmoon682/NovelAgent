@@ -3,6 +3,7 @@
 #include "agent/tools/StyleTools.h"
 
 #include "project/Models.h"   // Style 的 to_json 序列化
+#include "project/ProjectIO.h"
 #include "utils/SchemaUtils.h"
 
 #include <spdlog/spdlog.h>
@@ -63,6 +64,97 @@ json ReadStyleTool::execute(const json& /*args*/) {
     return j;
 }
 
+// ===========================================================================
+// UpdateStyleTool — 更新写作风格配置
+//
+// Style 是项目级单例，无需 id。使用字段指针白名单模式安全写入。
+// ===========================================================================
+
+json UpdateStyleTool::parameters() const {
+    return utils::schema::object({
+        {"fields", utils::schema::object({}, {})}
+    }, {"fields"});
+}
+
+json UpdateStyleTool::execute(const json& args) {
+    const json& f = args["fields"];
+    if (!f.is_object() || f.empty()) return {{"error", "fields 必须是非空对象"}};
+
+    auto& s = project_->style;
+
+    // 字符串字段白名单
+    using StrField = std::string Style::*;
+    static const std::map<std::string, StrField> kStringMap = {
+        {"tone", &Style::tone},
+        {"pacing", &Style::pacing},
+        {"pov", &Style::pov},
+        {"tense", &Style::tense},
+        {"prose_style", &Style::prose_style},
+        {"dialogue_style", &Style::dialogue_style},
+        {"narrative_distance", &Style::narrative_distance},
+        {"sentence_length", &Style::sentence_length},
+        {"vocabulary", &Style::vocabulary},
+        {"voice_reference", &Style::voice_reference},
+        {"show_vs_tell_bias", &Style::show_vs_tell_bias},
+        {"dialogue_density", &Style::dialogue_density},
+        {"description_density", &Style::description_density},
+        {"introspection_density", &Style::introspection_density},
+        {"humor_level", &Style::humor_level},
+        {"sensory_focus", &Style::sensory_focus},
+        {"chapter_opening_style", &Style::chapter_opening_style},
+        {"chapter_ending_style", &Style::chapter_ending_style},
+        {"notes", &Style::notes},
+    };
+
+    // 整数字段白名单（ptr-to-member，与字符串字段模式统一）
+    using IntField = int Style::*;
+    static const std::map<std::string, IntField> kIntMap = {
+        {"chapter_length_target", &Style::chapter_length_target},
+    };
+
+    // 字符串数组字段白名单
+    using ArrField = std::vector<std::string> Style::*;
+    static const std::map<std::string, ArrField> kArrayMap = {
+        {"forbidden_phrases", &Style::forbidden_phrases},
+        {"forbidden_tropes", &Style::forbidden_tropes},
+        {"tags", &Style::tags},
+    };
+
+    std::vector<std::string> updated;
+    for (auto it = f.begin(); it != f.end(); ++it) {
+        const std::string& key = it.key();
+        const json& value = it.value();
+
+        if (auto si = kStringMap.find(key); si != kStringMap.end() && value.is_string()) {
+            s.*si->second = value.get<std::string>();
+            updated.push_back(key);
+        } else if (auto ii = kIntMap.find(key); ii != kIntMap.end() && value.is_number_integer()) {
+            s.*ii->second = value.get<int>();
+            updated.push_back(key);
+        } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && value.is_array()) {
+            auto& arr = s.*ai->second;
+            arr.clear();
+            for (const auto& v : value) arr.push_back(v.get<std::string>());
+            updated.push_back(key);
+        }
+    }
+
+    if (updated.empty()) {
+        return {{"error", "没有可以更新的字段。请检查字段名是否在白名单中，以及值的类型是否匹配。"}};
+    }
+
+    ProjectIO::save(*project_);
+    std::string fields_str;
+    for (size_t i = 0; i < updated.size(); ++i) {
+        if (i > 0) fields_str += ", ";
+        fields_str += updated[i];
+    }
+    spdlog::info("[update_style] 更新 {} 个字段: {}", updated.size(), fields_str);
+
+    return {{"success", true}, {"updated_fields", updated}};
+}
+
 } // namespace agent
 
 REGISTER_TOOL(agent::ReadStyleTool, "read_style", read_style)
+REGISTER_TOOL(agent::UpdateStyleTool, "update_style", update_style)

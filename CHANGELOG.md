@@ -1,5 +1,25 @@
 # Changelog
 
+## [2026-06-28] 修复 Model 字段 LLM 写入能力缺口：新增 update_chapter / create_setting / create_world_rule / update_style + 扩展 create_chapter / create_character
+
+### 新增工具
+- **`update_chapter`** — 更新章节创作简报字段（15 string + 7 array 白名单，仿 update_character 模式）
+- **`create_setting`** — 创建世界观设定（setting-001 格式 ID，6 个可选叙事字段）
+- **`create_world_rule`** — 创建世界规则（rule-001 格式 ID，5 个可选字段）
+- **`update_style`** — 更新写作风格配置（19 string + 1 int + 3 array 白名单，Style 单例无需 id）
+
+### 工具扩展
+- **`create_chapter`** — 参数从 2→16，创建时可填充 goal/conflict/hook 等叙事简报字段
+- **`create_character`** — 参数从 2→12，创建时可填充 personality/background/goal 等
+- **`update_setting`** — 新增 related_characters/related_plot_threads/related_rule_ids/tags 数组字段
+- **`update_world_rule`** — 新增 related_settings/tags 数组字段
+
+### Bug 修复（代码审查）
+- 修复 `UpdateChapterTool` 的 `const_cast` 脆性：`findChapter` 改为返回非 const 指针
+- 修复 `UpdateStyleTool` int 字段处理器：`kIntFields` set 改为 `kIntMap` ptr-to-member map，消除潜在幽灵 bug
+- 修复 `UpdateCharacterTool` 白名单缺失：`tags` 加入 `kArrayMap`
+- 修复 `CreateCharacterTool` 头文件注释：更新为反映完整 12 参数
+
 ## [2026-06-28] 新增 LLM 主动查询工具：search_memory / read_style + 扩展 get_project_status
 
 ### 新增工具

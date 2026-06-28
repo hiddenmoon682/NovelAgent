@@ -74,11 +74,20 @@ json ListCharactersTool::execute(const json& /*args*/) {
 // ===========================================================================
 
 json CreateCharacterTool::parameters() const {
-    // role 使用枚举限制可选值
     return utils::schema::object({
         {"name", utils::schema::stringProp("角色姓名")},
         {"role", utils::schema::stringEnum("角色定位",
-            {"protagonist", "antagonist", "supporting", "minor"})}
+            {"protagonist", "antagonist", "supporting", "minor"})},
+        {"personality", utils::schema::stringProp("性格特征描述（可选）")},
+        {"background", utils::schema::stringProp("背景故事（可选）")},
+        {"goal", utils::schema::stringProp("核心目标（可选）")},
+        {"motivation", utils::schema::stringProp("行为动机（可选）")},
+        {"appearance", utils::schema::stringProp("外貌描述（可选）")},
+        {"age", utils::schema::stringProp("年龄段/年龄（可选）")},
+        {"arc", utils::schema::stringProp("角色弧线概述（可选）")},
+        {"speaking_style", utils::schema::stringProp("说话风格（可选）")},
+        {"internal_conflict", utils::schema::stringProp("内在冲突（可选）")},
+        {"external_conflict", utils::schema::stringProp("外部冲突（可选）")}
     }, {"name"});
 }
 
@@ -111,6 +120,18 @@ json CreateCharacterTool::execute(const json& args) {
     else if (max_num + 1 < 100) new_ch.id = "char-0" + std::to_string(max_num + 1);
     new_ch.name = name;
     new_ch.role = args.value("role", "supporting");
+
+    // ── 可选叙事字段 ──
+    new_ch.personality       = args.value("personality", "");
+    new_ch.background        = args.value("background", "");
+    new_ch.goal              = args.value("goal", "");
+    new_ch.motivation        = args.value("motivation", "");
+    new_ch.appearance        = args.value("appearance", "");
+    new_ch.age               = args.value("age", "");
+    new_ch.arc               = args.value("arc", "");
+    new_ch.speaking_style    = args.value("speaking_style", "");
+    new_ch.internal_conflict = args.value("internal_conflict", "");
+    new_ch.external_conflict = args.value("external_conflict", "");
 
     project_->characters.push_back(new_ch);
     ProjectIO::save(*project_);
@@ -189,6 +210,7 @@ json UpdateCharacterTool::execute(const json& args) {
         {"core_values", &Character::core_values},
         {"taboos", &Character::taboos},
         {"chapter_appearances", &Character::chapter_appearances},
+        {"tags", &Character::tags},
     };
 
     std::vector<std::string> updated;

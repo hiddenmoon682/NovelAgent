@@ -70,7 +70,8 @@ public:
 };
 
 /// 创建新章节。
-/// 参数: title (string), synopsis? (string)
+/// 支持在创建时填充叙事字段（goal/conflict/hook 等），减少后续手动编辑。
+/// 参数: title (string, required), synopsis/goal/conflict/outcome/... (string, optional)
 /// 返回: { success, chapter: { id, title, order, file_path } }
 class CreateChapterTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
@@ -78,7 +79,27 @@ public:
     explicit CreateChapterTool(std::shared_ptr<Project> p) : project_(p) {}
     std::string name() const override { return "create_chapter"; }
     std::string description() const override {
-        return "创建新章节：在 outline 中新增条目并创建对应的 Markdown 文件";
+        return "创建新章节：在 outline 中新增条目并创建对应的 Markdown 文件。"
+               "可选填写叙事简报字段（目标、冲突、转折点、伏笔等）。";
+    }
+    nlohmann::json parameters() const override;
+    nlohmann::json execute(const nlohmann::json& args) override;
+    ToolCategory category() const override { return ToolCategory::Content; }
+};
+
+/// 更新章节的创作简报字段。
+/// 通过 fields 白名单机制安全写入，不在白名单中的字段会被静默忽略。
+/// 参数: chapter_id (string, required), fields (object, required)
+/// 返回: { success, chapter: { id, title, updated_fields } }
+class UpdateChapterTool : public BuiltInTool {
+    std::shared_ptr<Project> project_;
+public:
+    explicit UpdateChapterTool(std::shared_ptr<Project> p) : project_(p) {}
+    std::string name() const override { return "update_chapter"; }
+    std::string description() const override {
+        return "更新指定章节的创作简报字段（标题、概要、目标、冲突、转折点、"
+               "伏笔、POV角色、关键事件等）。通过 fields 对象批量更新，"
+               "不在白名单中的字段会被忽略。";
     }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;

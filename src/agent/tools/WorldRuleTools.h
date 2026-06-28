@@ -40,4 +40,20 @@ public:
     ToolCategory category() const override { return ToolCategory::WorldRule; }
 };
 
+/// 创建新的世界规则。
+/// 参数: name (string, required), summary/limitations/costs/... (string, optional)
+class CreateWorldRuleTool : public BuiltInTool {
+    std::shared_ptr<Project> project_;
+public:
+    explicit CreateWorldRuleTool(std::shared_ptr<Project> p) : project_(p) {}
+    std::string name() const override { return "create_world_rule"; }
+    std::string description() const override {
+        return "创建新的世界规则（魔法体系、科技限制、社会法则等）。"
+               "可填写概要、限制条件、代价、例外情况、知晓者等字段。";
+    }
+    nlohmann::json parameters() const override;
+    nlohmann::json execute(const nlohmann::json& args) override;
+    ToolCategory category() const override { return ToolCategory::WorldRule; }
+};
+
 } // namespace agent

@@ -38,7 +38,8 @@ public:
 };
 
 /// 创建新角色。
-/// 参数: name (string), role? (string, 默认 "supporting")
+/// 支持在创建时填充性格/背景/目标等叙事字段，减少后续手动编辑。
+/// 参数: name (string, required), role/personality/background/goal/... (string, optional)
 /// 返回: { success, character: { id, name, role } }
 class CreateCharacterTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
@@ -46,7 +47,8 @@ public:
     explicit CreateCharacterTool(std::shared_ptr<Project> p) : project_(p) {}
     std::string name() const override { return "create_character"; }
     std::string description() const override {
-        return "创建新角色：指定姓名和定位（protagonist/antagonist/supporting/minor），自动生成 ID 并保存";
+        return "创建新角色：指定姓名和定位（protagonist/antagonist/supporting/minor），"
+               "可同时填写性格、背景、目标、动机等叙事字段。自动生成 ID 并保存。";
     }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;

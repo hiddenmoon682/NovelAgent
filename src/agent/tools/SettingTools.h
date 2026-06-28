@@ -40,4 +40,20 @@ public:
     ToolCategory category() const override { return ToolCategory::Setting; }
 };
 
+/// 创建新的世界观设定。
+/// 参数: name (string, required), category/description/story_function/... (string, optional)
+class CreateSettingTool : public BuiltInTool {
+    std::shared_ptr<Project> project_;
+public:
+    explicit CreateSettingTool(std::shared_ptr<Project> p) : project_(p) {}
+    std::string name() const override { return "create_setting"; }
+    std::string description() const override {
+        return "创建新的世界观设定（地点/组织/物品等）。"
+               "可填写描述、故事功能、感官描写等字段。";
+    }
+    nlohmann::json parameters() const override;
+    nlohmann::json execute(const nlohmann::json& args) override;
+    ToolCategory category() const override { return ToolCategory::Setting; }
+};
+
 } // namespace agent

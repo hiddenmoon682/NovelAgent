@@ -17,8 +17,8 @@ using json = nlohmann::json;
 
 namespace {
 
-const Chapter* findChapter(const std::vector<Chapter>& chapters,
-                            const std::string& chapter_id)
+Chapter* findChapter(std::vector<Chapter>& chapters,
+                     const std::string& chapter_id)
 {
     auto it = std::find_if(chapters.begin(), chapters.end(),
         [&](const Chapter& ch) { return ch.id == chapter_id; });
@@ -148,13 +148,25 @@ json ListChaptersTool::execute(const json& /*args*/) {
 json CreateChapterTool::parameters() const {
     return utils::schema::object({
         {"title", utils::schema::stringProp("章节标题，例如 '发现'")},
-        {"synopsis", utils::schema::stringProp("1-2 句章节摘要（可选）")}
+        {"synopsis", utils::schema::stringProp("章节概要用（1-2 句，可选）")},
+        {"goal", utils::schema::stringProp("本章目标：主角/叙事在本章要达成的目的（可选）")},
+        {"conflict", utils::schema::stringProp("核心冲突：阻碍目标实现的主要矛盾（可选）")},
+        {"outcome", utils::schema::stringProp("本章结局：剧情走向的结果或 cliffhanger（可选）")},
+        {"turning_point", utils::schema::stringProp("转折点：本章中剧情发生转折的事件（可选）")},
+        {"hook", utils::schema::stringProp("钩子：开篇吸引读者继续阅读的悬念/爆点（可选）")},
+        {"reveal", utils::schema::stringProp("揭示：本章揭露的秘密或新信息（可选）")},
+        {"foreshadowing", utils::schema::stringProp("伏笔：为后续章节埋下的线索（可选）")},
+        {"payoff", utils::schema::stringProp("回报：对前文伏笔的呼应/回收（可选）")},
+        {"emotional_beat", utils::schema::stringProp("情感节奏：本章应有的情感基调/弧线描写（可选）")},
+        {"location_id", utils::schema::stringProp("主要场景地点 ID（可选）")},
+        {"time_marker", utils::schema::stringProp("时间标记，如\"三天后\"\"夜晚\"（可选）")},
+        {"volume_id", utils::schema::stringProp("所属卷 ID（可选）")},
+        {"status", utils::schema::stringProp("写作状态：outlined/drafting/revised/final（可选）")}
     }, {"title"});
 }
 
 json CreateChapterTool::execute(const json& args) {
     std::string title = args.value("title", "");
-    std::string synopsis = args.value("synopsis", "");
 
     if (title.empty()) {
         return {{"error", "章节标题不能为空"}};
@@ -165,7 +177,6 @@ json CreateChapterTool::execute(const json& args) {
     int max_ch_num = 0;
     for (const auto& ch : project_->outline.chapters) {
         max_order = std::max(max_order, ch.order);
-        // 尝试从 id 中提取数字
         if (ch.id.size() >= 3 && ch.id.substr(0, 3) == "ch-") {
             try {
                 int num = std::stoi(ch.id.substr(3));
@@ -176,21 +187,38 @@ json CreateChapterTool::execute(const json& args) {
 
     Chapter new_ch;
     new_ch.id = "ch-" + std::to_string(max_ch_num + 1);
-    // 补零到 3 位，保持与既有章节的命名风格一致
     if (max_ch_num + 1 < 10)      new_ch.id = "ch-00" + std::to_string(max_ch_num + 1);
     else if (max_ch_num + 1 < 100) new_ch.id = "ch-0" + std::to_string(max_ch_num + 1);
     new_ch.title = title;
     new_ch.order = max_order + 1;
-    new_ch.synopsis = synopsis;
 
-    // 生成文件路径（用章节 ID 而非标题，避免 Windows 窄字符 API 下 UTF-8 路径问题）
+    // ── 叙事核心要素 ──
+    new_ch.synopsis        = args.value("synopsis", "");
+    new_ch.goal            = args.value("goal", "");
+    new_ch.conflict        = args.value("conflict", "");
+    new_ch.outcome         = args.value("outcome", "");
+
+    // ── 节奏与技巧 ──
+    new_ch.turning_point   = args.value("turning_point", "");
+    new_ch.hook            = args.value("hook", "");
+    new_ch.reveal          = args.value("reveal", "");
+    new_ch.foreshadowing   = args.value("foreshadowing", "");
+    new_ch.payoff          = args.value("payoff", "");
+    new_ch.emotional_beat  = args.value("emotional_beat", "");
+
+    // ── 时空定位 ──
+    new_ch.location_id     = args.value("location_id", "");
+    new_ch.time_marker     = args.value("time_marker", "");
+    new_ch.volume_id       = args.value("volume_id", "");
+
+    // ── 项目管理 ──
+    new_ch.status          = args.value("status", "outlined");
+
     new_ch.file_path = "chapters/" + new_ch.id + ".md";
 
-    // 添加到 outline 并全量保存（保证 outline.json 与其他 JSON 文件一致）
     project_->outline.chapters.push_back(new_ch);
     ProjectIO::save(*project_);
 
-    // 写入空的章节文件
     std::string init_content = "# " + title + "\n\n";
     ProjectIO::writeChapter(project_->path, new_ch.file_path, init_content);
 
@@ -207,6 +235,104 @@ json CreateChapterTool::execute(const json& args) {
     };
 }
 
+// ===========================================================================
+// UpdateChapterTool — 更新章节的创作简报字段
+//
+// 使用字段指针白名单模式（仿 UpdateCharacterTool），
+// 不在白名单中的字段会被静默忽略，避免 LLM 写入 id/order/file_path 等管理字段。
+// ===========================================================================
+
+json UpdateChapterTool::parameters() const {
+    return utils::schema::object({
+        {"chapter_id", utils::schema::stringProp("章节 ID，例如 ch-002")},
+        {"fields", utils::schema::object({}, {})} // 任意字段，白名单校验
+    }, {"chapter_id", "fields"});
+}
+
+json UpdateChapterTool::execute(const json& args) {
+    std::string id = args.value("chapter_id", "");
+    auto* ch = findChapter(project_->outline.chapters, id);
+    if (!ch) {
+        return {{"error", "章节 '" + id + "' 不存在"}};
+    }
+
+    const json& fields = args["fields"];
+    if (!fields.is_object() || fields.empty()) {
+        return {{"error", "fields 必须是非空的对象"}};
+    }
+
+    // 字符串字段白名单
+    using StrField = std::string Chapter::*;
+    static const std::map<std::string, StrField> kStringMap = {
+        {"title",           &Chapter::title},
+        {"synopsis",        &Chapter::synopsis},
+        {"goal",            &Chapter::goal},
+        {"conflict",        &Chapter::conflict},
+        {"outcome",         &Chapter::outcome},
+        {"turning_point",   &Chapter::turning_point},
+        {"hook",            &Chapter::hook},
+        {"reveal",          &Chapter::reveal},
+        {"foreshadowing",   &Chapter::foreshadowing},
+        {"payoff",          &Chapter::payoff},
+        {"emotional_beat",  &Chapter::emotional_beat},
+        {"location_id",     &Chapter::location_id},
+        {"time_marker",     &Chapter::time_marker},
+        {"volume_id",       &Chapter::volume_id},
+        {"status",          &Chapter::status},
+    };
+
+    // 字符串数组字段白名单
+    using ArrField = std::vector<std::string> Chapter::*;
+    static const std::map<std::string, ArrField> kArrayMap = {
+        {"pov_characters",      &Chapter::pov_characters},
+        {"key_events",          &Chapter::key_events},
+        {"themes",              &Chapter::themes},
+        {"active_plot_threads", &Chapter::active_plot_threads},
+        {"focus_characters",    &Chapter::focus_characters},
+        {"focus_settings",      &Chapter::focus_settings},
+        {"tags",                &Chapter::tags},
+    };
+
+    std::vector<std::string> updated;
+    for (auto it = fields.begin(); it != fields.end(); ++it) {
+        const std::string& key = it.key();
+        const json& value = it.value();
+
+        if (auto si = kStringMap.find(key); si != kStringMap.end() && value.is_string()) {
+            ch->*si->second = value.get<std::string>();
+            updated.push_back(key);
+        } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && value.is_array()) {
+            auto& arr = ch->*ai->second;
+            arr.clear();
+            for (const auto& v : value) arr.push_back(v.get<std::string>());
+            updated.push_back(key);
+        }
+        // 不在白名单中的字段 → 静默忽略（包括 id/order/scenes/generation/metadata）
+    }
+
+    if (updated.empty()) {
+        return {{"error", "没有可以更新的字段。请检查字段名是否在白名单中，以及值的类型是否匹配。"}};
+    }
+
+    ProjectIO::save(*project_);
+    // 拼接字段名用于日志
+    std::string fields_str;
+    for (size_t i = 0; i < updated.size(); ++i) {
+        if (i > 0) fields_str += ", ";
+        fields_str += updated[i];
+    }
+    spdlog::info("[update_chapter] {} 更新 {} 个字段: {}", id, updated.size(), fields_str);
+
+    return {
+        {"success", true},
+        {"chapter", {
+            {"id", ch->id},
+            {"title", ch->title},
+            {"updated_fields", updated}
+        }}
+    };
+}
+
 } // namespace agent
 
 REGISTER_TOOL(agent::ReadChapterTool, "read_chapter", read_chapter)
@@ -214,3 +340,4 @@ REGISTER_TOOL(agent::WriteChapterTool, "write_chapter", write_chapter)
 REGISTER_TOOL(agent::AppendChapterTool, "append_to_chapter", append_to_chapter)
 REGISTER_TOOL(agent::ListChaptersTool, "list_chapters", list_chapters)
 REGISTER_TOOL(agent::CreateChapterTool, "create_chapter", create_chapter)
+REGISTER_TOOL(agent::UpdateChapterTool, "update_chapter", update_chapter)
