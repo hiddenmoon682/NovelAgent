@@ -290,7 +290,6 @@ json UpdateChapterTool::execute(const json& args) {
         {"active_plot_threads", &Chapter::active_plot_threads},
         {"focus_characters",    &Chapter::focus_characters},
         {"focus_settings",      &Chapter::focus_settings},
-        {"tags",                &Chapter::tags},
     };
 
     std::vector<std::string> updated;
@@ -307,7 +306,7 @@ json UpdateChapterTool::execute(const json& args) {
             for (const auto& v : value) arr.push_back(v.get<std::string>());
             updated.push_back(key);
         }
-        // 不在白名单中的字段 → 静默忽略（包括 id/order/scenes/generation/metadata）
+        // 不在白名单中的字段 → 静默忽略（包括 id/order/scenes/metadata）
     }
 
     if (updated.empty()) {

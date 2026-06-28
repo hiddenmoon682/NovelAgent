@@ -63,7 +63,6 @@ void test_createProjectDir() {
     auto novelJson = ProjectIO::loadJsonFile(utils::file::joinPath(kTestDir, "novel.json"));
     CHECK(novelJson.has_value());
     CHECK((*novelJson)["format_version"] == 4);
-    CHECK((*novelJson)["tags"].is_array());
     CHECK((*novelJson)["metadata"].is_object());
 
     PASS();
@@ -94,7 +93,6 @@ void test_save_load_roundtrip() {
     orig.target_word_count = 100000;
     orig.current_word_count = 12345;
     orig.status = "in_progress";
-    orig.tags = {"priority"};
     orig.metadata["workflow"] = "drafting";
 
     orig.outline.premise = "A scholar finds an ancient artifact.";
@@ -120,7 +118,6 @@ void test_save_load_roundtrip() {
     ch.pov_characters = {"elena"};
     ch.key_events = {"artifact_discovered"};
     ch.themes = {"discovery", "mystery"};
-    ch.tags = {"opening"};
     ch.metadata["emotion_curve"] = nlohmann::json::array({"calm", "panic"});
     orig.outline.chapters.push_back(ch);
 

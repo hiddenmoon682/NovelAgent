@@ -33,14 +33,6 @@ json ReadStyleTool::execute(const json& /*args*/) {
     // 基础序列化（复用 Style.h 的 to_json）
     json j = s;
 
-    // 附加便于 LLM 阅读的摘要字段
-    if (j.contains("generation") && j["generation"].is_object()) {
-        j["generation_enabled"] = s.generation.enabled;
-        if (!s.generation.prompt_hint.empty()) {
-            j["generation_prompt_hint"] = s.generation.prompt_hint;
-        }
-    }
-
     // 禁用短语清单 → 中文顿号拼接
     if (!s.forbidden_phrases.empty()) {
         std::string summary;
@@ -117,7 +109,6 @@ json UpdateStyleTool::execute(const json& args) {
     static const std::map<std::string, ArrField> kArrayMap = {
         {"forbidden_phrases", &Style::forbidden_phrases},
         {"forbidden_tropes", &Style::forbidden_tropes},
-        {"tags", &Style::tags},
     };
 
     std::vector<std::string> updated;

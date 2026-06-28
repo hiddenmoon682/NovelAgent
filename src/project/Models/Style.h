@@ -2,7 +2,7 @@
 
 /// Style — 写作风格配置。
 
-#include "project/Models/GenerationControl.h"
+#include "project/Models/ModelDetail.h"
 
 #include <nlohmann/json.hpp>
 #include <map>
@@ -17,9 +17,8 @@ struct Style {
     std::string description_density = "moderate", introspection_density = "moderate";
     std::string humor_level = "low", sensory_focus, chapter_opening_style, chapter_ending_style;
     int chapter_length_target = 4000;
-    std::vector<std::string> forbidden_phrases, forbidden_tropes, tags;
+    std::vector<std::string> forbidden_phrases, forbidden_tropes;
     std::string notes;
-    GenerationControl generation;
     std::map<std::string, nlohmann::json> metadata;
 };
 
@@ -37,8 +36,7 @@ inline void to_json(nlohmann::json& j, const Style& s) {
         {"forbidden_tropes", s.forbidden_tropes},
         {"chapter_opening_style", s.chapter_opening_style},
         {"chapter_ending_style", s.chapter_ending_style},
-        {"notes", s.notes}, {"tags", s.tags},
-        {"generation", s.generation}, {"metadata", s.metadata}
+        {"notes", s.notes}, {"metadata", s.metadata}
     };
 }
 
@@ -51,7 +49,7 @@ inline void from_json(const nlohmann::json& j, Style& s) {
         "dialogue_density", "description_density", "introspection_density",
         "humor_level", "sensory_focus", "forbidden_phrases",
         "forbidden_tropes", "chapter_opening_style", "chapter_ending_style",
-        "notes", "tags", "generation", "metadata"
+        "notes", "metadata"
     };
     s.tone = utils::json::getOrDefault(j, "tone", std::string{"neutral"});
     s.pacing = utils::json::getOrDefault(j, "pacing", std::string{"moderate"});
@@ -75,7 +73,5 @@ inline void from_json(const nlohmann::json& j, Style& s) {
     s.chapter_opening_style = utils::json::getOrDefault(j, "chapter_opening_style", std::string{});
     s.chapter_ending_style = utils::json::getOrDefault(j, "chapter_ending_style", std::string{});
     s.notes = utils::json::getOrDefault(j, "notes", std::string{});
-    s.tags = utils::json::getOrDefault(j, "tags", std::vector<std::string>{});
-    s.generation = utils::json::getOrDefault(j, "generation", GenerationControl{});
     s.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }

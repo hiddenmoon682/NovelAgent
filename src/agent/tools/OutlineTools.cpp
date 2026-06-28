@@ -62,7 +62,6 @@ json GetProjectStatusTool::execute(const json&) {
         {"settings_count", static_cast<int>(project_->settings.size())},
         {"world_rules_count", static_cast<int>(project_->world_rules.size())},
         // ── 元数据 ──
-        {"tags", project_->tags},
         {"created", project_->created},
         {"modified", project_->modified}
     };

@@ -39,7 +39,7 @@ constexpr const char* kStateJson = "state.json";               // Agent 运行�
 
 // 生成默认 novel.json 内容。
 // 使用 Project struct 构造，确保字段与 Models.h 定义一致，
-// 新建时即写入当前格式版本并预留 tags/metadata 空容器。
+// 新建时即写入当前格式版本并预留 metadata 空容器。
 json defaultNovelJson(const std::string& title) {
     Project project;
     const std::string ts = ProjectIO::nowTimestamp();

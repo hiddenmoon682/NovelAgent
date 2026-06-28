@@ -4,7 +4,7 @@
 //
 // 设计思路：
 // 1. 先从 Project 中筛出和当前章节/任务最相关的对象。
-// 2. 再按 GenerationControl 对字段做白名单/黑名单过滤。
+// 2. 再对字段做裁剪（去空值、保留关键标识字段）。
 // 3. 同时产出结构化 payload 和可直接发送给 LLM 的文本版本。
 #include "project/Models/ModelsFwd.h"
 
@@ -39,7 +39,7 @@ struct PromptContextOptions {
     bool include_style = true;              // 是否附加风格指南（文风、叙事视角、标点规则等）
     bool include_scenes = true;             // 是否附加场景列表（场景编号、地点、参与人物）
     bool include_chapter_text = false;      // 是否读取并附加章节已有正文（修订/续写时开启）
-    bool include_metadata = false;          // 是否把 metadata（版本号、创建时间、标签等）暴露给 LLM
+    bool include_metadata = false;          // 是否把 metadata（版本号、创建时间等扩展字段）暴露给 LLM
 
     // ========== 数量上限 ==========
 

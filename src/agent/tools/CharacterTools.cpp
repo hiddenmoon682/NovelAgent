@@ -210,7 +210,6 @@ json UpdateCharacterTool::execute(const json& args) {
         {"core_values", &Character::core_values},
         {"taboos", &Character::taboos},
         {"chapter_appearances", &Character::chapter_appearances},
-        {"tags", &Character::tags},
     };
 
     std::vector<std::string> updated;

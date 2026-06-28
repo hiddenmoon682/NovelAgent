@@ -15,7 +15,6 @@ set(NOVELAGENT_PROJECT
     src/project/Models.h
     src/project/Models/ModelDetail.h
     src/project/Models/ModelsFwd.h
-    src/project/Models/GenerationControl.h
     src/project/Models/Scene.h
     src/project/Models/Relationship.h
     src/project/Models/CharacterDevelopment.h

@@ -19,14 +19,12 @@
 // 子头文件位于 project/Models/ 目录：
 //   ModelsFwd.h         — 统一前向声明
 //   ModelDetail.h       — 内部辅助函数
-//   GenerationControl.h — 提示词组装控制器
 //   Scene.h / Relationship.h / CharacterDevelopment.h
 //   Character.h / Setting.h / WorldRule.h
 //   PlotThread.h / Volume.h / Chapter.h
 //   Style.h / Outline.h / Project.h
 
 #include "project/Models/ModelDetail.h"
-#include "project/Models/GenerationControl.h"
 #include "project/Models/Scene.h"
 #include "project/Models/Relationship.h"
 #include "project/Models/CharacterDevelopment.h"

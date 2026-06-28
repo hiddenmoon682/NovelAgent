@@ -66,7 +66,6 @@ json UpdateSettingTool::execute(const json& args) {
         {"related_characters", &Setting::related_characters},
         {"related_plot_threads", &Setting::related_plot_threads},
         {"related_rule_ids", &Setting::related_rule_ids},
-        {"tags", &Setting::tags},
     };
 
     int n = 0;

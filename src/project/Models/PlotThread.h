@@ -2,7 +2,7 @@
 
 /// PlotThread — 剧情线。
 
-#include "project/Models/GenerationControl.h"
+#include "project/Models/ModelDetail.h"
 
 #include <nlohmann/json.hpp>
 #include <map>
@@ -13,8 +13,7 @@ struct PlotThread {
     std::string id, name, description, type = "main", status = "planned";
     int priority = 0;
     std::string stakes, central_question, resolution, start_chapter_id, end_chapter_id;
-    std::vector<std::string> related_characters, related_settings, tags;
-    GenerationControl generation;
+    std::vector<std::string> related_characters, related_settings;
     std::map<std::string, nlohmann::json> metadata;
 };
 
@@ -26,8 +25,8 @@ inline void to_json(nlohmann::json& j, const PlotThread& p) {
         {"resolution", p.resolution}, {"start_chapter_id", p.start_chapter_id},
         {"end_chapter_id", p.end_chapter_id},
         {"related_characters", p.related_characters},
-        {"related_settings", p.related_settings}, {"tags", p.tags},
-        {"generation", p.generation}, {"metadata", p.metadata}
+        {"related_settings", p.related_settings},
+        {"metadata", p.metadata}
     };
 }
 
@@ -37,7 +36,7 @@ inline void from_json(const nlohmann::json& j, PlotThread& p) {
         "id", "name", "description", "type", "status", "priority",
         "stakes", "central_question", "resolution", "start_chapter_id",
         "end_chapter_id", "related_characters", "related_settings",
-        "tags", "generation", "metadata"
+        "metadata"
     };
     p.id = utils::json::getOrDefault(j, "id", std::string{});
     p.name = utils::json::getOrDefault(j, "name", std::string{});
@@ -52,7 +51,5 @@ inline void from_json(const nlohmann::json& j, PlotThread& p) {
     p.end_chapter_id = utils::json::getOrDefault(j, "end_chapter_id", std::string{});
     p.related_characters = utils::json::getOrDefault(j, "related_characters", std::vector<std::string>{});
     p.related_settings = utils::json::getOrDefault(j, "related_settings", std::vector<std::string>{});
-    p.tags = utils::json::getOrDefault(j, "tags", std::vector<std::string>{});
-    p.generation = utils::json::getOrDefault(j, "generation", GenerationControl{});
     p.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }

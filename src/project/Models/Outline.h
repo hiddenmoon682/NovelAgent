@@ -2,7 +2,7 @@
 
 /// Outline — 大纲。
 
-#include "project/Models/GenerationControl.h"
+#include "project/Models/ModelDetail.h"
 #include "project/Models/Volume.h"
 #include "project/Models/PlotThread.h"
 #include "project/Models/Chapter.h"
@@ -17,8 +17,6 @@ struct Outline {
     std::vector<Volume> volumes;
     std::vector<PlotThread> plot_threads;
     std::vector<Chapter> chapters;
-    std::vector<std::string> tags;
-    GenerationControl generation;
     std::map<std::string, nlohmann::json> metadata;
 };
 
@@ -27,7 +25,7 @@ inline void to_json(nlohmann::json& j, const Outline& o) {
         {"premise", o.premise}, {"story_structure", o.story_structure},
         {"act_summaries", o.act_summaries}, {"volumes", o.volumes},
         {"plot_threads", o.plot_threads}, {"chapters", o.chapters},
-        {"tags", o.tags}, {"generation", o.generation}, {"metadata", o.metadata}
+        {"metadata", o.metadata}
     };
 }
 
@@ -35,7 +33,7 @@ inline void from_json(const nlohmann::json& j, Outline& o) {
     using namespace project::model_detail;
     static const std::set<std::string> kKnownKeys = {
         "premise", "story_structure", "act_summaries", "volumes", "plot_threads",
-        "chapters", "tags", "generation", "metadata"
+        "chapters", "metadata"
     };
     o.premise = utils::json::getOrDefault(j, "premise", std::string{});
     o.story_structure = utils::json::getOrDefault(j, "story_structure", std::string{});
@@ -43,7 +41,5 @@ inline void from_json(const nlohmann::json& j, Outline& o) {
     o.volumes = utils::json::getOrDefault(j, "volumes", std::vector<Volume>{});
     o.plot_threads = utils::json::getOrDefault(j, "plot_threads", std::vector<PlotThread>{});
     o.chapters = utils::json::getOrDefault(j, "chapters", std::vector<Chapter>{});
-    o.tags = utils::json::getOrDefault(j, "tags", std::vector<std::string>{});
-    o.generation = utils::json::getOrDefault(j, "generation", GenerationControl{});
     o.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }

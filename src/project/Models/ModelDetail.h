@@ -4,8 +4,6 @@
 ///
 /// 包含：
 ///   - getMetadataWithUnknownKeys() — 读取 metadata 并吸收未知字段
-///   - contains() — 向量字符串查找
-///   - hasAnyTag()  — 标签交集判断
 
 #include "utils/JsonUtils.h"
 
@@ -13,7 +11,6 @@
 #include <map>
 #include <set>
 #include <string>
-#include <vector>
 
 namespace project::model_detail {
 
@@ -28,19 +25,6 @@ inline JsonMap getMetadataWithUnknownKeys(const json& j, const std::set<std::str
         }
     }
     return metadata;
-}
-
-inline bool contains(const std::vector<std::string>& values, const std::string& target) {
-    return std::find(values.begin(), values.end(), target) != values.end();
-}
-
-inline bool hasAnyTag(const std::vector<std::string>& left, const std::vector<std::string>& right) {
-    for (const auto& value : left) {
-        if (contains(right, value)) {
-            return true;
-        }
-    }
-    return false;
 }
 
 } // namespace project::model_detail

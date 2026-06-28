@@ -2,7 +2,7 @@
 
 /// Setting — 世界观中的地点、组织或物品。
 
-#include "project/Models/GenerationControl.h"
+#include "project/Models/ModelDetail.h"
 
 #include <nlohmann/json.hpp>
 #include <map>
@@ -11,8 +11,7 @@
 
 struct Setting {
     std::string id, name, category = "location", description, story_function, sensory_profile, notes;
-    std::vector<std::string> related_characters, related_plot_threads, related_rule_ids, tags;
-    GenerationControl generation;
+    std::vector<std::string> related_characters, related_plot_threads, related_rule_ids;
     std::map<std::string, nlohmann::json> metadata;
 };
 
@@ -24,7 +23,7 @@ inline void to_json(nlohmann::json& j, const Setting& s) {
         {"related_characters", s.related_characters},
         {"related_plot_threads", s.related_plot_threads},
         {"related_rule_ids", s.related_rule_ids}, {"notes", s.notes},
-        {"tags", s.tags}, {"generation", s.generation}, {"metadata", s.metadata}
+        {"metadata", s.metadata}
     };
 }
 
@@ -33,7 +32,7 @@ inline void from_json(const nlohmann::json& j, Setting& s) {
     static const std::set<std::string> kKnownKeys = {
         "id", "name", "category", "description", "story_function",
         "sensory_profile", "related_characters", "related_plot_threads",
-        "related_rule_ids", "notes", "tags", "generation", "metadata"
+        "related_rule_ids", "notes", "metadata"
     };
     s.id = utils::json::getOrDefault(j, "id", std::string{});
     s.name = utils::json::getOrDefault(j, "name", std::string{});
@@ -45,7 +44,5 @@ inline void from_json(const nlohmann::json& j, Setting& s) {
     s.related_plot_threads = utils::json::getOrDefault(j, "related_plot_threads", std::vector<std::string>{});
     s.related_rule_ids = utils::json::getOrDefault(j, "related_rule_ids", std::vector<std::string>{});
     s.notes = utils::json::getOrDefault(j, "notes", std::string{});
-    s.tags = utils::json::getOrDefault(j, "tags", std::vector<std::string>{});
-    s.generation = utils::json::getOrDefault(j, "generation", GenerationControl{});
     s.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }

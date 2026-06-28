@@ -54,7 +54,6 @@ void test_chapter_roundtrip() {
     s1.summary = "Elena studies the sealed archive.";
     s1.goal = "Find the hidden chamber.";
     s1.location_id = "library";
-    s1.tags = {"quiet"};
     Scene s2;
     s2.id = "sc-002";
     s2.summary = "The basement shakes as the vault opens.";
@@ -69,8 +68,6 @@ void test_chapter_roundtrip() {
     ch.status = "drafted";
     ch.word_count = 4500;
     ch.file_path = "chapters/001-intro.md";
-    ch.tags = {"act-1", "hook"};
-    ch.generation.exclude_fields = {"secret"};
     ch.metadata["goal"] = "introduce_artifact";
     ch.metadata["intensity"] = 0.7;
 
@@ -93,9 +90,6 @@ void test_chapter_roundtrip() {
     CHECK(ch2.status == "drafted");
     CHECK(ch2.word_count == 4500);
     CHECK(ch2.file_path == "chapters/001-intro.md");
-    CHECK(ch2.tags.size() == 2);
-    CHECK(ch2.tags[1] == "hook");
-    CHECK(ch2.generation.exclude_fields[0] == "secret");
     CHECK(ch2.metadata.at("goal") == "introduce_artifact");
     CHECK(ch2.metadata.at("intensity") == 0.7);
 
@@ -120,7 +114,6 @@ void test_chapter_defaults() {
     CHECK(ch2.key_events.empty());
     CHECK(ch2.themes.empty());
     CHECK(ch2.word_count == 0);
-    CHECK(ch2.tags.empty());
     CHECK(ch2.metadata.empty());
 
     PASS();
@@ -156,8 +149,6 @@ void test_character_roundtrip() {
     c.chapter_appearances = {"ch-001", "ch-002"};
     c.arc = "Moves from observer to world-changing actor.";
     c.notes = "Strengthen the emotional motive.";
-    c.tags = {"core-cast"};
-    c.generation.exclude_fields = {"secret"};
     c.metadata["secret"] = "family-archive";
 
     json j = c;
@@ -177,8 +168,6 @@ void test_character_roundtrip() {
     CHECK(c2.chapter_appearances[1] == "ch-002");
     CHECK(c2.arc == "Moves from observer to world-changing actor.");
     CHECK(c2.notes == "Strengthen the emotional motive.");
-    CHECK(c2.tags[0] == "core-cast");
-    CHECK(c2.generation.exclude_fields[0] == "secret");
     CHECK(c2.metadata.at("secret") == "family-archive");
 
     PASS();
@@ -197,7 +186,6 @@ void test_setting_roundtrip() {
     s.related_characters = {"elena"};
     s.related_rule_ids = {"rule-relic"};
     s.notes = "The library has a sealed restricted wing.";
-    s.tags = {"campus", "ancient"};
     s.metadata["architecture"] = "gothic revival";
     s.metadata["location"] = "Kingsport";
     s.metadata["founded"] = "1642";
@@ -211,7 +199,6 @@ void test_setting_roundtrip() {
     CHECK(s2.category == "location");
     CHECK(s2.story_function == "mystery-gateway");
     CHECK(s2.notes == "The library has a sealed restricted wing.");
-    CHECK(s2.tags.size() == 2);
     CHECK(s2.metadata.at("founded") == "1642");
     CHECK(s2.metadata.at("location") == "Kingsport");
     CHECK(s2.metadata.at("hazards").is_array());
@@ -278,8 +265,6 @@ void test_style_roundtrip() {
     s.dialogue_density = "dense";
     s.forbidden_phrases = {"suddenly", "all of a sudden"};
     s.notes = "Avoid modern slang.";
-    s.tags = {"moody"};
-    s.generation.exclude_fields = {"humor_level"};
     s.metadata["forbidden_topics"] = json::array({"internet slang"});
 
     json j = s;
@@ -290,8 +275,6 @@ void test_style_roundtrip() {
     CHECK(s2.dialogue_density == "dense");
     CHECK(s2.forbidden_phrases[0] == "suddenly");
     CHECK(s2.notes == "Avoid modern slang.");
-    CHECK(s2.tags[0] == "moody");
-    CHECK(s2.generation.exclude_fields[0] == "humor_level");
     CHECK(s2.metadata.at("forbidden_topics").is_array());
 
     PASS();
@@ -314,8 +297,6 @@ void test_project_serialization() {
     p.status = "in_progress";
     p.created = "2026-05-17T10:00:00Z";
     p.modified = "2026-05-17T14:30:00Z";
-    p.tags = {"fantasy", "priority"};
-    p.generation.exclude_fields = {"must_avoid_elements"};
     p.metadata["workflow"] = "drafting";
     p.path = "D:/novels/my-novel";
 
@@ -323,15 +304,12 @@ void test_project_serialization() {
 
     CHECK(!j.contains("path"));
     CHECK(j["format_version"] == 3);
-    CHECK(j["tags"][1] == "priority");
     CHECK(j["metadata"]["workflow"] == "drafting");
 
     Project p2 = j.get<Project>();
     CHECK(p2.title == "Shadow of the Ancients");
     CHECK(p2.logline == "A scholar steals a relic that wants to be found.");
     CHECK(p2.genre[1] == "epic");
-    CHECK(p2.tags[0] == "fantasy");
-    CHECK(p2.generation.exclude_fields[0] == "must_avoid_elements");
     CHECK(p2.metadata.at("workflow") == "drafting");
 
     PASS();
@@ -400,22 +378,6 @@ void test_legacy_metadata_capture() {
     PASS();
 }
 
-void test_generation_control() {
-    TEST("Generation control helpers");
-
-    GenerationControl g;
-    g.include_fields = {"goal", "conflict"};
-    g.exclude_fields = {"secret"};
-    g.required_tags = {"main"};
-
-    CHECK(shouldUseField(g, "goal", {"main"}));
-    CHECK(!shouldUseField(g, "secret", {"main"}));
-    CHECK(!shouldUseField(g, "arc", {"main"}));
-    CHECK(!shouldUseField(g, "goal", {"side"}));
-
-    PASS();
-}
-
 void test_volume_roundtrip() {
     TEST("Volume roundtrip");
 
@@ -431,8 +393,6 @@ void test_volume_roundtrip() {
     vol.key_events = {"入学考试", "图书馆发现", "密室初探"};
     vol.focus_characters = {"elena", "marcus"};
     vol.active_plot_threads = {"pt-main", "pt-academy"};
-    vol.tags = {"act-1", "introduction"};
-    vol.generation.prompt_hint = "重点描写学院氛围和角色间的初次互动";
     vol.metadata["target_word_count"] = 120000;
 
     json j = vol;
@@ -450,8 +410,6 @@ void test_volume_roundtrip() {
     CHECK(v2.key_events[1] == "图书馆发现");
     CHECK(v2.focus_characters.size() == 2);
     CHECK(v2.active_plot_threads[0] == "pt-main");
-    CHECK(v2.tags[1] == "introduction");
-    CHECK(v2.generation.prompt_hint == "重点描写学院氛围和角色间的初次互动");
     CHECK(v2.metadata.at("target_word_count") == 120000);
 
     PASS();
@@ -474,7 +432,6 @@ void test_volume_defaults() {
     CHECK(v2.key_events.empty());
     CHECK(v2.focus_characters.empty());
     CHECK(v2.active_plot_threads.empty());
-    CHECK(v2.tags.empty());
     CHECK(v2.metadata.empty());
 
     PASS();
@@ -539,7 +496,6 @@ void test_character_development_roundtrip() {
     dev.summary = "目睹导师背叛，性格从天真转向谨慎多疑。";
     dev.category = "personality";
     dev.affected_fields = {"personality", "goal"};
-    dev.tags = {"turning-point"};
     dev.metadata["trigger"] = "mentor_betrayal";
 
     json j = dev;
@@ -551,7 +507,6 @@ void test_character_development_roundtrip() {
     CHECK(d2.category == "personality");
     CHECK(d2.affected_fields.size() == 2);
     CHECK(d2.affected_fields[1] == "goal");
-    CHECK(d2.tags[0] == "turning-point");
     CHECK(d2.metadata.at("trigger") == "mentor_betrayal");
 
     PASS();
@@ -571,7 +526,6 @@ void test_character_development_defaults() {
     CHECK(d2.id == "dev-min");
     CHECK(d2.category == "other");
     CHECK(d2.affected_fields.empty());
-    CHECK(d2.tags.empty());
     CHECK(d2.metadata.empty());
 
     PASS();
@@ -630,7 +584,6 @@ int main() {
     test_project_serialization();
     test_project_subobjects();
     test_legacy_metadata_capture();
-    test_generation_control();
     test_volume_roundtrip();
     test_volume_defaults();
     test_outline_with_volumes();

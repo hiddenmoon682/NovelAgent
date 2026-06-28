@@ -40,18 +40,13 @@ bool isMeaningfulValue(const json& value) {
     return true;
 }
 
-// 对任意 Model 对象执行字段级白名单/黑名单过滤，
-// 同时移除 "generation" 元字段，并可选择移除 "metadata"。
-//
-// 过滤规则（串联执行，任一条件满足即保留）：
-//   1. 字段名在 alwaysInclude 集合中 → 强制保留
-//   2. 否则，通过 shouldUseField(generation, key, tags) 判断
-//   3. isMeaningfulValue 检查 → 空值不保留
+// 对任意 Model 对象执行字段清理：
+//   - 可选跳过 "metadata" 字段
+//   - alwaysInclude 中的字段强制保留（即使为空值）
+//   - 其余字段仅在有意义的值时才保留
 template<typename T>
 json filterObject(
     const T& object,
-    const GenerationControl& generation,
-    const std::vector<std::string>& tags,
     bool includeMetadata,
     const std::set<std::string>& alwaysInclude = {}) {
     json raw = object;
@@ -59,16 +54,10 @@ json filterObject(
 
     for (auto it = raw.begin(); it != raw.end(); ++it) {
         const std::string key = it.key();
-        if (key == "generation") {
-            continue;
-        }
         if (key == "metadata" && !includeMetadata) {
             continue;
         }
-        if (!alwaysInclude.count(key) && !shouldUseField(generation, key, tags)) {
-            continue;
-        }
-        if (!isMeaningfulValue(it.value())) {
+        if (!alwaysInclude.count(key) && !isMeaningfulValue(it.value())) {
             continue;
         }
         filtered[key] = it.value();
@@ -115,9 +104,6 @@ std::vector<const PlotThread*> selectPlotThreads(
 
     if (selected.empty()) {
         for (const auto& plotThread : project.outline.plot_threads) {
-            if (!plotThread.generation.enabled) {
-                continue;
-            }
             bool matches = containsId(plotThread.related_settings, chapter.location_id);
             if (!chapter.pov_characters.empty() &&
                 containsId(plotThread.related_characters, chapter.pov_characters.front())) {
@@ -180,7 +166,6 @@ std::vector<const Character*> selectCharacters(
     // 优先：本章有角色发展记录的角色
     for (const auto& character : project.characters) {
         if (selected.size() >= maxCount) break;
-        if (!character.generation.enabled) continue;
         bool has_dev = false;
         for (const auto& dev : character.development) {
             if (dev.chapter_id == chapter.id) { has_dev = true; break; }
@@ -190,7 +175,6 @@ std::vector<const Character*> selectCharacters(
     // 其次：本章有出场记录的角色
     for (const auto& character : project.characters) {
         if (selected.size() >= maxCount) break;
-        if (!character.generation.enabled) continue;
         if (containsId(character.chapter_appearances, chapter.id)) {
             appendUnique(&character, selected, seen);
         }
@@ -263,9 +247,6 @@ std::vector<const WorldRule*> selectWorldRules(
 
     if (selected.empty()) {
         for (const auto& rule : project.world_rules) {
-            if (!rule.generation.enabled) {
-                continue;
-            }
             for (const auto* setting : settings) {
                 if (containsId(rule.related_settings, setting->id)) {
                     appendUnique(&rule, selected, seen);
@@ -398,8 +379,6 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     if (options.include_project_summary) {
         payload["project"] = filterObject(
             project,
-            project.generation,
-            project.tags,
             options.include_metadata,
             {"title"});
     }
@@ -408,8 +387,6 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     if (options.include_style) {
         payload["style"] = filterObject(
             project.style,
-            project.style.generation,
-            project.style.tags,
             options.include_metadata);
     }
 
@@ -417,8 +394,6 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     if (options.include_outline_context) {
         payload["outline"] = filterObject(
             project.outline,
-            project.outline.generation,
-            project.outline.tags,
             options.include_metadata);
     }
 
@@ -426,8 +401,6 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     if (volume) {
         payload["volume"] = filterObject(
             *volume,
-            volume->generation,
-            volume->tags,
             options.include_metadata,
             {"id", "title"});
     }
@@ -435,14 +408,8 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     // 5e. 目标章节（核心数据，always included）
     payload["chapter"] = filterObject(
         *chapter,
-        chapter->generation,
-        chapter->tags,
         options.include_metadata,
         {"id", "title"});
-
-    if (!chapter->generation.enabled) {
-        context.notes.push_back("Target chapter generation is disabled; only technical identifiers were retained.");
-    }
 
     // 5f. 目标场景（可选，通过 scene_id 指定）
     if (!options.scene_id.empty()) {
@@ -450,8 +417,6 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
         if (scene) {
             payload["scene"] = filterObject(
                 *scene,
-                scene->generation,
-                scene->tags,
                 options.include_metadata,
                 {"id", "title"});
         } else {
@@ -468,8 +433,6 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     for (const auto* plotThread : plotThreads) {
         plotThreadArray.push_back(filterObject(
             *plotThread,
-            plotThread->generation,
-            plotThread->tags,
             options.include_metadata,
             {"id", "name"}));
     }
@@ -483,16 +446,13 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     for (const auto* character : characters) {
         json charJson = filterObject(
             *character,
-            character->generation,
-            character->tags,
             options.include_metadata,
             {"id", "name"});
 
         // 筛选角色发展记录：仅保留当前章节及之前发生的变化，
-        // 按引用章节的顺序排列，并遵守 GenerationControl 设置。
+        // 按引用章节的顺序排列。
         charJson.erase("development");
-        if (!character->development.empty() &&
-            shouldUseField(character->generation, "development", character->tags)) {
+        if (!character->development.empty()) {
             json devArray = json::array();
             for (const auto& dev : character->development) {
                 if (!filterByOrder) {
@@ -536,8 +496,6 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     for (const auto* setting : settings) {
         settingArray.push_back(filterObject(
             *setting,
-            setting->generation,
-            setting->tags,
             options.include_metadata,
             {"id", "name", "category"}));
     }
@@ -550,8 +508,6 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     for (const auto* rule : worldRules) {
         worldRuleArray.push_back(filterObject(
             *rule,
-            rule->generation,
-            rule->tags,
             options.include_metadata,
             {"id", "name"}));
     }

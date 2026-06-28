@@ -2,7 +2,6 @@
 
 /// Character — 角色完整档案。
 
-#include "project/Models/GenerationControl.h"
 #include "project/Models/Relationship.h"
 #include "project/Models/CharacterDevelopment.h"
 
@@ -20,8 +19,6 @@ struct Character {
     std::vector<std::string> chapter_appearances;
     std::string arc, notes;
     std::vector<CharacterDevelopment> development;
-    std::vector<std::string> tags;
-    GenerationControl generation;
     std::map<std::string, nlohmann::json> metadata;
 };
 
@@ -36,7 +33,7 @@ inline void to_json(nlohmann::json& j, const Character& c) {
         {"core_values", c.core_values}, {"taboos", c.taboos},
         {"relationships", c.relationships}, {"chapter_appearances", c.chapter_appearances},
         {"arc", c.arc}, {"notes", c.notes}, {"development", c.development},
-        {"tags", c.tags}, {"generation", c.generation}, {"metadata", c.metadata}
+        {"metadata", c.metadata}
     };
 }
 
@@ -48,7 +45,7 @@ inline void from_json(const nlohmann::json& j, Character& c) {
         "external_conflict", "secret", "fear", "misbelief",
         "speaking_style", "traits", "core_values", "taboos",
         "relationships", "chapter_appearances", "arc", "notes",
-        "development", "tags", "generation", "metadata"
+        "development", "metadata"
     };
     c.id = utils::json::getOrDefault(j, "id", std::string{});
     c.name = utils::json::getOrDefault(j, "name", std::string{});
@@ -73,7 +70,5 @@ inline void from_json(const nlohmann::json& j, Character& c) {
     c.arc = utils::json::getOrDefault(j, "arc", std::string{});
     c.notes = utils::json::getOrDefault(j, "notes", std::string{});
     c.development = utils::json::getOrDefault(j, "development", std::vector<CharacterDevelopment>{});
-    c.tags = utils::json::getOrDefault(j, "tags", std::vector<std::string>{});
-    c.generation = utils::json::getOrDefault(j, "generation", GenerationControl{});
     c.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }

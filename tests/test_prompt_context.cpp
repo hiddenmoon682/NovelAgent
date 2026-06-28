@@ -92,7 +92,6 @@ Project buildSampleProject() {
     chapter.active_plot_threads = {"pt-main"};
     chapter.volume_id = "vol-001";
     chapter.file_path = "chapters/001-discovery.md";
-    chapter.generation.exclude_fields = {"hook"};
 
     Scene scene;
     scene.id = "sc-001";
@@ -112,7 +111,6 @@ Project buildSampleProject() {
     elena.secret = "The relic reacted to her touch.";
     elena.speaking_style = "Precise and controlled.";
     elena.chapter_appearances = {"ch-001"};
-    elena.generation.exclude_fields = {"secret"};
 
     CharacterDevelopment dev1;
     dev1.id = "dev-001";
@@ -173,9 +171,9 @@ void test_build_context_filters_fields() {
     CHECK(context.has_value());
     CHECK(context->payload["volume"]["title"] == "第一卷: 觉醒");
     CHECK(context->payload["chapter"]["title"] == "Discovery");
-    CHECK(!context->payload["chapter"].contains("hook"));
+    CHECK(context->payload["chapter"]["hook"] == "Marcus knows more than he admits.");
     CHECK(context->payload["characters"].size() == 2);
-    CHECK(!context->payload["characters"][0].contains("secret"));
+    CHECK(context->payload["characters"][0]["secret"] == "The relic reacted to her touch.");
     // development 应只包含 ch-001 的记录，ch-050 的被过滤掉
     CHECK(context->payload["characters"][0]["development"].size() == 1);
     CHECK(context->payload["characters"][0]["development"][0]["summary"] == "首次接触遗物，产生异常反应。");
@@ -249,27 +247,6 @@ void test_no_volume_id_produces_no_volume_section() {
     CHECK(context.has_value());
     CHECK(!context->payload.contains("volume"));
     CHECK(context->rendered_prompt.find("## Volume") == std::string::npos);
-
-    PASS();
-}
-
-void test_development_excluded_by_generation_control() {
-    TEST("development excluded by generation control");
-
-    Project project = buildSampleProject();
-    // 排除 development 字段
-    project.characters[0].generation.exclude_fields = {"secret", "development"};
-
-    prompt::PromptContextOptions options;
-    options.chapter_id = "ch-001";
-
-    auto context = prompt::PromptContextBuilder::buildForChapter(project, options);
-    CHECK(context.has_value());
-    // development 不应出现在 payload 中
-    CHECK(!context->payload["characters"][0].contains("development"));
-    // development 不应出现在 rendered_prompt 中
-    CHECK(context->rendered_prompt.find("发展记录") == std::string::npos);
-    CHECK(context->rendered_prompt.find("首次接触遗物") == std::string::npos);
 
     PASS();
 }
@@ -348,7 +325,6 @@ int main() {
     test_scene_targeting_and_render();
     test_volume_id_mismatch_adds_note();
     test_no_volume_id_produces_no_volume_section();
-    test_development_excluded_by_generation_control();
     test_development_order_zero_includes_all();
     test_development_orphan_chapter_warns();
     test_missing_chapter_returns_nullopt();

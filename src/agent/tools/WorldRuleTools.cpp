@@ -62,7 +62,6 @@ json UpdateWorldRuleTool::execute(const json& args) {
     using ArrField = std::vector<std::string> WorldRule::*;
     static const std::map<std::string, ArrField> kArrayMap = {
         {"related_settings", &WorldRule::related_settings},
-        {"tags", &WorldRule::tags},
     };
 
     int n = 0;

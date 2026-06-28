@@ -5,7 +5,7 @@
 /// 包含章节的全部元信息与创作指引，供 AI 根据此结构生成正文内容。
 /// 同时也支持 JSON 序列化（to_json / from_json）。
 
-#include "project/Models/GenerationControl.h"
+#include "project/Models/ModelDetail.h"
 #include "project/Models/Scene.h"
 
 #include <nlohmann/json.hpp>
@@ -53,10 +53,8 @@ struct Chapter {
     std::string status = "outlined";   ///< 写作状态：outlined / drafting / revised / final
     std::string file_path;             ///< 章节正文的存储文件路径
     int word_count = 0;                ///< 字数统计
-    std::vector<std::string> tags;     ///< 自定义标签，用于检索和分类
 
     // ---- 扩展 ----
-    GenerationControl generation;                      ///< 生成控制参数（temperature 等）
     std::map<std::string, nlohmann::json> metadata;    ///< 扩展元数据（兼容未来字段）
 };
 
@@ -74,7 +72,7 @@ inline void to_json(nlohmann::json& j, const Chapter& c) {
         {"focus_characters", c.focus_characters}, {"focus_settings", c.focus_settings},
         {"volume_id", c.volume_id}, {"status", c.status},
         {"word_count", c.word_count}, {"file_path", c.file_path},
-        {"tags", c.tags}, {"generation", c.generation}, {"metadata", c.metadata}
+        {"metadata", c.metadata}
     };
 }
 
@@ -86,7 +84,7 @@ inline void from_json(const nlohmann::json& j, Chapter& c) {
         "emotional_beat", "location_id", "time_marker", "scenes",
         "pov_characters", "key_events", "themes", "active_plot_threads",
         "focus_characters", "focus_settings", "volume_id", "status", "word_count",
-        "file_path", "tags", "generation", "metadata"
+        "file_path", "metadata"
     };
     c.id = utils::json::getOrDefault(j, "id", std::string{});
     c.title = utils::json::getOrDefault(j, "title", std::string{});
@@ -114,7 +112,5 @@ inline void from_json(const nlohmann::json& j, Chapter& c) {
     c.status = utils::json::getOrDefault(j, "status", std::string{"outlined"});
     c.word_count = utils::json::getOrDefault(j, "word_count", 0);
     c.file_path = utils::json::getOrDefault(j, "file_path", std::string{});
-    c.tags = utils::json::getOrDefault(j, "tags", std::vector<std::string>{});
-    c.generation = utils::json::getOrDefault(j, "generation", GenerationControl{});
     c.metadata = getMetadataWithUnknownKeys(j, kKnownKeys);
 }

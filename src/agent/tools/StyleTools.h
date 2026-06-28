@@ -2,7 +2,7 @@
 
 /// 写作风格查询工具 — 允许 LLM 主动读取完整的 Style 配置。
 ///
-/// 当前 Style 信息仅在 system prompt 中被动注入（经 GenerationControl 过滤），
+/// 当前 Style 信息在 system prompt 中被动注入，
 /// 此工具让 LLM 可以随时查看完整风格指南，用于：
 /// - 在写作前确认具体的风格约束（语调、节奏、视角等）
 /// - 检查禁用短语和禁用套路清单
