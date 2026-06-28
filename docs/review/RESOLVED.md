@@ -181,7 +181,7 @@ Agent::execute() 在 --exec 模式中也使用 ContextManager 组装 system prom
 
 **问题**: `SSEParser` 混入了"协议解析"和"跨 chunk 状态管理"两种职责，`LLMResponse` 无法表示流式中间状态。
 
-**修复**: 引入三层职责分离架构——
+**修复**: 引入职责分离架构——
 
 1. **`Message.h`** 新增 `ToolCallDelta`、`UsageInfo`、`StreamChunk` 三个流式中间类型
 2. **`SSEParser`** 简化为纯协议解析——单个 `onChunk(StreamChunk)` 回调替代原有的 `onToken`/`onToolCall`/`onDone` 三回调，移除 `pending_tool_calls_` 和 `flushToolCalls()`

@@ -42,9 +42,9 @@ NovelAgent 的**模型层建模相当用心**（Chapter 的 goal/conflict/foresh
 - `ReplHandler.cpp:156-167`：`/index` 只打印提示，不调用任何构建逻辑。全库 grep 确认 `NovelChunker`、`EmbeddingGenerator::generateEmbeddings`、`VectorStore::insert` **从未被任何工具/命令调用**。
 - 后果：`VectorStore::entries_` 永远空，`ContextManager.cpp:331` 的 `count() > 0` 守卫永远 false，语义召回分支**从未执行**。最重的基础设施（接口/实现/chunker/embedding/dirty 标记/风格冲突解决全写好了）却无一条路径把内容喂进向量库。PLAN.md:269「章节写入后增量更新」从未实现。
 
-**A3. 「三层相关性融合排序 0.5/0.2/0.3」仅存于 PLAN.md，代码零实现**
-- `PLAN.md:262-266` 定义确定性 0.5 + 启发式 0.2 + 语义 0.3 融合；全库 grep `0.5|融合|fusion|relevance_score` 在检索源码中**零命中**。`VectorStore::search` 是纯余弦 Top-K，`PromptContextBuilder` 角色排序是 6 级优先级，二者**从未在同一排序里加权**。
-- 后果：长篇容量瓶颈（一个贯穿全程的角色出现在数百章，确定性召回塞爆 prompt）的核心解决方案未落地。这是「长篇一致性」卖点的核心承诺未兑现。
+**A3. 「三层相关性融合排序 0.5/0.2/0.3」仅存于 PLAN.md，代码零实现** ✅ 已处理
+- `PLAN.md:262-266` 定义了 0.5/0.2/0.3 权重融合——这一设计对写小说 Agent 无实用价值（LLM 看到的是排序后的文本，无法利用数值权重）。批次⑤已采用更实用的方案：分层标签 + chapter_id 去重。PLAN.md 中相关描述已删除。
+
 
 **A4. 摘要 500 字上限——长期一致性无法承载**
 - `ContextManager.cpp:42`：`kCompactSystemPrompt` 末尾「总长度控制在 500 字以内」；`:607` 项目设定参考也截断到 500 字节。
