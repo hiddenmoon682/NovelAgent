@@ -14,6 +14,7 @@ namespace {
 
 using json = nlohmann::json;
 
+// 在 vector<T> 中按 id 查找对象。所有 Model 类型均有 id 字段。
 template<typename T>
 const T* findById(const std::vector<T>& values, const std::string& id) {
     for (const auto& value : values) {
@@ -24,6 +25,8 @@ const T* findById(const std::vector<T>& values, const std::string& id) {
     return nullptr;
 }
 
+// 判断 JSON 值是否"有意义"——非 null、非空字符串、非空数组/对象。
+// 用于过滤掉序列化后无信息的字段。
 bool isMeaningfulValue(const json& value) {
     if (value.is_null()) {
         return false;
@@ -37,6 +40,13 @@ bool isMeaningfulValue(const json& value) {
     return true;
 }
 
+// 对任意 Model 对象执行字段级白名单/黑名单过滤，
+// 同时移除 "generation" 元字段，并可选择移除 "metadata"。
+//
+// 过滤规则（串联执行，任一条件满足即保留）：
+//   1. 字段名在 alwaysInclude 集合中 → 强制保留
+//   2. 否则，通过 shouldUseField(generation, key, tags) 判断
+//   3. isMeaningfulValue 检查 → 空值不保留
 template<typename T>
 json filterObject(
     const T& object,
@@ -67,10 +77,13 @@ json filterObject(
     return filtered;
 }
 
+// 检查 id 是否出现在字符串列表中（O(n) 线性查找，列表通常很小）。
 bool containsId(const std::vector<std::string>& values, const std::string& id) {
     return std::find(values.begin(), values.end(), id) != values.end();
 }
 
+// 向 vector 中追加元素，通过 unordered_set 去重。
+// 跳过空指针和空 id。
 template<typename T>
 void appendUnique(const T* value, std::vector<const T*>& out, std::unordered_set<std::string>& seen) {
     if (!value || value->id.empty()) {
@@ -81,6 +94,14 @@ void appendUnique(const T* value, std::vector<const T*>& out, std::unordered_set
     }
 }
 
+// 从 Project 中筛选与目标章节关联的剧情线。
+//
+// 选取策略（优先级递减）：
+//   1. 直接取 chapter.active_plot_threads 中列出的剧情线
+//   2. 若①为空（新章节或未配置），则自动匹配：
+//      a) 剧情线的 related_settings 包含 chapter.location_id
+//      b) 剧情线的 related_characters 包含 chapter 的 POV 人物
+//   3. 超出 maxCount 时截断
 std::vector<const PlotThread*> selectPlotThreads(
     const Project& project,
     const Chapter& chapter,
@@ -114,6 +135,18 @@ std::vector<const PlotThread*> selectPlotThreads(
     return selected;
 }
 
+// 从 Project 中筛选与目标章节关联的角色。
+//
+// 选取优先级（从高到低）：
+//   1. chapter.focus_characters / pov_characters 中明确指定的角色
+//   2. 各场景的 POV 人物和参与者
+//   3. 关联剧情线所涉及的 related_characters
+//   4. 本章有 development 记录（角色发展）的角色 → 按 enable 过滤
+//   5. 本章有 chapter_appearances 出场记录的角色 → 按 enable 过滤
+//   6. 超出 maxCount 时截断
+//
+// 这样设计确保：明确指定的角色优先保留；
+// 当容量有余时再补充本章真正"有变化"的角色。
 std::vector<const Character*> selectCharacters(
     const Project& project,
     const Chapter& chapter,
@@ -169,6 +202,14 @@ std::vector<const Character*> selectCharacters(
     return selected;
 }
 
+// 从 Project 中筛选与目标章节关联的场景/设定地点。
+//
+// 收集来源（按优先级）：
+//   1. chapter.location_id（章节主要地点）
+//   2. chapter.focus_settings（明确指定的焦点设定）
+//   3. 各 scene.location_id（场景地点）
+//   4. 剧情线关联的 related_settings
+//   5. 超出 maxCount 时截断
 std::vector<const Setting*> selectSettings(
     const Project& project,
     const Chapter& chapter,
@@ -200,6 +241,13 @@ std::vector<const Setting*> selectSettings(
     return selected;
 }
 
+// 从 Project 中筛选与所选设定地点关联的世界观规则。
+//
+// 选取策略：
+//   1. 优先从 settings[i].related_rule_ids 直接取（正向关联）
+//   2. 若①为空，则反向匹配：遍历所有启用中的规则，
+//      检查其 related_settings 是否包含已选的 setting
+//   3. 超出 maxCount 时截断
 std::vector<const WorldRule*> selectWorldRules(
     const Project& project,
     const std::vector<const Setting*>& settings,
@@ -233,6 +281,9 @@ std::vector<const WorldRule*> selectWorldRules(
     return selected;
 }
 
+// 将 JSON 数组渲染为 Markdown 列表段。
+// 每项取 name/title/id 作为标题，其余字段作为缩进键值对输出。
+// 跳过 id/name/title 和空值，数组字段用逗号拼接。
 std::string renderSectionList(const json& values, const std::string& heading) {
     if (!values.is_array() || values.empty()) {
         return {};
@@ -274,9 +325,33 @@ std::string renderSectionList(const json& values, const std::string& heading) {
 
 } // namespace
 
+// ============================================================
+// buildForChapter — 按章节构建 LLM 上下文
+// ============================================================
+//
+// 功能：根据 PromptContextOptions 的配置，从 Project 中筛选出与
+//       目标章节最相关的信息，组装为 PromptContext（含 JSON payload
+//       和纯文本 rendered_prompt），供上层直接送入 LLM。
+//
+// 流程概览：
+//   1. 校验参数（chapter_id 不能为空、章节必须在 outline 中存在）
+//   2. 构建章节 order 映射 → 用于角色发展记录的时间线过滤
+//   3. 查找章节所属的卷（volume）
+//   4. 按 options 开关逐一填充 payload：
+//      - project / style / outline / volume / chapter / scene
+//      - plot_threads / characters / settings / world_rules
+//   5. 若 options.include_chapter_text 开启，读取 markdown 正文
+//   6. 调用 renderPrompt() 生成纯文本版本
+//
+// 返回：
+//   - 成功 → std::optional<PromptContext>
+//   - 失败（参数无效或章节不存在）→ std::nullopt
+//
+// ============================================================
 std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     const Project& project,
     const PromptContextOptions& options) {
+    // ---- 1. 参数校验 ----
     if (options.chapter_id.empty()) {
         return std::nullopt;
     }
@@ -286,13 +361,16 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
         return std::nullopt;
     }
 
+    // ---- 2. 初始化 context ----
     PromptContext context;
     context.task = options.task;
     context.chapter_id = chapter->id;
     context.scene_id = options.scene_id;
 
-    // 构建章节 ID → order 映射，用于过滤和排序角色发展记录。
-    // 例如写 ch-005 时，只展示 ch-001 到 ch-005 期间发生的变化。
+    // ---- 3. 构建章节 ID → order 映射 ----
+    // 用于过滤和排序角色发展记录。
+    // 例如写 ch-005 时，只展示 ch-001 到 ch-005 期间发生的变化，
+    // 未来章节的记录不应提前暴露给 LLM。
     std::unordered_map<std::string, int> chapterOrder;
     for (const auto& ch : project.outline.chapters) {
         chapterOrder[ch.id] = ch.order;
@@ -302,7 +380,7 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     const int currentOrder = chapter->order;
     const bool filterByOrder = (currentOrder > 0);
 
-    // 查找章节所属的卷纲
+    // ---- 4. 查找章节所属的卷（volume） ----
     const Volume* volume = nullptr;
     if (!chapter->volume_id.empty()) {
         volume = findById(project.outline.volumes, chapter->volume_id);
@@ -311,10 +389,12 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
         }
     }
 
+    // ---- 5. 构建 JSON payload ----
     json payload = json::object();
     payload["task"] = options.task;
     payload["chapter_id"] = chapter->id;
 
+    // 5a. 项目级摘要（梗概、核心主题等）
     if (options.include_project_summary) {
         payload["project"] = filterObject(
             project,
@@ -324,6 +404,7 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
             {"title"});
     }
 
+    // 5b. 风格指南（文风、叙事视角等）
     if (options.include_style) {
         payload["style"] = filterObject(
             project.style,
@@ -332,6 +413,7 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
             options.include_metadata);
     }
 
+    // 5c. 大纲上下文（剧情线、伏笔等顶层结构）
     if (options.include_outline_context) {
         payload["outline"] = filterObject(
             project.outline,
@@ -340,6 +422,7 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
             options.include_metadata);
     }
 
+    // 5d. 卷纲（如果章节属于某个卷）
     if (volume) {
         payload["volume"] = filterObject(
             *volume,
@@ -349,6 +432,7 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
             {"id", "title"});
     }
 
+    // 5e. 目标章节（核心数据，always included）
     payload["chapter"] = filterObject(
         *chapter,
         chapter->generation,
@@ -360,6 +444,7 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
         context.notes.push_back("Target chapter generation is disabled; only technical identifiers were retained.");
     }
 
+    // 5f. 目标场景（可选，通过 scene_id 指定）
     if (!options.scene_id.empty()) {
         const Scene* scene = findById(chapter->scenes, options.scene_id);
         if (scene) {
@@ -376,6 +461,8 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
         payload["chapter"].erase("scenes");
     }
 
+    // 5g. 关联剧情线
+    // 优先使用 chapter.active_plot_threads；若为空则按地点/POV 人物自动匹配。
     const auto plotThreads = selectPlotThreads(project, *chapter, options.max_plot_threads);
     json plotThreadArray = json::array();
     for (const auto* plotThread : plotThreads) {
@@ -388,6 +475,9 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     }
     payload["plot_threads"] = plotThreadArray;
 
+    // 5h. 关联角色
+    // 按优先级：POV/焦点 → 场景参与者 → 剧情线关联 → 本章有发展/出场记录。
+    // 每条角色数据中的 development 记录会做时间线过滤：仅保留 ≤ 当前 order 的记录。
     const auto characters = selectCharacters(project, *chapter, plotThreads, options.max_characters);
     json characterArray = json::array();
     for (const auto* character : characters) {
@@ -439,6 +529,8 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     }
     payload["characters"] = characterArray;
 
+    // 5i. 关联场景/设定地点
+    // 从 chapter.location_id + focus_settings + scenes + plotThreads 中收集。
     const auto settings = selectSettings(project, *chapter, plotThreads, options.max_settings);
     json settingArray = json::array();
     for (const auto* setting : settings) {
@@ -451,6 +543,8 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     }
     payload["settings"] = settingArray;
 
+    // 5j. 关联世界观规则
+    // 优先从 settings.related_rule_ids 取；若为空则按 setting 引用反向匹配。
     const auto worldRules = selectWorldRules(project, settings, options.max_world_rules);
     json worldRuleArray = json::array();
     for (const auto* rule : worldRules) {
@@ -463,6 +557,9 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     }
     payload["world_rules"] = worldRuleArray;
 
+    // 5k. 章节已有正文（可选）
+    // 从文件系统读取 chapter->file_path 指向的 markdown 文件，
+    // 适用于修订（revise）或续写场景。
     if (options.include_chapter_text) {
         if (project.path.empty()) {
             context.notes.push_back("Project path is empty; chapter markdown could not be loaded.");
@@ -478,11 +575,35 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
         }
     }
 
+    // ---- 6. 组装最终产物 ----
     context.payload = payload;
     context.rendered_prompt = renderPrompt(context);
     return context;
 }
 
+// ============================================================
+// renderPrompt — 将 PromptContext.payload（JSON）渲染为纯文本
+// ============================================================
+//
+// 输出格式为 Markdown，按以下顺序组织各节：
+//   # Task          → 任务类型
+//   # Notes         → 构建过程中的提示（可选）
+//   ## Project      → 项目级摘要
+//   ## Style        → 风格指南
+//   ## Outline      → 大纲上下文（不含 chapters/plot_threads 子数组）
+//   ## Volume       → 卷纲（可选）
+//   ## Target Chapter → 目标章节基本信息
+//   ## Target Scene → 目标场景信息（可选）
+//   ## Scenes       → 场景列表（来自 chapter.scenes）
+//   ## Plot Threads → 关联剧情线
+//   ## Characters   → 关联角色（含过滤后的发展记录）
+//   ## Settings     → 关联设定地点
+//   ## World Rules  → 关联世界观规则
+//   ## Existing Chapter Draft → 已有章节正文（可选）
+//
+// 每节内，对象字段渲染为 "key: value" 格式，
+// 数组字段用逗号拼接，跳过空值。
+//
 std::string PromptContextBuilder::renderPrompt(const PromptContext& context) {
     std::ostringstream oss;
     const json& payload = context.payload;

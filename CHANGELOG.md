@@ -1,5 +1,30 @@
 # Changelog
 
+## [2026-06-28] 新增 LLM 主动查询工具：search_memory / read_style + 扩展 get_project_status
+
+### 新增工具
+
+- **`search_memory`** — 显式语义搜索工具，允许 LLM 用自定义 query 主动查询向量存储
+  - 文件：`src/agent/tools/SearchMemoryTools.h/.cpp`
+  - 注册方式：手动工厂（仿 ShellTools，不接收 Project&）
+  - 后端注入：`initSearchMemoryBackend()` 在 `NovelAgentApp::setupAgent()` 中调用
+  - 参数：`{query: string, top_k?: integer(默认5)}`
+  - 分类：`ToolCategory::System`
+- **`read_style`** — 写作风格查询工具，返回完整 Style 配置（24 字段）
+  - 文件：`src/agent/tools/StyleTools.h/.cpp`
+  - 注册方式：标准 `REGISTER_TOOL` 宏
+  - 分类：`ToolCategory::Setting`
+
+### 工具扩展
+
+- **`get_project_status`** — 从 8 字段扩展到 23 字段
+  - 新增：`description`, `genre`, `comps`, `central_question`, `ending_type`, `target_word_count`, `current_word_count`, `status`, `must_have_elements`, `must_avoid_elements`, `narrative_promises`, `tags`, `world_rules_summary`, `created`, `modified`
+
+### 构建
+
+- `cmake/Sources.cmake` — `NOVELAGENT_TOOLS` 追加 SearchMemoryTools 和 StyleTools 文件对
+- `src/NovelAgentApp.cpp` — `setupAgent()` 中在 `registerAllTools()` 前调用 `initSearchMemoryBackend()`
+
 ## [2026-06-25] 3 项代码审查修复 + 上下文模块注释补充
 
 ### Bug 修复（f64c304 提交后审查）

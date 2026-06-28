@@ -36,15 +36,35 @@ json GetProjectStatusTool::parameters() const {
 json GetProjectStatusTool::execute(const json&) {
     spdlog::info("[get_project_status] {}", project_->title);
     return {
+        // ── 基本信息 ──
         {"title", project_->title},
         {"logline", project_->logline},
         {"theme", project_->theme},
+        {"description", project_->description},
+        {"genre", project_->genre},
+        {"comps", project_->comps},
+        {"central_question", project_->central_question},
+        // ── 目标与约束 ──
         {"target_audience", project_->target_audience},
         {"content_rating", project_->content_rating},
+        {"ending_type", project_->ending_type},
+        {"must_have_elements", project_->must_have_elements},
+        {"must_avoid_elements", project_->must_avoid_elements},
+        {"narrative_promises", project_->narrative_promises},
+        {"world_rules_summary", project_->world_rules_summary},
+        // ── 进度 ──
+        {"target_word_count", project_->target_word_count},
+        {"current_word_count", project_->current_word_count},
+        {"status", project_->status},
+        // ── 统计 ──
         {"characters_count", static_cast<int>(project_->characters.size())},
         {"chapters_count", static_cast<int>(project_->outline.chapters.size())},
         {"settings_count", static_cast<int>(project_->settings.size())},
-        {"world_rules_count", static_cast<int>(project_->world_rules.size())}
+        {"world_rules_count", static_cast<int>(project_->world_rules.size())},
+        // ── 元数据 ──
+        {"tags", project_->tags},
+        {"created", project_->created},
+        {"modified", project_->modified}
     };
 }
 

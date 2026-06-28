@@ -227,7 +227,90 @@ bool ContextManager::isVectorStoreStale() const {
 }
 
 // ===========================================================================
-// assemble — 增强版
+// assemble — 上下文组装核心方法
+//
+// 职责：
+//   在每次 LLM 请求前，将三类上下文（静态项目设定、向量语义召回、对话压缩摘要）
+//   与当前对话历史合并，在 max_context_tokens 预算内执行消息截断，
+//   并输出 token 用量告警，最终产出完整的 ContextAssembly。
+//
+// 执行流程（共 8 步）：
+//
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │  步骤 0: System Prompt 构建                                  │
+//   │  buildSystemPrompt(project, chapter_id)                     │
+//   │  → 从 characters.json / outline.json / settings.json 渲染    │
+//   │    项目级静态上下文（角色列表、大纲节点、前情提要、世界观）    │
+//   └──────────────────┬──────────────────────────────────────────┘
+//                      ▼
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │  步骤 1: 向量检索（语义召回）                                │
+//   │  @条件: vector_store_ && embedding_gen_ 均已就绪且非空       │
+//   │  ┌─ skip guards ────────────────────────────────────────┐   │
+//   │  │ ● vector_store_dirty_=true  → 跳过（/rewind 后脏标记）│   │
+//   │  │ ● isVectorStoreStale()=true → 告警（索引比 Project 旧）│   │
+//   │  └──────────────────────────────────────────────────────┘   │
+//   │  ① 取对话最后一条 user 消息作为查询文本                     │
+//   │  ② embedding_gen_ → 生成查询向量 query_emb                 │
+//   │  ③ vector_store_->search() → 召回 top-K 最相似片段         │
+//   │  ④ 格式化后追加到 system_prompt 末尾                        │
+//   └──────────────────┬──────────────────────────────────────────┘
+//                      ▼
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │  步骤 2: 压缩摘要注入（中期记忆层）                          │
+//   │  @条件: compacted_summary_ 非空（此前执行过 /compact）       │
+//   │  将双层摘要（情节事实 + 风格样本）追加到 system_prompt       │
+//   │  作为被压缩的旧对话的语义替代                               │
+//   └──────────────────┬──────────────────────────────────────────┘
+//                      ▼
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │  步骤 3: Token 预算分配                                      │
+//   │  sys_tokens  = countTokens(system_prompt)                   │
+//   │  msg_budget = max(0, max_context_tokens - sys_tokens)      │
+//   │  → 剩余预算全部留给对话消息列表                              │
+//   └──────────────────┬──────────────────────────────────────────┘
+//                      ▼
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │  步骤 4: Token 阈值告警                                      │
+//   │  checkThresholds() → 分三级状态：                            │
+//   │  ● Normal  ( < 60% )  → 静默                                │
+//   │  ● Warning (60%-85%)  → 建议 /compact                       │
+//   │  ● Critical( ≥ 85% )  → 强烈建议 /compact                    │
+//   │  ● msg_budget <= 0    → error：system prompt 独占窗口       │
+//   └──────────────────┬──────────────────────────────────────────┘
+//                      ▼
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │  步骤 5: 对话消息截断                                        │
+//   │  truncateMessages(all_msgs, msg_budget, truncated_count)    │
+//   │  → 从最新消息反向贪心保留，preserved 消息优先但不免预算       │
+//   │  → 安全兜底：至少保留最后一条消息（当前用户输入）             │
+//   └──────────────────┬──────────────────────────────────────────┘
+//                      ▼
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │  步骤 6: 最终 Token 统计                                     │
+//   │  total_tokens = sys_tokens + countMessages(result.messages) │
+//   └──────────────────┬──────────────────────────────────────────┘
+//                      ▼
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │  步骤 6.5: 模型窗口超限预检（API 400 防护）                  │
+//   │  total_tokens > model_context_limit → 致命告警               │
+//   │  提示用户减少 /pin 数量或执行 /compact                       │
+//   └──────────────────┬──────────────────────────────────────────┘
+//                      ▼
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │  步骤 7: 内部状态缓存                                        │
+//   │  last_warnings_        → 供 Agent/REPL 读取                  │
+//   │  last_truncated_count_ → 供外部查询截断数                    │
+//   │  current_context_size_ → 更新为 total_tokens，供下次阈值检查 │
+//   └─────────────────────────────────────────────────────────────┘
+//
+// 输出 ContextAssembly 关键字段：
+//   system_prompt         — 三层上下文的拼接结果
+//   messages              — 截断后的有效消息列表
+//   warnings              — 所有告警的文本数组
+//   total_tokens          — 最终发送的 token 总量
+//   truncated_count       — 被丢弃的消息数量
+//   has_compacted_context — 是否注入了压缩摘要或检索片段
 // ===========================================================================
 
 ContextAssembly ContextManager::assemble(
@@ -236,28 +319,31 @@ ContextAssembly ContextManager::assemble(
 {
     ContextAssembly result;
 
-    // 1. 构建 system prompt（使用内部 project_ 和 current_chapter_id_）
+    // ── 步骤 0: System Prompt 构建 ──────────────────────────────────────
+    // 通过 PromptContextBuilder::buildForChapter() 从项目文件渲染静态上下文。
+    // chapter_id 为空时回退到项目级概要（标题 + Logline + 主题）。
     if (project_) {
         result.system_prompt = buildSystemPrompt(*project_, current_chapter_id_);
     }
 
-    // 1.5. 向量检索（取最后一条 user 消息做语义召回）
+    // ── 步骤 1: 向量检索（语义召回）─────────────────────────────────────
+    // 条件：向量存储 + 嵌入生成器均已就绪，且向量库非空。
     if (vector_store_ && embedding_gen_ && vector_store_->count() > 0) {
-        // /rewind 后标记为脏 → 跳过检索
+        // Guard 1: /rewind 脏标记 → 跳过检索（向量索引位置与当前对话不匹配）
         if (vector_store_dirty_) {
             result.warnings.push_back(
                 "向量索引在 /rewind 后已标记为过期，建议 /index 重建。");
             spdlog::warn("[ContextManager] 向量索引已标记为脏，跳过检索");
             goto skip_retrieval;
         }
-        // 检查向量库是否比 Project 旧
+        // Guard 2: 向量库 mtime 比 project.json 旧 → 告警但不阻断
         if (isVectorStoreStale()) {
             result.warnings.push_back(
                 "Project 已更新，向量索引可能过期。建议 /index 重建。");
             spdlog::warn("[ContextManager] 向量索引可能过期");
         }
+        // 从对话尾部反向扫描，找到最后一条用户消息作为语义查询的源文本
         const auto& msgs = conversation.messages();
-        // 找最后一条 user 消息
         std::string last_user_text;
         for (auto it = msgs.rbegin(); it != msgs.rend(); ++it) {
             if (it->role == llm::MessageRole::User) {
@@ -267,6 +353,7 @@ ContextAssembly ContextManager::assemble(
         }
         if (!last_user_text.empty()) {
             try {
+                // 生成查询向量 → 语义搜索 → 格式化召回结果
                 auto query_emb = embedding_gen_->generateEmbedding(last_user_text);
                 auto results = vector_store_->search(query_emb, retrieval_top_k_);
                 if (!results.empty()) {
@@ -286,25 +373,29 @@ ContextAssembly ContextManager::assemble(
                 }
             } catch (const std::exception& e) {
                 spdlog::warn("[ContextManager] 向量检索失败: {}", e.what());
-                // 检索失败不阻断主流程
+                // 检索失败不阻断主流程，让 LLM 仅依赖压缩摘要和当前对话
             }
         }
     }
     skip_retrieval:
 
-    // 2. 注入压缩摘要（如果存在）
+    // ── 步骤 2: 注入压缩摘要（中期记忆层）───────────────────────────────
+    // 如果之前执行过 /compact，将被压缩的旧对话摘要注入 system_prompt，
+    // 作为"情节事实 + 风格样本"的语义替代，让 LLM 仍能感知被裁掉的早期对话。
     if (!compacted_summary_.empty()) {
         result.has_compacted_context = true;
         if (!result.system_prompt.empty()) result.system_prompt += "\n\n";
         result.system_prompt += "[会话历史摘要 — 当前风格参照]\n" + compacted_summary_;
     }
 
-    // 3. 计算消息预算
+    // ── 步骤 3: 计算消息预算 ────────────────────────────────────────────
+    // 总预算 = max_context_tokens；system_prompt 优先占用，剩余归消息列表。
     int sys_tokens = result.system_prompt.empty()
         ? 0 : llm::TokenCounter::countTokens(result.system_prompt);
     int msg_budget = std::max(0, max_context_tokens - sys_tokens);
 
-    // 4. 生成告警
+    // ── 步骤 4: 生成 Token 用量告警 ──────────────────────────────────────
+    // 基于最后一次请求的实际上下文大小（非累计值）分三级预警。
     auto pre_check = checkThresholds();
     if (pre_check.status == ContextStatus::Critical) {
         result.warnings.push_back(
@@ -317,6 +408,7 @@ ContextAssembly ContextManager::assemble(
             "%，可考虑 /compact 释放空间。");
     }
 
+    // msg_budget <= 0 意味着静态上下文已占满窗口 → 消息列表无任何预算
     if (msg_budget <= 0) {
         result.warnings.push_back(
             "System prompt 已占用全部预算（" + std::to_string(sys_tokens) +
@@ -325,7 +417,9 @@ ContextAssembly ContextManager::assemble(
                       sys_tokens, max_context_tokens);
     }
 
-    // 5. 截断消息（支持 preserved 标记）
+    // ── 步骤 5: 截断消息（支持 preserved 标记）───────────────────────────
+    // truncateMessages 内部按 "preserved 优先 → 从最新反向贪心" 的策略
+    // 在 msg_budget 内尽可能保留更多消息。
     const auto& all_msgs = conversation.messages();
     result.messages = truncateMessages(all_msgs, msg_budget, result.truncated_count);
 
@@ -337,11 +431,13 @@ ContextAssembly ContextManager::assemble(
                      result.truncated_count, max_context_tokens, sys_tokens, msg_budget);
     }
 
-    // 6. 统计总 token
+    // ── 步骤 6: 统计总 token ────────────────────────────────────────────
     int msg_tokens = llm::TokenCounter::countMessages(result.messages);
     result.total_tokens = sys_tokens + msg_tokens;
 
-    // 6.5. 最终预检：总 token 是否超出模型窗口（防止 API 400 错误）
+    // ── 步骤 6.5: 最终预检 ──────────────────────────────────────────────
+    // 在即将发送前再检查一次：总 token 是否超出模型上下文窗口上限。
+    // 这是防止 LLM API 返回 400 Bad Request 的最后一道防线。
     if (token_state_.model_context_limit > 0
         && result.total_tokens > token_state_.model_context_limit) {
         result.warnings.push_back(
@@ -352,10 +448,12 @@ ContextAssembly ContextManager::assemble(
                       result.total_tokens, token_state_.model_context_limit);
     }
 
-    // 7. 缓存（供 Agent/REPL 读取）
+    // ── 步骤 7: 缓存到内部状态 ──────────────────────────────────────────
+    // 供 Agent / REPL 层查询：last_warnings_ 用于展示给用户，
+    // last_truncated_count_ 用于统计，current_context_size_ 用于下次阈值检查。
     last_warnings_ = result.warnings;
     last_truncated_count_ = result.truncated_count;
-    current_context_size_ = result.total_tokens;  // 用于阈值检查
+    current_context_size_ = result.total_tokens;
 
     return result;
 }
@@ -363,17 +461,64 @@ ContextAssembly ContextManager::assemble(
 // ===========================================================================
 // buildSystemPrompt — 构建项目/章节的静态上下文
 //
-// 两种模式（由 chapter_id 区分）：
-//   1. chapter_id 为空 → 返回项目级概要（标题、Logline、主题），用于无章节上下文时
-//   2. chapter_id 有效 → 通过 PromptContextBuilder::buildForChapter() 构建完整上下文
-//      包含：角色列表（6级优先级排序）、大纲节点、前情提要、世界观设定等
-//   构建失败时回退到模式 1。
+// 职责：
+//   为 LLM 请求提供"静态上下文层"—— 即不随对话变化的那部分信息，
+//   来源于 Project 文件（characters.json / outline.json / settings.json 等）。
+//
+// 设计模式：双层分派 + 静默回退
+//
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │ 入口: buildSystemPrompt(project, chapter_id)                │
+//   │                                                             │
+//   │  ┌─ chapter_id 为空 ──────────────────────────────────────┐ │
+//   │  │  模式 1: 项目级概要                                      │ │
+//   │  │  输出: # 项目: {title}                                  │ │
+//   │  │        Logline: {logline}                               │ │
+//   │  │        主题: {theme}                                    │ │
+//   │  │  用途: 无章节上下文时的降级方案                          │ │
+//   │  │  (新会话 / 全局命令 / 回退路径)                          │ │
+//   │  └────────────────────────────────────────────────────────┘ │
+//   │                           ↓                                  │
+//   │  ┌─ chapter_id 有效 ──────────────────────────────────────┐ │
+//   │  │  模式 2: 章节级完整上下文                                │ │
+//   │  │  委托 PromptContextBuilder::buildForChapter() 渲染      │ │
+//   │  │  包含:                                                  │ │
+//   │  │  ├─ 角色列表（6级优先级排序，仅保留与本章节相关的角色）     │ │
+//   │  │  ├─ 大纲节点（当前章节 + 前后章节概述）                   │ │
+//   │  │  ├─ 前情提要（之前已写章节的情节摘要）                    │ │
+//   │  │  ├─ 世界观设定（关键设定/规则/魔法体系等）                │ │
+//   │  │  └─ 写作风格指南（由 style.json 定义）                   │ │
+//   │  │                                                        │ │
+//   │  │  ┌─ 构建成功 ────────────────────────────────────────┐  │ │
+//   │  │  │ 返回 ctx->rendered_prompt（完整渲染文本）          │  │ │
+//   │  │  └──────────────────────────────────────────────────┘  │ │
+//   │  │                                                        │ │
+//   │  │  ┌─ 构建失败 ────────────────────────────────────────┐  │ │
+//   │  │  │ 日志 WARNING + 递归回退到模式 1（项目级概要）       │  │ │
+//   │  │  │ 保证调用方始终能拿到非空字符串，不阻塞流程           │  │ │
+//   │  │  └──────────────────────────────────────────────────┘  │ │
+//   │  └────────────────────────────────────────────────────────┘ │
+//   └─────────────────────────────────────────────────────────────┘
+//
+// 调用者：
+//   ● assemble()  — 作为"步骤 0"，构建后还会叠加向量召回和压缩摘要
+//   ● compact()   — 用作项目设定参考（截断 ≤500 字节），帮助 LLM
+//                    正确识别被压缩对话中的人物指代
+//
+// 关键约定：
+//   options.task = "write_chapter" 硬编码，控制 PromptContextBuilder
+//   内部的筛选逻辑（如角色按"与本章节写作任务的相关性"排序）。
+//   若将来增加其他任务类型（如 rewrite / outline_plan），
+//   需在此处根据上下文切换 task 值。
 // ===========================================================================
 
 std::string ContextManager::buildSystemPrompt(
     const Project& project,
     const std::string& chapter_id)
 {
+    // ── 模式 1: 项目级概要 ────────────────────────────────────────────────
+    // 当 chapter_id 为空时（例如全局命令、新会话尚未选择章节），
+    // 仅输出项目最基础的标识信息，不涉及任何章节级细节。
     if (chapter_id.empty()) {
         std::string prompt;
         prompt += "# 项目: " + project.title + "\n";
@@ -382,14 +527,19 @@ std::string ContextManager::buildSystemPrompt(
         return prompt;
     }
 
+    // ── 模式 2: 章节级完整上下文 ──────────────────────────────────────────
+    // 通过 PromptContextBuilder 渲染完整的章节写作上下文。
+    // task = "write_chapter" 指示构建器按"写作任务"的标准筛选和排序内容。
     prompt::PromptContextOptions options;
     options.task = "write_chapter";
     options.chapter_id = chapter_id;
 
     auto ctx = prompt::PromptContextBuilder::buildForChapter(project, options);
     if (!ctx) {
+        // 构建失败（如章节文件损坏/不存在）→ 静默回退到模式 1
+        // 不做 hard fail，保证调用方（assemble/compact）始终获得有效字符串
         spdlog::warn("[ContextManager] 章节 '{}' 上下文构建失败，回退", chapter_id);
-        return buildSystemPrompt(project);  // 回退到项目级概要
+        return buildSystemPrompt(project);
     }
 
     return ctx->rendered_prompt;

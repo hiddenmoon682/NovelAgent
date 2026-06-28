@@ -2,6 +2,7 @@
 
 #include "agent/AgentSetup.h"
 #include "agent/PromptComposer.h"
+#include "agent/tools/SearchMemoryTools.h"
 #include "cli/ConsoleOutput.h"
 #include "cli/ReplHandler.h"
 #include "cli/StreamDisplay.h"
@@ -27,6 +28,12 @@ NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
 
 void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
 {
+    // 初始化语义搜索工具的后端指针（必须在 registerAllTools 之前）
+    // vector_store_ / embedding_gen_ 是值成员，在构造函数初始化列表中已完成构造。
+    if (project_ && !project_->title.empty()) {
+        agent::initSearchMemoryBackend(&vector_store_, &embedding_gen_);
+    }
+
     // 工具自注册（仅在打开项目时注册）
     if (project_ && !project_->title.empty()) {
         agent::registerAllTools(registry_, project_, disabledTools);

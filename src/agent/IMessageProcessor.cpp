@@ -110,9 +110,9 @@ SerialProcessor::Result SerialProcessor::process(
 
     // ── 步骤 5: 配置 ToolCallLoop ──
     // 创建 ToolCallLoop 实例并设置运行参数。
-    ToolCallLoop loop(client_, registry_, tracer_);  // Fix #3: 传递 tracer
+    ToolCallLoop loop(client_, registry_, tracer_);    // Fix #3: 传递 tracer
     ToolCallLoopConfig config;
-    config.max_rounds = max_tool_rounds_;             // 最大 tool_call 轮数
+    config.max_rounds = max_tool_rounds_;              // 最大 tool_call 轮数
     config.all_rounds_streaming = false;               // 首轮流式 + 后续非流式
     config.max_repeated_calls = 3;                     // Fix #2: 循环检测上限
     config.token_warning_threshold = 0;                // Fix #4: 默认不监控 token
