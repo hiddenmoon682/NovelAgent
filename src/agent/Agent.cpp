@@ -315,56 +315,58 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
     // 外部组件（如 StreamDisplay）可据此切换 UI 提示状态。
     state_.transition(AgentState::Thinking);
 
-    // ── 步骤 6: 核心处理 ──
-    // 委托给 IMessageProcessor 策略对象（SerialProcessor 或 ParallelProcessor）。
-    //
-    // SerialProcessor 内部流程:
-    //   a) 构建有效系统提示词（拼接 ContextManager 动态上下文）
-    //   b) 将用户输入追加到 conversation_
-    //   c) 调用 LLM（chat 接口）
-    //   d) 若响应含 tool_call → 执行工具 → 将结果追加到 conversation_ → 再次调用 LLM
-    //   e) 重复步骤 d) 直到 LLM 返回文本回复或达到 max_tool_rounds_ 上限
-    //
-    // conversation_ 通过引用传入，processor_ 内部自动管理消息追加，
-    // 无需在 processUserMessage 层手动操作对话历史。
-    auto t_start = std::chrono::steady_clock::now();
-    auto result = processor_->process(input, conversation_, std::move(callbacks));
-    auto t_end = std::chrono::steady_clock::now();
-    int total_ms = static_cast<int>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count());
-
-    // ── 步骤 6: 状态恢复 Thinking → Idle（Fix #6）──
-    // 无论处理成功或失败，都将状态机恢复到 Idle，准备接收下一条输入。
-    // 若过程中发生了可恢复错误（如 LLM 超时、工具执行异常），
-    // state_.isError() 在 processor_->process() 内部被置位，
-    // 但此处统一过渡到 Idle，等待下一次用户输入重新触发。
-    if (state_.isError()) {
-        spdlog::info("[Agent] 处理完成（含可恢复错误），状态重置为 Idle");
-        state_.transition(AgentState::Idle);
-    } else {
-        state_.transition(AgentState::Idle);
-    }
-
-    // ── 步骤 7: 轨迹记录（Fix #3）──
-    // 记录最终响应的 token 消耗，用于统计和使用量监控。
-    tracer_.record("done", result.raw_response.total_tokens, total_ms);
-
-    // ── 章节边界检测 ──
-    maybeAutoCompact(result.raw_response);
-
-    // ── 步骤 7.5: 会话增量保存（B2 修复）──
-    // 每轮对话结束后立即持久化 conversation.json + session_meta.json，
-    // 避免运行中途崩溃（断电、进程被杀）丢失本轮全部对话与创作上下文。
-    // 此前仅在 REPL 退出时保存一次，长会话写作中途崩溃会丢失数千字生成内容。
-    // 写入失败不阻断主流程（符合项目错误处理策略：单点失败友好降级）。
+    // ── 步骤 6-7.5: 核心处理 + 轨迹记录 + 章节检测 + 增量保存 ──
+    // 整体以 try-catch 包裹（B8 修复）：若 processor_->process() 或后续
+    // 步骤抛异常（LLM 超时、工具异常等），异常不再穿透到 ReplHandler 导致
+    // state_ 卡在 Thinking 永久拒输入。捕获后强制恢复：Thinking → Error → Idle。
     try {
-        saveSessionState();
-    } catch (const std::exception& e) {
-        spdlog::warn("[Agent] 会话增量保存失败（不影响本轮回复）: {}", e.what());
-    }
+        auto t_start = std::chrono::steady_clock::now();
+        auto result = processor_->process(input, conversation_, std::move(callbacks));
+        auto t_end = std::chrono::steady_clock::now();
+        int total_ms = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count());
 
-    // ── 步骤 8: 返回结果 ──
-    return result.raw_response;
+        // ── 步骤 6: 状态恢复 Thinking → Idle（Fix #6）──
+        // 无论处理成功或失败，都将状态机恢复到 Idle，准备接收下一条输入。
+        // 若过程中发生了可恢复错误（如 LLM 超时、工具执行异常），
+        // state_.isError() 在 processor_->process() 内部被置位，
+        // 但此处统一过渡到 Idle，等待下一次用户输入重新触发。
+        if (state_.isError()) {
+            spdlog::info("[Agent] 处理完成（含可恢复错误），状态重置为 Idle");
+            state_.transition(AgentState::Idle);
+        } else {
+            state_.transition(AgentState::Idle);
+        }
+
+        // ── 步骤 7: 轨迹记录（Fix #3）──
+        // 记录最终响应的 token 消耗，用于统计和使用量监控。
+        tracer_.record("done", result.raw_response.total_tokens, total_ms);
+
+        // ── 章节边界检测 ──
+        maybeAutoCompact(result.raw_response);
+
+        // ── 步骤 7.5: 会话增量保存（B2 修复）──
+        // 每轮对话结束后立即持久化 conversation.json + session_meta.json，
+        // 避免运行中途崩溃（断电、进程被杀）丢失本轮全部对话与创作上下文。
+        // 此前仅在 REPL 退出时保存一次，长会话写作中途崩溃会丢失数千字生成内容。
+        // 写入失败不阻断主流程（符合项目错误处理策略：单点失败友好降级）。
+        try {
+            saveSessionState();
+        } catch (const std::exception& e) {
+            spdlog::warn("[Agent] 会话增量保存失败（不影响本轮回复）: {}", e.what());
+        }
+
+        // ── 步骤 8: 返回结果 ──
+        return result.raw_response;
+    } catch (const std::exception& e) {
+        // B8 修复：核心处理异常强制状态恢复，防止卡在 Thinking 永久拒输入。
+        // Thinking → Error（合法转换）→ Idle（recover），返回空响应用户可继续。
+        spdlog::error("[Agent] 处理异常，强制状态恢复: {}", e.what());
+        tracer_.record("error", 0, 0, {{"reason", "处理异常: " + std::string(e.what())}});
+        state_.transition(AgentState::Error);
+        state_.recover();
+        return {};
+    }
 }
 
 // ============================================================================

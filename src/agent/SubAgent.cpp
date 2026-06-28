@@ -71,25 +71,17 @@ SubAgentResult SubAgent::execute(const SubAgentConfig& config)
     auto status = future.wait_for(config.timeout);
     if (status == std::future_status::timeout) {
         cancelled_ = true;
-        spdlog::warn("[SubAgent] 超时（{}s），通知异步任务取消…",
+        spdlog::warn("[SubAgent] 超时（{}s），通知异步任务取消并等待其退出…",
                      config.timeout.count());
 
-        // 等待异步任务注意到 cancelled_ 后自行退出。
-        // 异步任务可能正阻塞在 HTTP 调用中，最坏需等待 HTTP read_timeout（180s）
-        // 才能返回并检查 cancelled_。使用两倍 timeout 作为清理宽限期，
-        // 确保覆盖 HTTP 超时窗口，同时避免原先 future.wait() 的无限阻塞。
-        auto cleanup_status = future.wait_for(config.timeout * 2);
-        if (cleanup_status == std::future_status::timeout) {
-            spdlog::error("[SubAgent] 异步任务在取消后 {}s 仍未完成，"
-                          "HTTP 调用疑似挂起。为避免调用方永久阻塞，放弃等待。",
-                          config.timeout.count() * 2);
-            // 极端情况：任务中的 HTTP 调用超过了 read_timeout 仍无响应。
-            // lambda 捕获了 [this]，此 SubAgent 返回后将被销毁，
-            // 但 cancelled_ 已设置，任务线程将在当前 HTTP 调用结束后尽快退出。
-        } else {
-            result = future.get();
-            spdlog::info("[SubAgent] 取消后任务在 {}s 内完成", config.timeout.count());
-        }
+        // B3 修复：无条件等待异步任务完全退出（不放弃），避免 this 悬空。
+        // cancelled_=true 已通知任务尽快结束（在每次 HTTP 调用返回后检查）；
+        // HTTP 客户端自身有 read_timeout（180s），不会真正无限挂起。
+        // 此处阻塞时间 = 剩余 HTTP 调用时长（≤ read_timeout），远好于 use-after-free。
+        // SubAgent 调用方（AgentOrchestrator）本身在独立线程中运行，Blocking 不影响主 Agent。
+        future.wait();
+        result = future.get();
+        spdlog::info("[SubAgent] 超时后异步任务已完成");
 
         result.timed_out = true;
         if (result.error.empty())

@@ -300,7 +300,44 @@ void test_empty_input() {
 }
 
 // =========================================================================
-// 测试: B2 — 会话增量保存（processUserMessage 后落盘）
+// 测试: B8 — 异常后状态恢复（不卡 Thinking 永久拒输入）
+// =========================================================================
+
+void test_exception_recovery() {
+    TEST("B8 — 异常后 agent.canAcceptInput() 恢复为 true");
+
+    MockServer server;
+    // 模拟 LLM 服务端异常：返回非法 JSON，导致 SSEParser 抛 json::parse_error
+    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        if (isStreamRequest(req)) {
+            res.set_content("not valid sse", "text/event-stream");
+        } else {
+            res.set_content("{ broken json!!! ", "application/json");
+        }
+    });
+    server.start();
+
+    llm::LLMClientFactory factory(makeConfig(server.port));
+    agent::ToolRegistry registry;
+    agent::Agent agent(factory, registry);
+
+    // 异常前状态正确
+    CHECK(agent.canAcceptInput());
+
+    // 调用 processUserMessage — 内部应捕获异常并恢复
+    auto response = agent.processUserMessage("应该不崩溃");
+    // 异常恢复后返回空响应
+    CHECK(response.content.empty());
+
+    // B8 关键断言：异常后必须能接受新输入（状态已恢复为 Idle）
+    CHECK(agent.canAcceptInput());
+    CHECK(agent.currentState() == agent::AgentState::Idle);
+
+    server.stop();
+    PASS();
+}
+
 // =========================================================================
 
 void test_session_persisted_after_message() {
@@ -370,6 +407,7 @@ int main() {
     test_conversation_management();
     test_empty_input();
     test_session_persisted_after_message();
+    test_exception_recovery();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;

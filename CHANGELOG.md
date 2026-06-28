@@ -1,5 +1,31 @@
 # Changelog
 
+## [2026-06-28] 设计评审批次②：修复内存安全与死锁（B3/B5/B8）
+
+> 依据 `docs/review/DESIGN_REVIEW.md` 评审报告，修复第二批「内存安全/死锁」类高严重度问题。
+
+### B3 — SubAgent 超时 use-after-free
+- `src/agent/SubAgent.cpp`：`execute()` 超时后改为 `future.wait()` 无条件等待异步任务彻底退出，替代"放弃等待"（此前在清理宽限期过后直接返回销毁 this，异步线程访问已析构对象导致悬空）。
+- 注释自承认的逻辑已消除。最坏情况等待 HTTP read_timeout（180s），远好于 use-after-free。
+- 新增 `test_sub_agent` 1 项 B3 验证（SlowMockLLMClient 睡眠 8s + 1s 超时 → 不崩溃返回 timed_out）。
+
+### B5 — 主循环超时保护
+- `src/agent/IMessageProcessor.cpp`：`SerialProcessor::process()` 中为 `ToolCallLoopConfig` 设置 `timeout=300s`（5 分钟），防止 HTTP 半开/服务端卡死时主线程永久阻塞。
+- 此前 SerialProcessor 不设 timeout（默认 0→同步模式无超时），SubAgent 有 120s 超时主循环反而没有——保护不一致已修复。
+
+### B8 — 异常后状态恢复（不卡 Thinking 永久拒输入）
+- `src/agent/Agent.cpp`：`processUserMessage()` 对步骤 6-7.5（处理器调用 + 状态恢复 + 轨迹记录 + 增量保存）加 try-catch 包裹。捕获异常后强制 `transition(Error) → recover() → Idle`，返回空响应。
+- 此前异常穿透到 ReplHandler 的 catch，`state_` 卡在 Thinking 导致 `canAcceptInput()` 永久返回 false 直至重启——死锁路径已消除。
+- 新增 `test_agent` 1 项 B8 验证（mock 返回非法 JSON → 异常后 canAcceptInput() 为 true，状态为 Idle）。
+
+### 顺带修复 — ContextManager token 阈值测试 3 项既有失败
+- `src/agent/ContextManager.cpp`：`recordUsage()` 同步更新 `current_context_size_ = input_tokens`（API 返回的 prompt_tokens 比启发式估算更精确）。
+- 修复后 `test_context_manager` 中 `usagePercent`/`checkThresholds`/`has_critical` 三项由失败变通过。
+
+### 测试
+- 全量 **16/16 全部通过**（test_context_manager 遗留失败已消除）。
+- 新增：`test_sub_agent` B3 超时测试、`test_agent` B8 异常恢复测试。
+
 ## [2026-06-28] 设计评审批次①：堵住数据丢失与静默失效（B1/A5/D2/B2）
 
 > 依据 `docs/review/DESIGN_REVIEW.md` 评审报告，修复第一批「会丢用户数据 / 静默失效」的高严重度问题。

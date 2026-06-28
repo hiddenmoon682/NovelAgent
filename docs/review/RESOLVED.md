@@ -1,5 +1,23 @@
 # 已修复问题记录
 
+## 设计评审批次②（2026-06-28） — 内存安全与死锁
+
+> 依据 [`DESIGN_REVIEW.md`](./DESIGN_REVIEW.md) 评审报告，修复第二批高严重度问题。
+
+### B3 — SubAgent 超时 use-after-free ✅
+`SubAgent::execute()` 超时后改为 `future.wait()` 无条件等待异步任务退出，替代"放弃等待"。注释自承认的 this 悬空逻辑已消除。
+
+### B5 — 主循环超时保护 ✅
+`SerialProcessor::process()` 中 `ToolCallLoopConfig.timeout=300s`。此前主循环无超时（默认 0→同步模式），SubAgent 有 120s 超时主循环反而没有——保护不一致已修复。
+
+### B8 — 异常后状态恢复 ✅
+`Agent::processUserMessage()` 核心处理段加 try-catch，异常后强制 `transition(Error) → recover() → Idle`。此前异常穿透到 ReplHandler 致 state_ 卡 Thinking 永久拒输入——死锁路径已消除。
+
+### 顺带修复 — ContextManager 测试失败 ✅
+`recordUsage()` 同步更新 `current_context_size_`，test_context_manager 的 3 项既有失败（usagePercent/checkThresholds/has_critical）全部修复。全量 16/16 通过。
+
+---
+
 ## 设计评审批次①（2026-06-28） — 堵住数据丢失与静默失效
 
 > 依据 [`DESIGN_REVIEW.md`](./DESIGN_REVIEW.md) 评审报告，修复第一批高严重度问题。

@@ -91,6 +91,9 @@ void ContextManager::recordUsage(int input_tokens, int output_tokens) {
     token_state_.total_input_tokens += input_tokens;
     token_state_.total_output_tokens += output_tokens;
     token_state_.request_count++;
+    // 同步更新最近一次请求的上下文大小（API 返回的 prompt_tokens 比启发式估算更准确）。
+    // usagePercent()/checkThresholds()/shouldAutoCompact() 在下一轮请求前据此判断。
+    current_context_size_ = input_tokens;
 }
 
 PreRequestResult ContextManager::checkThresholds() const {

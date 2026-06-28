@@ -6,6 +6,8 @@
 
 #include <cassert>
 #include <iostream>
+#include <thread>
+#include <chrono>
 
 static int tests_run = 0, tests_passed = 0;
 #define TEST(n) do { tests_run++; std::cout << "  TEST " << n << " ... "; } while(0)
@@ -34,6 +36,36 @@ public:
                                        const std::string&) override {
         llm::LLMResponse r;
         r.content = response_;
+        r.finish_reason = "stop";
+        return r;
+    }
+
+    const ProviderConfig& config() const override { static ProviderConfig c; return c; }
+};
+
+// 慢响应 Mock LLMClient（B3 超时测试用）
+class SlowMockLLMClient : public llm::ILLMClient {
+    int delay_ms_;
+public:
+    explicit SlowMockLLMClient(int delay_ms = 5000) : delay_ms_(delay_ms) {}
+
+    llm::LLMResponse chat(const std::vector<llm::Message>&,
+                          const std::vector<llm::ToolDefinition>&,
+                          const std::string&,
+                          llm::StreamCallbacks) override {
+        std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms_));
+        llm::LLMResponse r;
+        r.content = "慢响应完成";
+        r.finish_reason = "stop";
+        return r;
+    }
+
+    llm::LLMResponse chatNonStreaming(const std::vector<llm::Message>&,
+                                       const std::vector<llm::ToolDefinition>&,
+                                       const std::string&) override {
+        std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms_));
+        llm::LLMResponse r;
+        r.content = "慢响应完成";
         r.finish_reason = "stop";
         return r;
     }
@@ -117,10 +149,31 @@ void test_template_manager() {
     PASS();
 }
 
+void test_sub_agent_timeout_actual() {
+    TEST("B3 — 超时后 SubAgent 不崩溃且返回 timed_out");
+    // SlowMockLLMClient 睡眠 8s，SubAgent timeout 100ms → 必然超时
+    // B3 修复后：execute() 会阻塞等待异步任务退出（≤ ~8s），返回不崩溃
+    agent::ToolRegistry registry;
+    agent::RestrictedToolProvider tools(registry, {});
+    agent::SubAgent sub(std::make_unique<SlowMockLLMClient>(8000), tools);
+    agent::SubAgentConfig config;
+    config.task = "长时间任务";
+    config.system_prompt = "你是分析专家";
+    config.timeout = std::chrono::seconds(1);   // 极短超时，确保触发
+    config.max_tool_rounds = 1;
+
+    auto result = sub.execute(config);
+    CHECK(result.timed_out);
+    CHECK(!result.error.empty());
+    // 关键断言：execute() 返回后 SubAgent 对象完整未损坏
+    PASS();
+}
+
 int main() {
     std::cout << "=== test_sub_agent ===\n\n";
     test_sub_agent_basic();
     test_sub_agent_timeout();
+    test_sub_agent_timeout_actual();
     test_sub_agent_tool_filter();
     test_template_manager();
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
