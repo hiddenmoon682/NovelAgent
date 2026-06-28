@@ -21,18 +21,20 @@ namespace {
 constexpr int kCurrentFormatVersion = 4;
 
 // 项目根目录下的 JSON 文件名称。
-constexpr const char* kNovelJson = "novel.json";            // 小说元数据（标题、格式版本等）
-constexpr const char* kOutlineJson = "outline.json";        // 大纲（含 PlotThread 和 Chapter）
-constexpr const char* kCharactersJson = "characters.json";  // 角色列表
-constexpr const char* kSettingsJson = "settings.json";      // 设定列表
-constexpr const char* kWorldRulesJson = "world_rules.json"; // 世界规则列表
-constexpr const char* kStyleJson = "style.json";            // 写作风格
+// 这些短名常量统一引用 ProjectIO.h 中导出的公共常量（单一来源），
+// 避免文件名字面量在头/实现/外部模块间重复定义导致漂移。
+constexpr const char* kNovelJson = ProjectIO::kNovelJsonFileName;            // 小说元数据（标题、格式版本等）
+constexpr const char* kOutlineJson = ProjectIO::kOutlineJsonFileName;        // 大纲（含 PlotThread 和 Chapter）
+constexpr const char* kCharactersJson = ProjectIO::kCharactersJsonFileName;  // 角色列表
+constexpr const char* kSettingsJson = ProjectIO::kSettingsJsonFileName;      // 设定列表
+constexpr const char* kWorldRulesJson = ProjectIO::kWorldRulesJsonFileName;  // 世界规则列表
+constexpr const char* kStyleJson = ProjectIO::kStyleJsonFileName;            // 写作风格
 
 // 项目子目录名称。
-constexpr const char* kChaptersDir = "chapters";            // 章节 Markdown 文件存放目录
-constexpr const char* kAgentDir = ".novelagent";            // Agent 内部数据目录（隐藏）
+constexpr const char* kChaptersDir = ProjectIO::kChaptersDirName;            // 章节 Markdown 文件存放目录
+constexpr const char* kAgentDir = ProjectIO::kAgentDirName;                  // Agent 内部数据目录（隐藏）
 
-// .novelagent 子目录下的文件名称。
+// .novelagent 子目录下的文件名称（Agent 内部数据，不参与项目设定 staleness 检测，故不导出）。
 constexpr const char* kConversationJson = "conversation.json"; // Agent 对话历史
 constexpr const char* kSummariesJson = "summaries.json";       // 摘要/缓存数据
 constexpr const char* kStateJson = "state.json";               // Agent 运行状态

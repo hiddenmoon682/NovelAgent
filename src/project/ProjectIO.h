@@ -79,6 +79,19 @@ void saveConversation(const std::string& projectPath, const nlohmann::json& conv
 
 // ── 路径辅助函数 ──
 
+// 项目根目录下各 JSON 文件的固定文件名。
+// 导出为公共常量，供 ContextManager（staleness 检测）等外部模块复用，
+// 避免文件名字面量散落各处导致漂移（曾出现 ContextManager 写死 "project.json"
+// 而实际文件名为 "novel.json" 的静默失效 bug）。
+constexpr const char* kNovelJsonFileName     = "novel.json";       // 小说元数据
+constexpr const char* kOutlineJsonFileName   = "outline.json";     // 大纲
+constexpr const char* kCharactersJsonFileName= "characters.json";  // 角色列表
+constexpr const char* kSettingsJsonFileName  = "settings.json";    // 设定列表
+constexpr const char* kWorldRulesJsonFileName= "world_rules.json"; // 世界规则列表
+constexpr const char* kStyleJsonFileName     = "style.json";       // 写作风格
+constexpr const char* kChaptersDirName       = "chapters";         // 章节目录
+constexpr const char* kAgentDirName          = ".novelagent";      // Agent 内部数据目录
+
 // 计算章节 Markdown 文件在项目目录下的绝对路径。
 std::string chapterPath(const std::string& projectPath, const std::string& chapterFilePath);
 

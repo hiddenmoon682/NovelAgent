@@ -1,5 +1,38 @@
 # Changelog
 
+## [2026-06-28] 设计评审批次①：堵住数据丢失与静默失效（B1/A5/D2/B2）
+
+> 依据 `docs/review/DESIGN_REVIEW.md` 评审报告，修复第一批「会丢用户数据 / 静默失效」的高严重度问题。
+> 范围：可靠性底线性修复，零风险高收益，不涉及架构改动。
+
+### B1 — writeText 原子化（temp + rename）
+- `src/utils/FileUtils.cpp`：`writeText` 改为先写同目录临时文件 `<path>.tmp.<seq>`，flush 落盘后 `fs::rename` 原子替换目标，rename 失败回退「删目标再 rename」。
+- 覆盖所有持久化路径（ProjectIO 6 个 JSON / SessionPersistence / VectorStore / writeChapter / ExecutionTracer），崩溃写到一半不再产生半截损坏文件（原 B6 vectors.json 一并受益）。
+- 新增 `tests/test_file_utils.cpp`（6 项：往返/覆盖/无临时残留/父目录自动创建/大内容完整/缺失文件返回空）。
+
+### A5 — project.json 错路径改为 novel.json
+- `src/agent/ContextManager.cpp`：3 处 `last_write_time(".../project.json")` 写死路径改为引用导出常量，抽取 `projectSettingsMtime()` helper。
+- `src/project/ProjectIO.h`：导出文件名常量 `kNovelJsonFileName` 等（单一来源），`ProjectIO.cpp` 内部短名常量改为引用导出常量，消除字面量漂移根源。
+- 修复后 `isVectorStoreStale()` 与「Project 修改后清空旧摘要」的 mtime 一致性保障恢复正常（此前因文件名不匹配整条静默失效）。
+- 顺手修正过时注释：`SessionPersistence.h`、`Project.h` 的 project.json → novel.json。
+- 新增 `test_context_manager` 2 项 A5 验证（isVectorStoreStale 读 novel.json mtime / saveSessionState 记录非零 mtime）。
+
+### D2 — config context_window 字段迁移兼容
+- `src/config/AppConfig.h`：`ProviderConfig` 弃用 `NLOHMANN_DEFINE_TYPE_INTRUSIVE`，手写 `to_json`/`from_json`。
+- `from_json` 优先读新字段 `max_context_tokens`，缺失时回退读旧字段 `context_window`（commit 51b7616 重命名后未迁移旧 config.json，致用户配置静默失效）。
+- `to_json` 只写新字段名，保存时自动升级格式。
+- 新增 `tests/test_app_config.cpp`（6 项：旧字段读取/新字段读取/新旧优先/默认值/升级保存/旧 config 往返升级）。
+
+### B2 — 会话增量保存
+- `src/agent/Agent.cpp`：`processUserMessage` 末尾（maybeAutoCompact 后）调用 `saveSessionState()`，每轮对话落盘到 conversation.json + session_meta.json，写入失败 try/catch 不阻断主流程。
+- 此前仅在 REPL 退出时保存一次，长会话写作中途崩溃会丢失本轮全部对话与创作上下文。
+- 删除从未被调用的死代码 `NovelAgentApp::saveConversationIfNeeded`（.h 声明 + .cpp 空壳定义）。
+- 新增 `test_agent` 1 项 B2 验证（processUserMessage 后 conversation.json 含 user+assistant 两条）。
+
+### 测试
+- 新增测试套件：`test_file_utils`、`test_app_config`（均注册进 tests/CMakeLists.txt）。
+- 全量 16 个套件 15 通过；test_context_manager 仍有 3 项开工前既有的 token 阈值计算失败（usagePercent/checkThresholds/has_critical），与本批次无关。
+
 ## [2026-06-28] 修复 Model 字段 LLM 写入能力缺口：新增 update_chapter / create_setting / create_world_rule / update_style + 扩展 create_chapter / create_character
 
 ### 新增工具

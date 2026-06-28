@@ -68,19 +68,6 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
     // 用户可通过 REPL 中 /parallel on 切换到并行编排模式。
 }
 
-void NovelAgentApp::saveConversationIfNeeded(const llm::LLMResponse& /*response*/)
-{
-    // 基础版：每次对话轮次后持久化到 .novelagent/conversation.json
-    // Phase 4 将添加增量保存和压缩
-    if (project_->path.empty()) return;
-    try {
-        // 使用 Agent 的 conversation 状态
-        // TODO: Phase 4 添加 loadConversation 恢复支持
-    } catch (...) {
-        // 持久化失败不阻塞主流程
-    }
-}
-
 void NovelAgentApp::runRepl(const std::string& welcomeMessage)
 {
     ReplHandler repl(agent_, out_, project_);

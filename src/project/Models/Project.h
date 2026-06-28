@@ -7,7 +7,7 @@
 /// 场景、世界规则、风格指南）的引用。
 ///
 /// 序列化说明：
-/// - 本结构体的字段序列化为 project.json
+/// - 本结构体的字段序列化为 novel.json
 /// - 子对象（outline / characters / settings / world_rules / style）
 ///   分别存储在独立的 JSON 文件中，由 ProjectIO 管理
 /// - path 为运行期字段，不参与 to_json / from_json

@@ -8,6 +8,7 @@
 #include "project/FileStorageBackend.h"
 #include "project/IStorageBackend.h"
 #include "project/Models.h"
+#include "project/ProjectIO.h"
 #include "agent/PromptContextBuilder.h"
 #include "retrieval/IVectorStore.h"
 #include "retrieval/IEmbeddingGenerator.h"
@@ -24,6 +25,24 @@ namespace {
 IStorageBackend& defaultStorage() {
     static FileStorageBackend s("");
     return s;
+}
+
+/// 取项目顶层设定文件（novel.json）的最后修改时间戳。
+/// 用于会话恢复时检测"项目在保存后被外部修改"→ 清空旧摘要。
+/// 返回 0 表示取不到（项目路径为空或文件不存在）。
+///
+/// 注意：文件名必须用 ProjectIO::kNovelJsonFileName 常量，不可写字面量。
+/// 此前曾写死 "project.json" 而实际文件名为 "novel.json"，
+/// 导致 last_write_time 永远失败、mtime 一致性保障整条静默失效（见 DESIGN_REVIEW A5）。
+/// TODO(A12): 当前只盯 novel.json 单文件，颗粒度不足——修改角色/设定时
+///   characters.json 等才会变，novel.json 可能不变。后续应取多个设定文件的最新 mtime。
+int64_t projectSettingsMtime(const std::string& project_path) {
+    if (project_path.empty()) return 0;
+    std::error_code ec;
+    const auto ftime = std::filesystem::last_write_time(
+        project_path + "/" + ProjectIO::kNovelJsonFileName, ec);
+    if (ec) return 0;
+    return ftime.time_since_epoch().count();
 }
 
 /// Compaction 时保留的最近消息对数。
@@ -120,13 +139,8 @@ void ContextManager::saveSessionState(
 {
     persistence_.save(conv);
 
-    // 自动获取 project.json 的修改时间
-    int64_t mtime = 0;
-    if (project_ && !project_->path.empty()) {
-        std::error_code ec;
-        auto ftime = std::filesystem::last_write_time(project_->path + "/project.json", ec);
-        if (!ec) mtime = ftime.time_since_epoch().count();
-    }
+    // 自动获取项目设定文件的修改时间（用于恢复时检测外部修改）
+    const int64_t mtime = project_ ? projectSettingsMtime(project_->path) : 0;
 
     SessionMeta meta;
     meta.compacted_summary = compacted_summary_;
@@ -148,13 +162,8 @@ void ContextManager::loadSessionState(
     conv = persistence_.load();
     auto meta = persistence_.loadMeta();
 
-    // 自动检查 Project 是否在保存后被修改过
-    int64_t current_mtime = 0;
-    if (project_ && !project_->path.empty()) {
-        std::error_code ec;
-        auto ftime = std::filesystem::last_write_time(project_->path + "/project.json", ec);
-        if (!ec) current_mtime = ftime.time_since_epoch().count();
-    }
+    // 自动检查项目设定是否在会话保存后被外部修改过
+    const int64_t current_mtime = project_ ? projectSettingsMtime(project_->path) : 0;
 
     if (current_mtime > 0 && meta.project_mtime > 0
         && current_mtime != meta.project_mtime) {
@@ -215,15 +224,15 @@ void ContextManager::setRetrievalBackend(
 
 bool ContextManager::isVectorStoreStale() const {
     if (!project_ || project_->path.empty()) return false;
-    std::error_code ec;
-    auto proj_time = std::filesystem::last_write_time(project_->path + "/project.json", ec);
-    if (ec) return false;
+    const int64_t proj_time = projectSettingsMtime(project_->path);
+    if (proj_time == 0) return false;  // novel.json 不存在或取不到
     // vectors.json 由 /index 命令生成，存储章节片段的向量嵌入。
-    // 比较 project.json 和 vectors.json 的 mtime：若 Project 在索引构建后被修改，
+    // 比较 novel.json 和 vectors.json 的 mtime：若项目设定在索引构建后被修改，
     // 说明向量可能引用了过期的角色/章节/设定 → 判定为 stale。
+    std::error_code ec;
     auto vec_time = std::filesystem::last_write_time(project_->path + "/.novelagent/vectors.json", ec);
     if (ec) return false;  // vectors.json 不存在，可能从未执行过 /index
-    return proj_time > vec_time;
+    return proj_time > vec_time.time_since_epoch().count();
 }
 
 // ===========================================================================
@@ -336,7 +345,7 @@ ContextAssembly ContextManager::assemble(
             spdlog::warn("[ContextManager] 向量索引已标记为脏，跳过检索");
             goto skip_retrieval;
         }
-        // Guard 2: 向量库 mtime 比 project.json 旧 → 告警但不阻断
+        // Guard 2: 向量库 mtime 比 novel.json 旧 → 告警但不阻断
         if (isVectorStoreStale()) {
             result.warnings.push_back(
                 "Project 已更新，向量索引可能过期。建议 /index 重建。");

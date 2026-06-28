@@ -352,6 +352,17 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
     // ── 章节边界检测 ──
     maybeAutoCompact(result.raw_response);
 
+    // ── 步骤 7.5: 会话增量保存（B2 修复）──
+    // 每轮对话结束后立即持久化 conversation.json + session_meta.json，
+    // 避免运行中途崩溃（断电、进程被杀）丢失本轮全部对话与创作上下文。
+    // 此前仅在 REPL 退出时保存一次，长会话写作中途崩溃会丢失数千字生成内容。
+    // 写入失败不阻断主流程（符合项目错误处理策略：单点失败友好降级）。
+    try {
+        saveSessionState();
+    } catch (const std::exception& e) {
+        spdlog::warn("[Agent] 会话增量保存失败（不影响本轮回复）: {}", e.what());
+    }
+
     // ── 步骤 8: 返回结果 ──
     return result.raw_response;
 }

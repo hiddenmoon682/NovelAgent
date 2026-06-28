@@ -11,7 +11,7 @@ endfunction()
 # 仅依赖 core 的测试
 foreach(name test_main test_models test_project_io test_prompt_context
              test_token_counter test_sse_parser test_llm_client
-             test_context_manager test_retrieval)
+             test_context_manager test_retrieval test_file_utils test_app_config)
     add_novelagent_test(${name} novelagent_core)
 endforeach()
 
@@ -25,7 +25,7 @@ endforeach()
 if(EXISTS "D:/SoftWare/msys2/mingw64/bin")
     set(CORE_TESTS test_main test_models test_project_io test_prompt_context
                    test_token_counter test_sse_parser test_llm_client
-                   test_context_manager test_retrieval)
+                   test_context_manager test_retrieval test_file_utils test_app_config)
     set(TOOLS_TESTS test_tool_registry test_agent test_chapter_tools
                     test_character_tools test_sub_agent)
     set_property(TEST ${CORE_TESTS} ${TOOLS_TESTS}

@@ -1,5 +1,24 @@
 # 已修复问题记录
 
+## 设计评审批次①（2026-06-28） — 堵住数据丢失与静默失效
+
+> 依据 [`DESIGN_REVIEW.md`](./DESIGN_REVIEW.md) 评审报告，修复第一批高严重度问题。
+> 详见 `CHANGELOG.md` 同日条目。
+
+### B1 — writeText 原子化 ✅
+`FileUtils::writeText` 改为 temp + `fs::rename` 原子替换。覆盖所有持久化路径，崩溃写到一半不再产生半截损坏文件（B6 vectors.json 一并受益）。新增 `test_file_utils`。
+
+### A5 — project.json 错路径 ✅
+`ContextManager` 三处写死的 `project.json` 改为引用 `ProjectIO::kNovelJsonFileName` 导出常量（单一来源，消除漂移根源）。`isVectorStoreStale` 与「Project 修改后清空旧摘要」的 mtime 一致性保障恢复正常。
+
+### D2 — config 字段迁移兼容 ✅
+`ProviderConfig` 手写 `from_json` 兼容旧字段名 `context_window` → `max_context_tokens`，`to_json` 保存时升级。旧 config.json 用户配置不再静默失效。新增 `test_app_config`。
+
+### B2 — 会话增量保存 ✅
+`Agent::processUserMessage` 末尾调用 `saveSessionState()`，每轮对话落盘，崩溃不再丢失本轮对话。删除死代码 `NovelAgentApp::saveConversationIfNeeded`。
+
+---
+
 ## 第六轮审查（2026-06-09） — 暂缓项集中修复
 
 Phase 3.5 完成后触发条件满足，修复了 4 个暂缓项：

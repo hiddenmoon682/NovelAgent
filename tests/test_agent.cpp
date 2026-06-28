@@ -1,6 +1,10 @@
 #include "agent/Agent.h"
 #include "agent/ToolRegistry.h"
+#include "agent/ContextManager.h"
 #include "llm/LLMClientFactory.h"
+#include "project/FileStorageBackend.h"
+#include "project/ProjectIO.h"
+#include "utils/FileUtils.h"
 #include "test_sse_helpers.h"
 #include "utils/SchemaUtils.h"
 
@@ -296,6 +300,66 @@ void test_empty_input() {
 }
 
 // =========================================================================
+// 测试: B2 — 会话增量保存（processUserMessage 后落盘）
+// =========================================================================
+
+void test_session_persisted_after_message() {
+    TEST("B2 — processUserMessage 后会话增量落盘到 conversation.json");
+
+    // 准备一个临时项目目录
+    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_b2_persist";
+    if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
+    ProjectIO::createProjectDir(tmp, "B2 测试");
+    Project proj = ProjectIO::load(tmp);
+
+    MockServer server;
+    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        if (isStreamRequest(req)) {
+            std::string body = llm::test::sseContentChunk("第二章开头") +
+                               llm::test::sseFinishChunk("stop") +
+                               llm::test::sseDone;
+            res.set_content(body, "text/event-stream");
+        } else {
+            res.set_content(nonStreamJson("第二章开头"), "application/json");
+        }
+    });
+    server.start();
+
+    llm::LLMClientFactory factory(makeConfig(server.port));
+    agent::ToolRegistry registry;
+    agent::Agent agent(factory, registry);
+
+    // 绑定 ContextManager + Project，使 processUserMessage 末尾的 saveSessionState 真正落盘
+    FileStorageBackend storage(tmp);
+    agent::ContextManager cm(storage);
+    cm.setProject(&proj);
+    cm.setModelContextLimit(65536);
+    agent.setContextManager(&cm);
+    agent.setMaxContextTokens(65536);
+
+    // 处理前：conversation.json 应为空数组（createProjectDir 初始化的默认值）
+    const std::string convPath = tmp + "/.novelagent/conversation.json";
+    json before = json::parse(utils::file::readText(convPath));
+    CHECK(before.is_array() && before.empty());
+
+    auto response = agent.processUserMessage("帮我写第二章开头");
+    CHECK(response.content == "第二章开头");
+
+    // 处理后：conversation.json 应已被增量保存，含本轮 user + assistant 两条消息
+    json after = json::parse(utils::file::readText(convPath));
+    CHECK(after.is_array());
+    CHECK(after.size() == 2);
+    CHECK(after[0]["role"] == "user");
+    CHECK(after[0]["content"] == "帮我写第二章开头");
+    CHECK(after[1]["role"] == "assistant");
+
+    server.stop();
+    utils::file::removeDir(tmp);
+    PASS();
+}
+
+// =========================================================================
 
 int main() {
     std::cout << "=== test_agent ===\n\n";
@@ -305,6 +369,7 @@ int main() {
     test_execute_mode();
     test_conversation_management();
     test_empty_input();
+    test_session_persisted_after_message();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;

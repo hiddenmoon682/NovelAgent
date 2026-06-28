@@ -50,5 +50,4 @@ private:
     agent::TemplateManager template_mgr_;
 
     void setupAgent(const std::vector<std::string>& disabledTools);
-    void saveConversationIfNeeded(const llm::LLMResponse& response);
 };

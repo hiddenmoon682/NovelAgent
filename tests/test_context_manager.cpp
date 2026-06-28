@@ -12,6 +12,8 @@
 #include <iostream>
 #include <string>
 #include <cstdio>
+#include <thread>
+#include <chrono>
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -58,6 +60,70 @@ void test_session_save_load() {
     auto loaded = sp.load();
 
     CHECK(loaded.size() == 2);
+
+    utils::file::removeDir(tmp);
+    PASS();
+}
+
+// =========================================================================
+// A5 修复验证：novel.json 文件名路径
+// 此前 ContextManager 写死 "project.json"，而实际元数据文件是 "novel.json"，
+// 导致 isVectorStoreStale 永远返回 false、mtime 一致性保障整条失效。
+// 本测试验证修复后 isVectorStoreStale 能正确读取 novel.json 的 mtime。
+// =========================================================================
+
+void test_isVectorStoreStale_reads_novel_json() {
+    TEST("A5 — isVectorStoreStale 正确读取 novel.json mtime");
+
+    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_stale_novel";
+    ProjectIO::createProjectDir(tmp, "stale 测试");
+    FileStorageBackend storage(tmp);
+
+    // 构造一个 Project 并绑定到 ContextManager
+    Project proj = ProjectIO::load(tmp);
+    agent::ContextManager cm(storage);
+    cm.setProject(&proj);
+
+    // 阶段 1：没有 vectors.json → isVectorStoreStale 返回 false（无索引可比）
+    CHECK(cm.isVectorStoreStale() == false);
+
+    // 先建一个 vectors.json（时间戳 T1），它比 novel.json 旧或相同
+    const std::string vecPath = tmp + "/.novelagent/vectors.json";
+    utils::file::writeText(vecPath, "[]");
+
+    // 确保后续 novel.json 的 mtime 严格晚于 vectors.json（文件系统 mtime 精度有限，需显式等待）
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+
+    // 阶段 2：更新 novel.json（时间戳 T2 > T1）→ 此时向量索引应判定为 stale
+    ProjectIO::save(proj);
+
+    CHECK(cm.isVectorStoreStale() == true);
+
+    utils::file::removeDir(tmp);
+    PASS();
+}
+
+void test_session_mtime_restored_from_novel_json() {
+    TEST("A5 — saveSessionState 记录 novel.json 的非零 mtime");
+
+    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_mtime_novel";
+    ProjectIO::createProjectDir(tmp, "mtime 测试");
+    FileStorageBackend storage(tmp);
+
+    Project proj = ProjectIO::load(tmp);
+    agent::ContextManager cm(storage);
+    cm.setProject(&proj);
+
+    llm::Conversation conv;
+    conv.addUser("hi");
+    std::string chapter_id;
+    cm.saveSessionState(conv, chapter_id, {});
+
+    // 加载回来：未修改 novel.json，mtime 应一致，不触发清空（无摘要可清，仅验证不崩溃）
+    llm::Conversation loaded;
+    std::string loaded_chapter;
+    cm.loadSessionState(loaded, loaded_chapter);
+    CHECK(loaded.size() == 1);
 
     utils::file::removeDir(tmp);
     PASS();
@@ -361,6 +427,8 @@ int main() {
 
     // 基础
     test_session_save_load();
+    test_isVectorStoreStale_reads_novel_json();
+    test_session_mtime_restored_from_novel_json();
     test_no_truncation();
     test_truncation();
     test_assemble_no_project();
