@@ -8,6 +8,7 @@
 #include "llm/Message.h"
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace agent {
@@ -27,6 +28,12 @@ public:
 private:
     IToolProvider& tools_;
     llm::Conversation& conversation_;
+
+    // C9: 工具定义按名缓存——避免每个 tool_call 都全量 getDefinitions() 拷贝 + 线性查找。
+    // 单次会话内工具集稳定（SubAgent 的 RestrictedToolProvider 创建后不变），缓存安全。
+    // 惰性填充：首次遇到某工具名时从 getDefinitions() 构建并缓存其 parameters schema。
+    std::unordered_map<std::string, nlohmann::json> schema_cache_;
+    bool cache_populated_ = false;
 
     std::string executeOne(const llm::ToolCall& tc);
     static std::string truncateResult(std::string result, size_t maxChars);

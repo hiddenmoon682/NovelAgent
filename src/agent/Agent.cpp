@@ -64,6 +64,11 @@ void Agent::setSystemPrompt(std::string prompt) {
 }
 void Agent::setMaxToolRounds(int n) {
     max_tool_rounds_ = (n >= 1) ? n : 1;
+    // D5: 当前通过 dynamic_cast 探测 SerialProcessor，切到 ParallelProcessor 后
+    // 此处配置会静默丢失。切换时 useParallelProcessor 会通过构造参数传递部分配置
+    // （ContextManager 经 A18.3 已传递），但运行时 setter 的单向限制仍存在。
+    // 根治需在 IMessageProcessor 接口加统一 setter（含 ParallelProcessor 的
+    // orchestrator 子 Agent max_rounds 转发）——留待下一次 API 演进。
     if (auto* sp = dynamic_cast<SerialProcessor*>(processor_.get()))
         sp->setMaxToolRounds(max_tool_rounds_);
 }

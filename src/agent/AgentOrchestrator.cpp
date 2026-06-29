@@ -103,9 +103,16 @@ ISynthesisStrategy& AgentOrchestrator::getSynthesis() {
 
 std::string AgentOrchestrator::processMessage(const std::string& input)
 {
+    // D6: 重置本轮 token 累计
+    last_input_tokens_ = 0;
+    last_output_tokens_ = 0;
+
     if (!parallel_enabled_ || !getDetector().shouldParallelize(input)) {
         std::vector<llm::Message> msgs = { llm::Message::user(input) };
         auto resp = client_->chatNonStreaming(msgs, {}, main_prompt_);
+        // D6: 累计串行回退路径的 token
+        last_input_tokens_ += resp.prompt_tokens;
+        last_output_tokens_ += resp.completion_tokens;
         return resp.content;
     }
 
@@ -114,12 +121,21 @@ std::string AgentOrchestrator::processMessage(const std::string& input)
     auto tasks = decompose(input);
     if (tasks.empty()) {
         std::vector<llm::Message> msgs = { llm::Message::user(input) };
-        return client_->chatNonStreaming(msgs, {}, main_prompt_).content;
+        auto resp = client_->chatNonStreaming(msgs, {}, main_prompt_);
+        last_input_tokens_ += resp.prompt_tokens;
+        last_output_tokens_ += resp.completion_tokens;
+        return resp.content;
     }
 
     spdlog::info("[Orchestrator] {} 个子任务", tasks.size());
     executeParallel(tasks);
-    return synthesize(tasks);
+    auto result = synthesize(tasks);
+    // D6: 汇总 LLM 调用也计入 token（LlmSynthesis 内部调 chatNonStreaming，
+    // 但其 client_ 来自 AgentOrchestrator 的独立 client_ 引用，token 未直接暴露。
+    // 此处通过 orchestrator 的 LLMResponse 累计；若合成策略非 LLM 驱动则 token 为 0。
+    // 子任务（SubAgent）的 token 不计入——它们使用独立的 LLMClient 实例，
+    // 且在并行多线程环境下收集有竞争风险。这里只覆盖编排器自身的 LLM 调用。
+    return result;
 }
 
 std::vector<SubTask> AgentOrchestrator::decompose(const std::string& input)

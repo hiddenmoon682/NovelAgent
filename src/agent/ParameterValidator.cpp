@@ -115,7 +115,10 @@ void ParameterValidator::checkAdditionalProperties(
     const json& schema, const json& arguments,
     std::vector<ValidationError>& errors)
 {
-    (void)errors;  // 当前实现通过 accumulate() 返回，参数保留供后续扩展
+    // C4 修复：additionalProperties: false 时，未知字段应阻断（而非仅 warn）。
+    // 此前只 spdlog::warn 且刻意忽略 errors 参数（(void)errors），LLM 拼错字段名
+    // （如 charcter_id）被静默吞、浪费一轮工具调用。改为 push 错误使 validation.valid=false，
+    // ToolPipeline 会返回带 suggestion 的错误让 LLM 自纠。
     bool allow_extra = true;
     if (schema.contains("additionalProperties")) {
         if (schema["additionalProperties"].is_boolean()) {
@@ -128,8 +131,8 @@ void ParameterValidator::checkAdditionalProperties(
 
     for (auto it = arguments.begin(); it != arguments.end(); ++it) {
         if (!schema["properties"].contains(it.key())) {
-            spdlog::warn("[ParameterValidator] 额外字段 '{}' 传入但被忽略", it.key());
-            // 不阻断执行，仅记录 warning
+            spdlog::warn("[ParameterValidator] 额外字段 '{}' 传入被拒绝", it.key());
+            errors.push_back({it.key(), "未知字段，请检查字段名拼写（该 schema 不允许额外属性）"});
         }
     }
 }

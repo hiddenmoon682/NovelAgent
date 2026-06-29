@@ -1,9 +1,41 @@
 # 已修复问题记录
 
+## 设计评审复核（2026-06-29） — A6 覆盖补齐 + C1+C2 绕过收紧
+
+> 对 DESIGN_REVIEW.md 全部 35 项已修复条目逐项源码复核（三路并行核实 + 人工二次确认）。
+> 核心修复均实质到位；发现 3 项遗留短板并直接修复，新增 test_shell_tools + 6 个测试用例，全量 17/17 通过。
+
+### A6 — 跨实体引用校验覆盖补齐 ✅
+初版软校验已覆盖 create/update_chapter/character/setting/world_rule/plot_thread，但遗漏：
+- `update_character_relationships` 的 `target_character_id`（评审 A6 点名字段）
+- `update_chapter_scenes` 的 pov_character_id/participants/location_id/plot_thread_ids
+- `update_volume` 的 start/end_chapter_id/focus_characters/active_plot_threads
+
+本次全部补齐（软校验 warn 不阻断，统一语义）。顺带清理 ChapterTools.cpp 未使用的 `validateChapterId`/`validatePlotThreadId`。
+配套测试：`test_chapter_tools` 悬空场景软校验用例 + `test_character_tools` 悬空 target 软校验用例。
+**遗留**：软校验只 warn 不阻断，悬空 ID 仍会落盘——硬失败改造留待后续（需权衡"先建实体再关联"工作流）。
+
+### A1 — compact 真删消息测试补齐 ✅
+复核确认 `compact()` 已调用 `conversation.removeOldest()` 真正删除旧消息，但原测试只测 API 存在性。
+新增 `test_context_manager` 用例：30 条消息压缩后断言降到 20 条 + 摘要已存储；消息不足时跳过不删。
+
+### 文档同步 ✅
+- `ISynthesisStrategy.h` 注释 800→3000（实际默认值已改但注释未同步）
+
+---
+
 ## 设计评审批次④（2026-06-28） — 状态机实现 + Shell 白名单 + 并行编排
+
+> 2026-06-29 复核：C1+C2 发现 `foreach-object` 脚本块绕过 + 段内参数误拦 bug，已补齐（见下方"复核补齐"）。
 
 ### C1+C2 — Shell 白名单 ✅
 `isDangerousCommand` 52 条黑名单 → `isAllowedCommand` 16 安全 cmdlet 白名单 + token 级管道解析 + 脚本注入拦截。
+
+#### 2026-06-29 复核补齐
+- 移除白名单中的 `foreach-object`（可执行脚本块 `{ ... }`，是真实绕过向量）
+- 入口拦截 `{` `}` `;` `&` 四类脚本注入字符（此前只拦 `$(`/`` ` ``/`. `）
+- **修复预存 bug**：原 token 解析把段内参数（如 `Get-Content config.json` 的 `config.json`）当 cmdlet 校验，导致任何带参数的命令被误拦——白名单更严但不可用。改为只校验每段首个 token、跳过段内参数
+- 新增 `tests/test_shell_tools.cpp`（5 用例黑盒测试：放行/拦截/注入字符/管道段/空命令），此前 Shell 工具零测试覆盖
 
 ### D1 — 状态机可用 ✅
 `ToolCallLoop` 工具执行前后 `transition(AwaitingTool/Thinking)`；`AwaitingTool→Idle` 合法化；`WriteChapterTool` 覆写前检查 `allow_auto_overwrite`。

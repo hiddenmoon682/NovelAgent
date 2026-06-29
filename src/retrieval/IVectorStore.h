@@ -17,7 +17,7 @@ namespace retrieval {
 /// 搜索结果条目。
 struct SearchResult {
     std::string id;               // 向量唯一标识
-    double similarity = 0.0;      // 余弦相似度 [0, 1]，越高越相关
+    double similarity = 0.0;      // 相关度 [0, 1]（余弦相似度经 (cos+1)/2 线性映射，越高越相关）
     nlohmann::json metadata;      // 关联元数据
 };
 

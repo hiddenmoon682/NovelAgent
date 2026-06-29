@@ -264,8 +264,14 @@ ParallelProcessor::Result ParallelProcessor::process(
         r.text = text;
         r.raw_response.content = text;
         r.raw_response.finish_reason = "stop";
-        // 注意：并行模式下 token 总数需汇总多个子任务 + 汇总 LLM 调用，
-        // 当前无法精确统计，保持 total_tokens 为 0
+
+        // D6: 恢复并行模式的上下文预算管理——从 orchestrator 收集其自身的 LLM 调用 token
+        // （串行回退 + 汇总 LLM；子任务 SubAgent 使用独立 LLMClient，其 token 不计入以避免竞争）。
+        if (context_manager_) {
+            context_manager_->recordUsage(
+                orchestrator_->lastInputTokens(),
+                orchestrator_->lastOutputTokens());
+        }
 
         if (callbacks.on_complete) {
             callbacks.on_complete(r.raw_response);

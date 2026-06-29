@@ -198,6 +198,60 @@ void test_via_registry() {
 }
 
 // =========================================================================
+// 测试 7: update_character_relationships（A7 新工具 + A6 引用校验）
+// =========================================================================
+
+void test_update_character_relationships() {
+    TEST("update_character_relationships — 替换关系列表");
+    TestProject tp;
+    auto pp = std::shared_ptr<Project>(&tp.project, [](Project*){});
+
+    // 创建两个角色，建立关系
+    agent::CreateCharacterTool create(pp);
+    create.execute({{"name", "叶凡"}, {"role", "protagonist"}});
+    create.execute({{"name", "苏婉"}, {"role", "supporting"}});
+
+    agent::UpdateCharacterRelationshipsTool tool(pp);
+    json rels = json::array();
+    rels.push_back(json{
+        {"target_character_id", "char-002"},
+        {"type", "love_interest"},
+        {"description", "青梅竹马"},
+        {"tension", 5}
+    });
+    auto r = tool.execute({{"character_id", "char-001"}, {"relationships", rels}});
+    CHECK(r.value("success", false) == true);
+    CHECK(r.value("relationship_count", 0) == 1);
+    // 验证写入
+    CHECK(tp.project.characters[0].relationships.size() == 1);
+    CHECK(tp.project.characters[0].relationships[0].target_character_id == "char-002");
+    CHECK(tp.project.characters[0].relationships[0].description == "青梅竹马");
+    PASS();
+}
+
+// A6: update_character_relationships 对 target_character_id 软校验——悬空 ID 仍写入。
+void test_update_relationships_dangling_softcheck() {
+    TEST("update_character_relationships — 悬空 target 软校验不阻断");
+    TestProject tp;
+    auto pp = std::shared_ptr<Project>(&tp.project, [](Project*){});
+    agent::CreateCharacterTool create(pp);
+    create.execute({{"name", "主角"}});
+
+    agent::UpdateCharacterRelationshipsTool tool(pp);
+    json rels = json::array();
+    rels.push_back(json{
+        {"target_character_id", "char-999"},  // 悬空——项目只有 char-001
+        {"type", "rival"}
+    });
+    auto r = tool.execute({{"character_id", "char-001"}, {"relationships", rels}});
+    // 软校验：不阻断，仍写入
+    CHECK(r.value("success", false) == true);
+    CHECK(!r.contains("error"));
+    CHECK(tp.project.characters[0].relationships[0].target_character_id == "char-999");
+    PASS();
+}
+
+// =========================================================================
 
 int main() {
     std::cout << "=== test_character_tools ===\n\n";
@@ -207,6 +261,8 @@ int main() {
     test_update_character();
     test_error_handling();
     test_via_registry();
+    test_update_character_relationships();
+    test_update_relationships_dangling_softcheck();
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;
 }

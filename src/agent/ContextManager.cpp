@@ -6,7 +6,6 @@
 #include "llm/ILLMClient.h"
 #include "llm/TokenCounter.h"
 #include "project/FileStorageBackend.h"
-#include "project/IStorageBackend.h"
 #include "project/Models.h"
 #include "project/ProjectIO.h"
 #include "agent/PromptContextBuilder.h"
@@ -15,34 +14,56 @@
 
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <array>
 #include <filesystem>
+#include <limits>
 #include <sstream>
 
 namespace agent {
 
 namespace {
 /// 默认存储占位符（不使用持久化功能时的回退）。
-IStorageBackend& defaultStorage() {
+FileStorageBackend& defaultStorage() {
     static FileStorageBackend s("");
     return s;
 }
 
-/// 取项目顶层设定文件（novel.json）的最后修改时间戳。
+/// 取项目设定文件的最后修改时间戳（取多个文件中的最新值）。
 /// 用于会话恢复时检测"项目在保存后被外部修改"→ 清空旧摘要。
-/// 返回 0 表示取不到（项目路径为空或文件不存在）。
+/// 返回 0 表示取不到（项目路径为空或所有文件均不存在）。
 ///
-/// 注意：文件名必须用 ProjectIO::kNovelJsonFileName 常量，不可写字面量。
-/// 此前曾写死 "project.json" 而实际文件名为 "novel.json"，
-/// 导致 last_write_time 永远失败、mtime 一致性保障整条静默失效（见 DESIGN_REVIEW A5）。
-/// TODO(A12): 当前只盯 novel.json 单文件，颗粒度不足——修改角色/设定时
-///   characters.json 等才会变，novel.json 可能不变。后续应取多个设定文件的最新 mtime。
+/// A12 修复：此前只盯 project.json（后改为 novel.json，A5 已修），颗粒度不足——
+///   修改角色/设定/规则时，characters.json/settings.json/world_rules.json 等文件才会变，
+///   novel.json 可能不变。现改为取 novel.json + outline.json + characters.json +
+///   settings.json + world_rules.json 的最新 mtime，覆盖全部主要 JSON 设定文件。
+///   局限：章节正文（.md 文件）不在检测范围内（A12 根治需工具层标记向量失效，
+///   见 ContextManager::clearVectorStore / DesignReview_A12）。
 int64_t projectSettingsMtime(const std::string& project_path) {
     if (project_path.empty()) return 0;
-    std::error_code ec;
-    const auto ftime = std::filesystem::last_write_time(
-        project_path + "/" + ProjectIO::kNovelJsonFileName, ec);
-    if (ec) return 0;
-    return ftime.time_since_epoch().count();
+
+    // 取多个设定 JSON 文件的最新 mtime，覆盖角色/大纲/设定/规则变更
+    static const std::array<const char*, 5> kSettingFiles = {
+        ProjectIO::kNovelJsonFileName,           // novel.json — 项目元数据
+        ProjectIO::kOutlineJsonFileName,          // outline.json — 大纲
+        ProjectIO::kCharactersJsonFileName,       // characters.json — 角色
+        ProjectIO::kSettingsJsonFileName,         // settings.json — 设定
+        ProjectIO::kWorldRulesJsonFileName        // world_rules.json — 世界规则
+    };
+
+    // MinGW 实现下 last_write_time().time_since_epoch().count() 可能为负值或零，
+    // 但跨文件比较时方向一致。此处取所有存在文件的最新值。
+    int64_t latest = std::numeric_limits<int64_t>::min();
+    bool any_found = false;
+    for (const auto* fname : kSettingFiles) {
+        std::error_code ec;
+        auto ftime = std::filesystem::last_write_time(project_path + "/" + fname, ec);
+        if (!ec) {
+            any_found = true;
+            int64_t t = ftime.time_since_epoch().count();
+            if (t > latest) latest = t;
+        }
+    }
+    return any_found ? latest : 0;
 }
 
 /// Compaction 时保留的最近消息对数。
@@ -74,7 +95,7 @@ ContextManager::ContextManager()
     , persistence_(storage_)
 {}
 
-ContextManager::ContextManager(IStorageBackend& storage)
+ContextManager::ContextManager(FileStorageBackend& storage)
     : storage_(storage)
     , persistence_(storage)
 {}
@@ -228,14 +249,17 @@ void ContextManager::setRetrievalBackend(
 bool ContextManager::isVectorStoreStale() const {
     if (!project_ || project_->path.empty()) return false;
     const int64_t proj_time = projectSettingsMtime(project_->path);
-    if (proj_time == 0) return false;  // novel.json 不存在或取不到
+    if (proj_time == 0) return false;  // 没有一个设定文件存在
     // vectors.json 由 /index 命令生成，存储章节片段的向量嵌入。
-    // 比较 novel.json 和 vectors.json 的 mtime：若项目设定在索引构建后被修改，
-    // 说明向量可能引用了过期的角色/章节/设定 → 判定为 stale。
+    // 比较项目设定文件最新 mtime 与 vectors.json mtime：若设定在索引构建后被修改，
+    // 说明向量可能引用了过期信息 → 判定为 stale。
     std::error_code ec;
     auto vec_time = std::filesystem::last_write_time(project_->path + "/.novelagent/vectors.json", ec);
     if (ec) return false;  // vectors.json 不存在，可能从未执行过 /index
-    return proj_time > vec_time.time_since_epoch().count();
+    bool stale = proj_time >= vec_time.time_since_epoch().count();
+    spdlog::debug("[ContextManager] isVectorStoreStale: proj_time={}, vec_time={}, stale={}",
+                  proj_time, vec_time.time_since_epoch().count(), stale);
+    return stale;
 }
 
 // ===========================================================================
@@ -397,7 +421,7 @@ ContextAssembly ContextManager::assemble(
                             if (covered_ids.count(src)) continue;
                             ++added;
                             retrieval_section += "片段" + std::to_string(i + 1)
-                                + " (ch-" + src + ", 相似度"
+                                + " (ch-" + src + ", 相关度"
                                 + std::to_string(static_cast<int>(results[i].similarity * 100))
                                 + "%): " + results[i].metadata["text"].get<std::string>() + "\n";
                         }

@@ -9,7 +9,7 @@
 ///   4. 手动 compaction（LLM 驱动的对话摘要，形成中期记忆层）
 ///   5. 会话持久化委托给 SessionPersistence
 ///
-/// 依赖：通过 IStorageBackend 抽象访问存储，不直接依赖 ProjectIO。
+/// 依赖：通过 FileStorageBackend 访问存储（封装项目路径 + 转发 ProjectIO）。
 
 #include "agent/ContextManagerTypes.h"
 #include "agent/SessionPersistence.h"
@@ -21,7 +21,7 @@
 
 // 前向声明
 struct Project;
-class IStorageBackend;
+class FileStorageBackend;
 
 namespace llm {
 class ILLMClient;
@@ -41,8 +41,8 @@ public:
     ContextManager();
 
     /// 构造函数注入存储后端。
-    /// @param storage 存储后端（FileStorageBackend 或测试 Mock）
-    explicit ContextManager(IStorageBackend& storage);
+    /// @param storage 文件存储后端（封装项目路径，转发 ProjectIO）
+    explicit ContextManager(FileStorageBackend& storage);
 
     // ================================================================
     // 核心入口
@@ -177,7 +177,7 @@ public:
                           std::string& out_chapter_id);
 
 private:
-    IStorageBackend& storage_;
+    FileStorageBackend& storage_;
     SessionPersistence persistence_;
 
     // ── Project 注入（非拥有）──

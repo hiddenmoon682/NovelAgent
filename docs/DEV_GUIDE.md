@@ -19,7 +19,7 @@
 | `IProjectReader` | `ProjectAccess(Project&)` | 只读工具（Get*, List*） |
 | `IProjectWriter` | `ProjectAccess(Project&)` | 写入工具（Create*, Update*, Write*） |
 | `IOutputChannel` | `ConsoleOutput` | `ReplHandler`, `CommandParser`, `StreamDisplay` |
-| `IStorageBackend` | (Phase 4 实现) | 所有工具 |
+| `IVectorStore` | `VectorStore`（JSON）→ 未来可选 `SqliteVectorStore`（sqlite-vec） | `ContextManager` 语义召回 |
 
 **反模式**: 直接持有具体类引用、硬编码 `std::cout`、直接 `#include` 特定实现头文件。
 
@@ -174,7 +174,7 @@ ShellTools 等不需要 `Project&` 的工具使用手动注册。
 
 ### Phase 4（上下文管理 + 语义检索）
 
-- ⚠️ `IStorageBackend` 实现 FileStorageBackend（当前） + SqliteStorageBackend（Phase 4）
+- ⚠️ `IVectorStore` 实现 VectorStore（JSON，当前） + 未来可选 SqliteVectorStore（sqlite-vec ANN）
 - ⚠️ ContextManager 多级降级（50/30/20 预算分配）
 - ⚠️ 对话摘要压缩（`summarizeConversation`）
 

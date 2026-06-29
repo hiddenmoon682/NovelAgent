@@ -26,7 +26,7 @@
 - `agent::Agent` 依赖 `llm::ILLMClient`（非具体 `LLMClient`）
 - 只读工具依赖 `IProjectReader&`，写入工具依赖 `Project&`（通过 `ProjectAccess` 适配器）
 - CLI 层（`ReplHandler`, `CommandParser`, `StreamDisplay`）通过 `IOutputChannel&` 输出，不硬编码 `std::cout`
-- 存储层通过 `IStorageBackend` 抽象（Phase 4 实现 sqlite-vec 后端）
+- 会话持久化通过 `FileStorageBackend`（封装项目路径 + 转发 `ProjectIO`）；向量存储扩展点在 `IVectorStore`（未来可选 sqlite-vec 后端，非 IStorageBackend）
 - **禁止**：直接持有具体类引用、硬编码全局流、跨层 include 实现头文件
 
 ### 门面模式
@@ -155,7 +155,7 @@
 - **禁止**：裸 `new`/`delete`、裸 `malloc`/`free`、全局 `std::mutex` + `std::unordered_map` 散落
 
 ### 虚接口 vs 模板
-- **运行时多态用虚接口**：`ILLMClient`, `BuiltInTool`, `IOutputChannel`, `IProjectReader`, `IStorageBackend`
+- **运行时多态用虚接口**：`ILLMClient`, `BuiltInTool`, `IOutputChannel`, `IProjectReader`, `IVectorStore`
 - **回调用 `std::function`**（类型擦除）：`StreamCallbacks`, `ToolRegistry` 的 fn
 - **不要为"未来可能的扩展"添加虚接口**（`ContextManager` 当前无虚方法，Phase 4 需要时再加）
 - **模板在本项目中仅用于**：`SchemaUtils` builder、nlohmann 的 `to_json`/`from_json` ADL

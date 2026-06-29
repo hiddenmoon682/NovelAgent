@@ -28,7 +28,6 @@ set(NOVELAGENT_PROJECT
     src/project/Models/Outline.h
     src/project/Models/Project.h
     src/project/IProjectAccess.h src/project/ProjectAccess.h
-    src/project/IStorageBackend.h
     src/project/FileStorageBackend.h src/project/FileStorageBackend.cpp
     src/project/ProjectIO.h src/project/ProjectIO.cpp
     src/project/ProjectManager.h src/project/ProjectManager.cpp

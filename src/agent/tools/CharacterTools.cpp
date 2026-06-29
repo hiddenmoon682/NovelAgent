@@ -163,9 +163,31 @@ json CreateCharacterTool::execute(const json& args) {
 // ===========================================================================
 
 json UpdateCharacterTool::parameters() const {
+    // C5: fields 列出全部可更新字段，LLM 不再靠 description 猜。
     return utils::schema::object({
         {"character_id", utils::schema::stringProp("角色 ID")},
-        {"fields", utils::schema::object({}, {})} // 任意字段
+        {"fields", utils::schema::object({
+            {"name",               utils::schema::stringProp("角色姓名")},
+            {"role",               utils::schema::stringProp("角色定位：protagonist/antagonist/supporting/minor")},
+            {"age",                utils::schema::stringProp("年龄段/年龄")},
+            {"appearance",         utils::schema::stringProp("外貌描述")},
+            {"personality",        utils::schema::stringProp("性格特征")},
+            {"background",         utils::schema::stringProp("背景故事")},
+            {"goal",               utils::schema::stringProp("核心目标")},
+            {"motivation",         utils::schema::stringProp("行为动机")},
+            {"internal_conflict",  utils::schema::stringProp("内在冲突")},
+            {"external_conflict",  utils::schema::stringProp("外部冲突")},
+            {"secret",             utils::schema::stringProp("秘密")},
+            {"fear",               utils::schema::stringProp("恐惧")},
+            {"misbelief",          utils::schema::stringProp("错误信念")},
+            {"speaking_style",     utils::schema::stringProp("说话风格")},
+            {"arc",                utils::schema::stringProp("角色弧线")},
+            {"notes",              utils::schema::stringProp("备注")},
+            {"traits",             utils::schema::stringArrayProp("特征列表")},
+            {"core_values",        utils::schema::stringArrayProp("核心价值观列表")},
+            {"taboos",             utils::schema::stringArrayProp("禁忌列表")},
+            {"chapter_appearances",utils::schema::stringArrayProp("登场章节 ID 列表")},
+        }, {}, /*allowExtra=*/false)}
     }, {"character_id", "fields"});
 }
 
@@ -377,6 +399,13 @@ json UpdateCharacterRelationshipsTool::execute(const json& args) {
         parsed.push_back(Relationship{});
         auto& rel = parsed.back();
         rel.target_character_id = r.value("target_character_id", "");
+        // A6: 校验 target_character_id 存在性（评审 A6 点名字段）。
+        // 软校验——warn 不阻断（允许 LLM 先建角色再补关系，与其它工具统一）。
+        if (!rel.target_character_id.empty()) {
+            validateIdArray(project_->characters,
+                std::vector<std::string>{rel.target_character_id},
+                "target_character_id", "update_character_relationships");
+        }
         rel.type               = r.value("type", "");
         rel.description        = r.value("description", "");
         rel.public_status      = r.value("public_status", "");

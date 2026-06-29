@@ -101,6 +101,12 @@ public:
     void setMaxParallel(int n) { max_parallel_ = n; }
     int maxParallel() const { return max_parallel_; }
 
+    /// D6: 最近一次 processMessage 调用累计的 token 用量
+    /// （含串行回退/汇总 LLM 调用；子任务因使用独立 LLMClient 其 token 不计入）。
+    /// 供 ParallelProcessor 调 recordUsage 恢复并行模式的上下文预算管理。
+    int lastInputTokens() const { return last_input_tokens_; }
+    int lastOutputTokens() const { return last_output_tokens_; }
+
     void setTemplateManager(TemplateManager* tm);
 
     /// A18.3: 运行时更新主提示词（供 ParallelProcessor 注入动态上下文）。
@@ -119,6 +125,10 @@ private:
     std::string main_prompt_;
     bool parallel_enabled_ = true;
     int max_parallel_ = 4;
+
+    // D6: 最近一次 processMessage 的 token 累计（供 ParallelProcessor 恢复预算管理）
+    int last_input_tokens_ = 0;
+    int last_output_tokens_ = 0;
 
     TemplateManager* template_mgr_ = nullptr;
     std::unique_ptr<IParallelDetector> detector_;

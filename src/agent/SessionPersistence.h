@@ -3,10 +3,10 @@
 /// 会话持久化 — 对话历史 + 会话元数据的保存/加载/归档。
 ///
 /// Phase 4 架构改进：从 ContextManager 拆分出独立职责。
-/// 通过 IStorageBackend 访问存储，不直接依赖 ProjectIO。
+/// 通过 FileStorageBackend 访问存储（封装项目路径 + 转发 ProjectIO）。
 
 #include "agent/ContextManagerTypes.h"
-#include "project/IStorageBackend.h"
+#include "project/FileStorageBackend.h"
 
 #include <string>
 #include <vector>
@@ -42,7 +42,7 @@ struct SessionMeta {
 class SessionPersistence {
 public:
     /// 构造函数注入存储后端。
-    explicit SessionPersistence(IStorageBackend& storage)
+    explicit SessionPersistence(FileStorageBackend& storage)
         : storage_(storage) {}
 
     /// 保存完整对话历史到 .novelagent/conversation.json。
@@ -63,7 +63,7 @@ public:
     SessionMeta loadMeta() const;
 
 private:
-    IStorageBackend& storage_;
+    FileStorageBackend& storage_;
 
     static constexpr const char* kConversationFile = "conversation.json";
     static constexpr const char* kSessionMetaFile = "session_meta.json";

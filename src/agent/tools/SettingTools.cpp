@@ -48,9 +48,20 @@ json ListSettingsTool::execute(const json&) {
 }
 
 json UpdateSettingTool::parameters() const {
+    // C5: fields 列出全部可更新字段
     return utils::schema::object({
         {"setting_id", utils::schema::stringProp("设定 ID")},
-        {"fields", utils::schema::object({}, {})}
+        {"fields", utils::schema::object({
+            {"name",                 utils::schema::stringProp("设定名称")},
+            {"category",             utils::schema::stringProp("设定类别：location/object/organization/culture")},
+            {"description",          utils::schema::stringProp("设定描述")},
+            {"story_function",       utils::schema::stringProp("在故事中的作用/功能")},
+            {"sensory_profile",      utils::schema::stringProp("感官描写指南")},
+            {"notes",                utils::schema::stringProp("备注")},
+            {"related_characters",   utils::schema::stringArrayProp("关联角色 ID 列表")},
+            {"related_plot_threads", utils::schema::stringArrayProp("关联剧情线 ID 列表")},
+            {"related_rule_ids",     utils::schema::stringArrayProp("关联世界规则 ID 列表")},
+        }, {}, /*allowExtra=*/false)}
     }, {"setting_id", "fields"});
 }
 json UpdateSettingTool::execute(const json& args) {

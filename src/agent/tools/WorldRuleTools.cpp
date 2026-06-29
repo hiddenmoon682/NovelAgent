@@ -46,9 +46,20 @@ json ListWorldRulesTool::execute(const json&) {
 }
 
 json UpdateWorldRuleTool::parameters() const {
+    // C5: fields 列出全部可更新字段（A16 新增 contradicts_with/precedence 一并列出）
     return utils::schema::object({
         {"rule_id", utils::schema::stringProp("世界规则 ID")},
-        {"fields", utils::schema::object({}, {})}
+        {"fields", utils::schema::object({
+            {"name",             utils::schema::stringProp("规则名称")},
+            {"summary",          utils::schema::stringProp("规则概要")},
+            {"limitations",      utils::schema::stringProp("限制")},
+            {"costs",            utils::schema::stringProp("代价")},
+            {"exceptions",       utils::schema::stringProp("例外")},
+            {"known_by",         utils::schema::stringProp("知晓范围")},
+            {"precedence",       utils::schema::integerProp("优先级（数字越大越优先，冲突时高优先级规则胜出）")},
+            {"contradicts_with", utils::schema::stringArrayProp("与本规则冲突的世界规则 ID 列表")},
+            {"related_settings", utils::schema::stringArrayProp("关联设定 ID 列表")},
+        }, {}, /*allowExtra=*/false)}
     }, {"rule_id", "fields"});
 }
 json UpdateWorldRuleTool::execute(const json& args) {
@@ -72,6 +83,7 @@ json UpdateWorldRuleTool::execute(const json& args) {
     using ArrField = std::vector<std::string> WorldRule::*;
     static const std::map<std::string, ArrField> kArrayMap = {
         {"related_settings", &WorldRule::related_settings},
+        {"contradicts_with", &WorldRule::contradicts_with},  // A16: 冲突规则声明
     };
 
     int n = 0;
@@ -80,11 +92,17 @@ json UpdateWorldRuleTool::execute(const json& args) {
         if (auto si = kStringMap.find(key); si != kStringMap.end() && it.value().is_string()) {
             r->*si->second = it.value().get<std::string>();
             n++;
+        } else if (key == "precedence" && it.value().is_number_integer()) {
+            // A16: 优先级（整数）
+            r->precedence = it.value().get<int>();
+            n++;
         } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && it.value().is_array()) {
             auto& arr = r->*ai->second;
             arr.clear();
             for (const auto& v : it.value()) arr.push_back(v.get<std::string>());
             if (key == "related_settings") validateIdArray(project_->settings, arr, "related_settings", "update_world_rule");
+            // A16: contradicts_with 引用的是其它世界规则 ID，软校验存在性
+            if (key == "contradicts_with") validateIdArray(project_->world_rules, arr, "contradicts_with", "update_world_rule");
             n++;
         }
     }

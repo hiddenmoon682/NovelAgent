@@ -38,7 +38,7 @@ class LlmSynthesis : public ISynthesisStrategy {
 public:
     /// @param client       LLM 客户端（来自 AgentOrchestrator 的独立实例，LlmSynthesis 不持有所有权）
     /// @param main_prompt  主 Agent 的 system prompt
-    /// @param max_result_chars 每个子任务结果的最大展示字符数（默认 800）
+    /// @param max_result_chars 每个子任务结果的最大展示字符数（默认 3000）
     LlmSynthesis(llm::ILLMClient& client, std::string main_prompt,
                  int max_result_chars = 3000);
 

@@ -267,6 +267,34 @@ void test_update_chapter_scenes() {
     PASS();
 }
 
+// A6: update_chapter_scenes 软校验——悬空 ID 仍写入（warn 不阻断），不返回 error。
+// 验证语义：引用校验是"提示而非阻断"，与项目错误处理策略（单点失败友好降级）一致。
+void test_update_chapter_scenes_dangling_softcheck() {
+    TEST("update_chapter_scenes — 悬空引用软校验不阻断写入");
+    TestProject tp;
+    // 项目无任何角色/设定/剧情线，pov_character_id/participants 等必为悬空
+    agent::CreateChapterTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    create.execute(json{{"title", "悬空场景章"}});
+    std::string ch_id = tp.project.outline.chapters[0].id;
+    agent::UpdateChapterScenesTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    json scenes = json::array();
+    scenes.push_back(json{
+        {"id", "sc-001"}, {"title", "场景"},
+        {"pov_character_id", "char-999"},          // 悬空角色
+        {"location_id", "set-999"},                // 悬空设定
+        {"participants", json::array({"char-888"})},
+        {"plot_thread_ids", json::array({"pt-999"})}
+    });
+    auto r = tool.execute(json{{"chapter_id", ch_id}, {"scenes", scenes}});
+    // 软校验：不阻断，仍写入成功
+    CHECK(r.value("success", false) == true);
+    CHECK(!r.contains("error"));
+    // 悬空 ID 被原样保留（校验仅 warn，不清空）
+    CHECK(tp.project.outline.chapters[0].scenes[0].pov_character_id == "char-999");
+    CHECK(tp.project.outline.chapters[0].scenes[0].participants.size() == 1);
+    PASS();
+}
+
 // =========================================================================
 
 int main() {
@@ -281,6 +309,7 @@ int main() {
     test_via_registry();
     test_delete_chapter();
     test_update_chapter_scenes();
+    test_update_chapter_scenes_dangling_softcheck();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;

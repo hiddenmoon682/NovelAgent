@@ -2,6 +2,7 @@
 
 #include "agent/ContextManager.h"
 #include "llm/Conversation.h"
+#include "llm/ILLMClient.h"
 #include "llm/TokenCounter.h"
 #include "project/FileStorageBackend.h"
 #include "project/Models.h"
@@ -39,6 +40,30 @@ static llm::Conversation makeLongConversation() {
     conv.addAssistant("助手再次回复确保消息列表中有足够条目可以触发截断行为验证。" + std::string(100, 'w'));
     return conv;
 }
+
+// Mock LLMClient — compact() 用 chatNonStreaming 生成摘要，这里返回固定摘要文本。
+class CompactMockLLMClient : public llm::ILLMClient {
+public:
+    llm::LLMResponse chat(const std::vector<llm::Message>&,
+                          const std::vector<llm::ToolDefinition>&,
+                          const std::string&,
+                          llm::StreamCallbacks) override {
+        return makeSummary();
+    }
+    llm::LLMResponse chatNonStreaming(const std::vector<llm::Message>&,
+                                       const std::vector<llm::ToolDefinition>&,
+                                       const std::string&) override {
+        return makeSummary();
+    }
+    const ProviderConfig& config() const override { static ProviderConfig c; return c; }
+private:
+    static llm::LLMResponse makeSummary() {
+        llm::LLMResponse r;
+        r.content = "【压缩摘要】主角决定隐藏身份，与导师发生冲突。";
+        r.finish_reason = "stop";
+        return r;
+    }
+};
 
 // =========================================================================
 // SessionPersistence 测试
@@ -81,6 +106,8 @@ void test_isVectorStoreStale_reads_novel_json() {
 
     // 构造一个 Project 并绑定到 ContextManager
     Project proj = ProjectIO::load(tmp);
+    // load() 会设置 proj.path = tmp，但显式确认以防万一
+    proj.path = tmp;
     agent::ContextManager cm(storage);
     cm.setProject(&proj);
 
@@ -89,14 +116,20 @@ void test_isVectorStoreStale_reads_novel_json() {
 
     // 先建一个 vectors.json（时间戳 T1），它比 novel.json 旧或相同
     const std::string vecPath = tmp + "/.novelagent/vectors.json";
+    // 确保 .novelagent 目录存在
+    std::filesystem::create_directories(std::filesystem::path(vecPath).parent_path());
     utils::file::writeText(vecPath, "[]");
 
-    // 确保后续 novel.json 的 mtime 严格晚于 vectors.json（文件系统 mtime 精度有限，需显式等待）
-    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    // 确保后续文件的 mtime 严格晚于 vectors.json（Windows 文件系统 mtime 精度有限）
+    // A12: projectSettingsMtime 现在取 5 个文件的最新 mtime，
+    // sleep 需足够长以跨越所有文件系统的 mtime 颗粒度。
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
 
-    // 阶段 2：更新 novel.json（时间戳 T2 > T1）→ 此时向量索引应判定为 stale
+    // 阶段 2：更新项目文件（时间戳 T2 > T1）→ 此时向量索引应判定为 stale
     ProjectIO::save(proj);
 
+    // A12: projectSettingsMtime 取多文件的 max mtime。ProjectIO::save 重写
+    // novel+outline+characters+settings+world_rules 五个 JSON，均晚于 vectors.json。
     CHECK(cm.isVectorStoreStale() == true);
 
     utils::file::removeDir(tmp);
@@ -346,6 +379,51 @@ void test_compact_has_summary_methods() {
     PASS();
 }
 
+// A1: compact() 必须真正删除已压缩的旧消息（而非仅存摘要、旧消息仍留在对话）。
+// 此前 compact 签名是 const 引用无法修改对话，压缩形同虚设。修复后调用 removeOldest。
+// 验证：压缩后对话消息数下降到 keep_count，且摘要被存储。
+void test_compact_actually_removes_messages() {
+    TEST("A1: compact() 真正删除已压缩旧消息");
+    agent::ContextManager cm;
+    llm::Conversation conv;
+    // 注入 30 条消息（> kCompactKeepExchanges*2=20，触发实际压缩）
+    for (int i = 0; i < 15; ++i) {
+        conv.addUser("用户消息 " + std::to_string(i) + "，包含一些内容用于占位。");
+        conv.addAssistant("助手回复 " + std::to_string(i) + "，同样包含占位内容。");
+    }
+    CHECK(conv.size() == 30);
+
+    CompactMockLLMClient llm;
+    auto result = cm.compact(conv, llm, std::nullopt);
+
+    // 压缩了 30-20=10 条
+    CHECK(result.messages_compacted == 10);
+    // 对话消息数下降到 20（保留最近 10 对 = 20 条）
+    CHECK(conv.size() == 20);
+    // 摘要被存储
+    CHECK(cm.hasCompactedSummary());
+    CHECK(result.summary.find("压缩摘要") != std::string::npos);
+    PASS();
+}
+
+// A1: 消息不足时 compact 跳过，不删消息。
+void test_compact_skip_when_messages_insufficient() {
+    TEST("A1: compact() 消息不足时跳过");
+    agent::ContextManager cm;
+    llm::Conversation conv;
+    for (int i = 0; i < 5; ++i) {
+        conv.addUser("短消息 " + std::to_string(i));
+        conv.addAssistant("短回复 " + std::to_string(i));
+    }
+    const size_t before = conv.size();
+    CompactMockLLMClient llm;
+    auto result = cm.compact(conv, llm, std::nullopt);
+    // 消息数 ≤ keep_count(20) → 跳过，不删
+    CHECK(result.messages_compacted == 0);
+    CHECK(conv.size() == before);
+    PASS();
+}
+
 void test_last_warnings_cached() {
     TEST("ContextManager — lastWarnings 缓存");
     agent::ContextManager cm;
@@ -450,6 +528,8 @@ int main() {
 
     // Compaction
     test_compact_has_summary_methods();
+    test_compact_actually_removes_messages();
+    test_compact_skip_when_messages_insufficient();
     test_last_warnings_cached();
 
     // 降级可见性

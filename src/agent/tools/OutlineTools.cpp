@@ -162,9 +162,21 @@ json CreateVolumeTool::execute(const json& args) {
 // ===========================================================================
 
 json UpdateVolumeTool::parameters() const {
+    // C5: fields 列出全部可更新字段
     return utils::schema::object({
         {"volume_id", utils::schema::stringProp("卷 ID")},
-        {"fields", utils::schema::object({}, {})}
+        {"fields", utils::schema::object({
+            {"title",               utils::schema::stringProp("卷标题")},
+            {"summary",             utils::schema::stringProp("卷概要")},
+            {"theme",               utils::schema::stringProp("卷主题")},
+            {"goal",                utils::schema::stringProp("卷目标")},
+            {"start_chapter_id",    utils::schema::stringProp("起始章节 ID")},
+            {"end_chapter_id",      utils::schema::stringProp("结束章节 ID")},
+            {"order",               utils::schema::integerProp("卷顺序")},
+            {"key_events",          utils::schema::stringArrayProp("关键事件列表")},
+            {"focus_characters",    utils::schema::stringArrayProp("关注角色 ID 列表")},
+            {"active_plot_threads", utils::schema::stringArrayProp("活跃剧情线 ID 列表")},
+        }, {}, /*allowExtra=*/false)}
     }, {"volume_id", "fields"});
 }
 
@@ -194,12 +206,20 @@ json UpdateVolumeTool::execute(const json& args) {
         const std::string& key = it.key();
         if (auto si = kStringMap.find(key); si != kStringMap.end() && it.value().is_string()) {
             vol->*si->second = it.value().get<std::string>(); n++;
+            // A6: 校验单值章节 ID 引用（start_chapter_id / end_chapter_id）
+            if (key == "start_chapter_id" || key == "end_chapter_id")
+                validateChapterId(project_->outline.chapters, it.value().get<std::string>(), key, "update_volume");
         } else if (key == "order" && it.value().is_number_integer()) {
             vol->order = it.value().get<int>(); n++;
         } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && it.value().is_array()) {
             auto& arr = vol->*ai->second;
             arr.clear();
             for (const auto& v : it.value()) arr.push_back(v.get<std::string>());
+            // A6: 校验数组引用（focus_characters / active_plot_threads）
+            if (key == "focus_characters")
+                validateIdArray(project_->characters, arr, key, "update_volume");
+            if (key == "active_plot_threads")
+                validateIdArray(project_->outline.plot_threads, arr, key, "update_volume");
             n++;
         }
     }
@@ -279,9 +299,23 @@ json CreatePlotThreadTool::execute(const json& args) {
 // ===========================================================================
 
 json UpdatePlotThreadTool::parameters() const {
+    // C5: fields 列出全部可更新字段
     return utils::schema::object({
         {"plot_thread_id", utils::schema::stringProp("剧情线 ID")},
-        {"fields", utils::schema::object({}, {})}
+        {"fields", utils::schema::object({
+            {"name",              utils::schema::stringProp("剧情线名称")},
+            {"description",       utils::schema::stringProp("描述")},
+            {"type",              utils::schema::stringProp("类型: main/sub/foreshadowing")},
+            {"status",            utils::schema::stringProp("状态: planned/active/resolved")},
+            {"stakes",            utils::schema::stringProp("风险/赌注")},
+            {"central_question",  utils::schema::stringProp("中心问题")},
+            {"resolution",        utils::schema::stringProp("解决方案")},
+            {"start_chapter_id",  utils::schema::stringProp("起始章节 ID")},
+            {"end_chapter_id",    utils::schema::stringProp("结束章节 ID")},
+            {"priority",          utils::schema::integerProp("优先级 0-10")},
+            {"related_characters",utils::schema::stringArrayProp("关联角色 ID 列表")},
+            {"related_settings",  utils::schema::stringArrayProp("关联设定 ID 列表")},
+        }, {}, /*allowExtra=*/false)}
     }, {"plot_thread_id", "fields"});
 }
 

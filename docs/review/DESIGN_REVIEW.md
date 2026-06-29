@@ -4,6 +4,7 @@
 > 性质: **设计合理性评审**。**修复状态: 已完成 6 批次修复（35 项），剩余 14 项未修（全部为中/低严重度）。**
 >
 > 修复汇总: 批次① (1674246) → 批次② (1b19a2b) → 批次③ (460e5aa) → 批次④ (6dc457a) → 批次⑤ (0f68d0a) → A6 (58c0dcc) → 收尾 (A17+C6+A10)
+> 复核: 2026-06-29 对全部 35 项已修复条目做逐项源码复核，补齐 A6 覆盖遗漏 + C1+C2 绕过向量 + 段内参数解析 bug，详见 CHANGELOG 同日条目。
 
 ---
 
@@ -56,9 +57,10 @@ NovelAgent 的**模型层建模相当用心**（Chapter 的 goal/conflict/foresh
 - `ContextManager.cpp:127/155/219/224` 三处写死 `/project.json`，但实际元数据文件是 `novel.json`（`ProjectIO.cpp:24` `kNovelJson`，`ProjectManager.cpp:62` 用 novel.json 判有效项目）。
 - 后果：`last_write_time(".../project.json")` 因文件不存在必然置 `ec`，`isVectorStoreStale()` 永远返回 false，`saveSessionState/loadSessionState` 的 `project_mtime` 永远 0 → 「Project 修改后清空旧摘要」的保障（`current_mtime > 0 && meta.project_mtime > 0`）永远不成立。**用户改了角色名后继续写，含旧名字的摘要不会被清空，LLM 基于矛盾设定写作。** 这是最危险的静默失效。
 
-**【✅ 已修复】A6. 跨实体引用无完整性保护——删除/更新可致 ID 悬空**
+**【✅ 已修复（2026-06-29 复核补齐覆盖）】A6. 跨实体引用无完整性保护——删除/更新可致 ID 悬空**
 - `Relationship.target_character_id`、`Setting.related_characters`、`Chapter.pov_characters`、`PlotThread.related_characters` 全是裸 `std::string` ID，无任何外键约束。全库 grep `dangling|orphan|referential` 零命中。
 - `UpdateChapterTool`/`UpdateWorldRuleTool`/`UpdateSettingTool` 更新关联 ID 时不校验存在性。对长篇（角色多、关系网复杂）会直接导致设定崩溃。
+- **2026-06-29 复核**：初版软校验（warn 不阻断）已覆盖 create/update_chapter/character/setting/world_rule/plot_thread，但遗漏评审点名的 `update_character_relationships.target_character_id`、`update_chapter_scenes` 的 pov/participants/location/plot_thread_ids、`update_volume` 的引用字段。本次全部补齐，统一为软校验语义（warn 不阻断，悬空 ID 仍写入），配套测试验证。硬失败改造留待后续（需权衡"先建实体再关联"工作流）。
 
 **【✅ 已修复】A7. 5 个核心模型对 LLM 不可写——模型层与工具层割裂**
 - `ChapterTools.cpp:309` 注释「不在白名单中的字段→静默忽略（包括 scenes）」→ `update_chapter` **无法修改 scenes**。
@@ -139,11 +141,12 @@ NovelAgent 的**模型层建模相当用心**（Chapter 的 goal/conflict/foresh
 
 ### 高严重度
 
-**【✅ 已修复】C1. Shell 工具过度授权——与写作任务无必要关联**
+**【✅ 已修复（2026-06-29 复核收紧）】C1. Shell 工具过度授权——与写作任务无必要关联**
 - `ShellTools.cpp:68` 用 `CreateProcessA` 执行 PowerShell。项目已有完整 `ProjectIO` + 结构化工具覆盖文件/数据操作，**Shell 在写作任务中无不可替代用途**，却打开任意命令执行面。对一个能被 LLM prompt 注入触发的工具，这是明显过度授权。
 
-**【✅ 已修复】C2. 危险命令黑名单子串匹配易绕过**
+**【✅ 已修复（2026-06-29 复核收紧）】C2. 危险命令黑名单子串匹配易绕过**
 - `ShellTools.cpp:23-45` 用 `lower.find(kw) != npos`。缺 `Copy-Item/Move-Item/Rename-Item/cmd/wscript/cscript/mshta/certutil -decode` 等向量；字符串拼接（`& "Invoke-Express"+"ion"`）可绕；可读/覆盖任意文件。正确做法是白名单（只读 cmdlet）或直接移除该工具。
+- **2026-06-29 复核**：初版白名单含 `foreach-object`（可执行脚本块）且注入拦截未覆盖 `{}`/`;`/`&`。本次移除 `foreach-object`、入口拦截这四类字符；并修复预存 bug——原 token 解析把段内参数（如 `config.json`）当 cmdlet 校验致带参数命令被误拦，改为只校验每段首个 token。新增 `test_shell_tools` 黑盒测试 5 用例。
 
 ### 中严重度
 

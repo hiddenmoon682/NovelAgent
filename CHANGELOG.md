@@ -1,5 +1,38 @@
 # Changelog
 
+## [2026-06-29] 设计评审修复复核 + 遗留项补齐
+
+> 对 DESIGN_REVIEW.md 全部 35 项已修复条目做逐项源码复核（三路并行核实 + 人工二次确认）。
+> 复核结论：核心修复（B1/B2/B3/B8/A1/A2/A4/A5/A7/A8/D2/A15 等）均已实质到位且有测试；
+> 发现 3 项遗留短板并直接修复，新增 1 个测试可执行文件 + 3 个测试用例。
+> 全量 17/17 通过（test_shell_tools 为本次新增）。
+
+### A6 — 跨实体引用校验覆盖补齐（部分修复→修复）
+- 复核发现评审 A6 点名的 `Relationship.target_character_id` 在 `update_character_relationships` 中未校验；
+  `update_chapter_scenes` 的 pov_character_id/participants/location_id/plot_thread_ids、
+  `update_volume` 的 start/end_chapter_id/focus_characters/active_plot_threads 均未校验。
+- `CharacterTools.cpp`：`update_character_relationships` 补 target_character_id 软校验
+- `ChapterTools.cpp`：新增 `validateSceneRefs` helper，`update_chapter_scenes` 解析每个场景后校验 4 类引用
+- `OutlineTools.cpp`：`update_volume` 字段循环补 start/end_chapter_id + focus_characters + active_plot_threads 校验
+- 顺带清理 ChapterTools.cpp 未使用的 `validateChapterId`/`validatePlotThreadId`（消除 -Wunused-function 警告）
+
+### C1+C2 — Shell 白名单绕过收紧 + 段内参数解析 bug 修复
+- 复核发现 `foreach-object` 在白名单中可执行脚本块 `{ ... }`，且注入拦截未覆盖 `{}`/`;`/`&`
+- `ShellTools.cpp`：移除 `foreach-object`；入口拦截 `{` `}` `;` `&` 四类脚本注入字符
+- **修复预存 bug**：原 token 解析把段内参数（如 `Get-Content config.json` 的 `config.json`）也当 cmdlet 校验，
+  导致任何带参数的命令都被误拦——白名单"更严但不可用"。改为只校验每段首个 token，跳过段内参数
+
+### 文档
+- `ISynthesisStrategy.h`：`LlmSynthesis` 注释 800→3000（实际默认值已改但注释未同步）
+- `DESIGN_REVIEW.md`：更新 A6/C1+C2 状态与复核结论
+
+### 测试
+- 新增 `tests/test_shell_tools.cpp`（5 用例，黑盒验证白名单放行/拦截/注入字符/管道段/空命令）
+- `test_chapter_tools.cpp`：加 `update_chapter_scenes` 悬空引用软校验用例
+- `test_character_tools.cpp`：加 `update_character_relationships` 写入 + 悬空 target 软校验用例
+- `test_context_manager.cpp`：加 A1 compact 真删消息用例（30→20 条）+ 消息不足跳过用例
+- 全量 17/17 通过
+
 ## [2026-06-28] 设计评审批次⑤（最终轮）：语义检索激活 + 顺手修复（A2/A3/A9/A11/A13/A14）
 
 > 最后一轮。A2+A3 是整个评审最大的"承诺 vs 现实"落差——向量检索子系统代码全写好了但从未接入。

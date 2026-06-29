@@ -28,12 +28,6 @@ Chapter* findChapter(std::vector<Chapter>& chapters,
 
 // A6: 校验单值 string ID 和 vector<string> ID 是否存在。
 // 采用软校验——不存在时 warn 但不阻断（允许 LLM 先创建实体再关联）。
-static void validateChapterId(const std::vector<Chapter>& chapters, const std::string& id, const std::string& field, const std::string& caller) {
-    if (!id.empty()) {
-        auto it = std::find_if(chapters.begin(), chapters.end(), [&](const Chapter& c) { return c.id == id; });
-        if (it == chapters.end()) spdlog::warn("[{}] {} 引用的章节 {} 不存在", caller, field, id);
-    }
-}
 static void validateCharId(const std::vector<Character>& chars, const std::string& id, const std::string& field, const std::string& caller) {
     if (!id.empty()) {
         auto it = std::find_if(chars.begin(), chars.end(), [&](const Character& c) { return c.id == id; });
@@ -52,12 +46,6 @@ static void validateVolumeId(const std::vector<Volume>& vols, const std::string&
         if (it == vols.end()) spdlog::warn("[{}] {} 引用的卷 {} 不存在", caller, field, id);
     }
 }
-static void validatePlotThreadId(const std::vector<PlotThread>& pts, const std::string& id, const std::string& field, const std::string& caller) {
-    if (!id.empty()) {
-        auto it = std::find_if(pts.begin(), pts.end(), [&](const PlotThread& p) { return p.id == id; });
-        if (it == pts.end()) spdlog::warn("[{}] {} 引用的剧情线 {} 不存在", caller, field, id);
-    }
-}
 template<typename T>
 static void validateIdArray(const T& container, const std::vector<std::string>& ids, const std::string& field, const std::string& caller) {
     for (const auto& id : ids) {
@@ -65,6 +53,16 @@ static void validateIdArray(const T& container, const std::vector<std::string>& 
         auto it = std::find_if(container.begin(), container.end(), [&](const auto& e) { return e.id == id; });
         if (it == container.end()) spdlog::warn("[{}] {} 引用的 {} 不存在", caller, field, id);
     }
+}
+
+// A6: 校验单个 Scene 内的跨实体引用（pov_character_id / location_id / participants / plot_thread_ids）。
+// 软校验——warn 不阻断，与其它 update_* 工具统一。
+// 此前 UpdateChapterScenesTool 完整替换场景列表时未校验引用，可致 ID 悬空。
+static void validateSceneRefs(const Project& proj, const Scene& sc, const std::string& caller) {
+    validateCharId(proj.characters, sc.pov_character_id, "scene.pov_character_id", caller);
+    validateSettingId(proj.settings, sc.location_id, "scene.location_id", caller);
+    validateIdArray(proj.characters, sc.participants, "scene.participants", caller);
+    validateIdArray(proj.outline.plot_threads, sc.plot_thread_ids, "scene.plot_thread_ids", caller);
 }
 
 } // namespace
@@ -127,6 +125,18 @@ json WriteChapterTool::execute(const json& args) {
                         "或使用 append_to_chapter 追加内容。"},
             {"preview", existing.substr(0, 200)}
         };
+    }
+
+    // B4: 覆写前自动备份旧内容，防止 LLM 一次错误 write_chapter 永久毁一章正文。
+    // 备份写入 .novelagent/chapters_backup/<chapter_id>.<timestamp>.md
+    if (!existing.empty()) {
+        std::string backup_dir = ProjectIO::agentDir(project_->path) + "/chapters_backup";
+        utils::file::createDirs(backup_dir);
+        std::string ts = ProjectIO::nowTimestamp();
+        for (auto& c : ts) if (c == ':') c = '-';  // 替换 Windows 文件名非法字符
+        std::string backup_file = backup_dir + "/" + ch->id + "." + ts + ".md";
+        utils::file::writeText(backup_file, existing);
+        spdlog::info("[write_chapter] 旧内容已备份到 {} ({} 字)", backup_file, existing.size());
     }
 
     ProjectIO::writeChapter(project_->path, ch->file_path, content);
@@ -334,9 +344,35 @@ json CreateChapterTool::execute(const json& args) {
 // ===========================================================================
 
 json UpdateChapterTool::parameters() const {
+    // C5: fields 列出全部可更新字段（含类型），LLM 不再靠 description 猜字段名。
+    // additionalProperties=false（默认）→ 拼错字段名会被 C4 阻断并提示，而非静默忽略。
     return utils::schema::object({
         {"chapter_id", utils::schema::stringProp("章节 ID，例如 ch-002")},
-        {"fields", utils::schema::object({}, {})} // 任意字段，白名单校验
+        {"fields", utils::schema::object({
+            // 字符串字段
+            {"title",           utils::schema::stringProp("章节标题")},
+            {"synopsis",        utils::schema::stringProp("章节概要")},
+            {"goal",            utils::schema::stringProp("本章目标")},
+            {"conflict",        utils::schema::stringProp("核心冲突")},
+            {"outcome",         utils::schema::stringProp("本章结局")},
+            {"turning_point",   utils::schema::stringProp("转折点")},
+            {"hook",            utils::schema::stringProp("开篇钩子")},
+            {"reveal",          utils::schema::stringProp("揭示信息")},
+            {"foreshadowing",   utils::schema::stringProp("伏笔")},
+            {"payoff",          utils::schema::stringProp("伏笔回收")},
+            {"emotional_beat",  utils::schema::stringProp("情感节奏")},
+            {"location_id",     utils::schema::stringProp("主要场景地点 ID")},
+            {"time_marker",     utils::schema::stringProp("时间标记")},
+            {"volume_id",       utils::schema::stringProp("所属卷 ID")},
+            {"status",          utils::schema::stringProp("写作状态：outlined/drafting/revised/final")},
+            // 字符串数组字段
+            {"pov_characters",      utils::schema::stringArrayProp("视点角色 ID 列表")},
+            {"key_events",          utils::schema::stringArrayProp("关键事件列表")},
+            {"themes",              utils::schema::stringArrayProp("主题列表")},
+            {"active_plot_threads", utils::schema::stringArrayProp("活跃剧情线 ID 列表")},
+            {"focus_characters",    utils::schema::stringArrayProp("重点关注角色 ID 列表")},
+            {"focus_settings",      utils::schema::stringArrayProp("重点关注设定 ID 列表")},
+        }, {}, /*allowExtra=*/false)}
     }, {"chapter_id", "fields"});
 }
 
@@ -544,6 +580,8 @@ json UpdateChapterScenesTool::execute(const json& args) {
             for (const auto& v : s["participants"]) sc.participants.push_back(v.get<std::string>());
         if (s.contains("plot_thread_ids") && s["plot_thread_ids"].is_array())
             for (const auto& v : s["plot_thread_ids"]) sc.plot_thread_ids.push_back(v.get<std::string>());
+        // A6: 校验场景内的跨实体引用（pov_character_id / location_id / participants / plot_thread_ids）
+        validateSceneRefs(*project_, sc, "update_chapter_scenes");
     }
     ch->scenes = std::move(parsed);
     ProjectIO::save(*project_);

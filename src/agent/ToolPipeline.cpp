@@ -61,18 +61,22 @@ std::string ToolPipeline::executeOne(const llm::ToolCall& tc)
         }
     }
 
-    // 参数 Schema 校验（通过 IToolProvider 获取工具定义）
-    auto tool_defs = tools_.getDefinitions();
-    for (const auto& def : tool_defs) {
-        if (def.name == tc.function_name) {
-            auto validation = ParameterValidator::validate(def.parameters, args);
-            if (!validation.valid) {
-                nlohmann::json err = validation.toJson();
-                err["retryable"] = true;
-                err["suggestion"] = "请根据 details 中的提示修正参数后重试";
-                return err.dump();
-            }
-            break;
+    // 参数 Schema 校验（C9: 用按名缓存替代每次全量 getDefinitions 拷贝 + 线性查找）
+    // 首次调用时构建 name→parameters schema 的缓存，后续 O(1) 查找。
+    if (!cache_populated_) {
+        for (const auto& def : tools_.getDefinitions()) {
+            schema_cache_[def.name] = def.parameters;
+        }
+        cache_populated_ = true;
+    }
+    auto cache_it = schema_cache_.find(tc.function_name);
+    if (cache_it != schema_cache_.end()) {
+        auto validation = ParameterValidator::validate(cache_it->second, args);
+        if (!validation.valid) {
+            nlohmann::json err = validation.toJson();
+            err["retryable"] = true;
+            err["suggestion"] = "请根据 details 中的提示修正参数后重试";
+            return err.dump();
         }
     }
 
