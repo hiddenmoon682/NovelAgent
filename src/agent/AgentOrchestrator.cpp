@@ -106,6 +106,8 @@ std::string AgentOrchestrator::processMessage(const std::string& input)
     // D6: 重置本轮 token 累计
     last_input_tokens_ = 0;
     last_output_tokens_ = 0;
+    last_sub_input_tokens_ = 0;   // Issue 28: 重置子任务 token 累计
+    last_sub_output_tokens_ = 0;
 
     if (!parallel_enabled_ || !getDetector().shouldParallelize(input)) {
         std::vector<llm::Message> msgs = { llm::Message::user(input) };
@@ -162,6 +164,9 @@ void AgentOrchestrator::executeParallel(std::vector<SubTask>& tasks)
                                       !result.error.empty() ? "failed" : "completed";
                     tasks[j].result = result.output;
                     tasks[j].error = result.error;
+                    // Issue 28: 收集子任务 token 统计
+                    last_sub_input_tokens_ += result.input_tokens;
+                    last_sub_output_tokens_ += result.output_tokens;
                     --running; break;
                 }
             }
@@ -198,6 +203,9 @@ void AgentOrchestrator::executeParallel(std::vector<SubTask>& tasks)
                           !result.error.empty() ? "failed" : "completed";
         tasks[i].result = result.output;
         tasks[i].error = result.error;
+        // Issue 28: 收集子任务 token 统计
+        last_sub_input_tokens_ += result.input_tokens;
+        last_sub_output_tokens_ += result.output_tokens;
         spdlog::info("[Orchestrator] {} {}: {} 字", tasks[i].id, tasks[i].status, tasks[i].result.size());
     }
 }

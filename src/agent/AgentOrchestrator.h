@@ -102,10 +102,15 @@ public:
     int maxParallel() const { return max_parallel_; }
 
     /// D6: 最近一次 processMessage 调用累计的 token 用量
-    /// （含串行回退/汇总 LLM 调用；子任务因使用独立 LLMClient 其 token 不计入）。
+    /// （含串行回退/汇总 LLM 调用；子任务 token 单独统计在 sub_* 字段中）。
     /// 供 ParallelProcessor 调 recordUsage 恢复并行模式的上下文预算管理。
     int lastInputTokens() const { return last_input_tokens_; }
     int lastOutputTokens() const { return last_output_tokens_; }
+
+    /// Issue 28: 最近一次 processMessage 中子任务累计的 token 用量。
+    /// 供 ParallelProcessor 汇总完整的上下文预算。
+    int lastSubInputTokens() const { return last_sub_input_tokens_; }
+    int lastSubOutputTokens() const { return last_sub_output_tokens_; }
 
     void setTemplateManager(TemplateManager* tm);
 
@@ -129,6 +134,8 @@ private:
     // D6: 最近一次 processMessage 的 token 累计（供 ParallelProcessor 恢复预算管理）
     int last_input_tokens_ = 0;
     int last_output_tokens_ = 0;
+    int last_sub_input_tokens_ = 0;   // Issue 28: 子任务累计输入 token
+    int last_sub_output_tokens_ = 0;  // Issue 28: 子任务累计输出 token
 
     TemplateManager* template_mgr_ = nullptr;
     std::unique_ptr<IParallelDetector> detector_;

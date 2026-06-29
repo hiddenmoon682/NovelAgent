@@ -7,6 +7,7 @@
 #include "cli/ReplHandler.h"
 #include "cli/StreamDisplay.h"
 #include "project/ProjectIO.h"
+#include "retrieval/NovelChunker.h"
 
 #include <iostream>
 
@@ -71,7 +72,8 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
 void NovelAgentApp::runRepl(const std::string& welcomeMessage)
 {
     ReplHandler repl(agent_, out_, project_);
-    repl.setApp(this);  // A2: 使 /index 命令可访问向量存储和嵌入生成器
+    // Issue 6: 通过 IIndexService 接口注入，消除 ReplHandler→NovelAgentApp* 反向依赖
+    repl.setIndexService(this);
     if (!welcomeMessage.empty()) {
         repl.setWelcomeMessage(welcomeMessage);
     } else {
@@ -102,4 +104,97 @@ void NovelAgentApp::runExec(const std::string& command)
         else
             out_.writeError("错误: " + err + "\n");
     }
+}
+
+// ============================================================================
+// Issue 6: indexAll — IIndexService 实现
+// 将 /index 命令的核心逻辑从 ReplHandler 移至 NovelAgentApp，
+// ReplHandler 通过 IIndexService 接口调用，不再持有 NovelAgentApp* 反向指针。
+// ============================================================================
+
+agent::IndexResult NovelAgentApp::indexAll(std::function<void(const std::string&)> progress)
+{
+    agent::IndexResult result;
+
+    if (!project_ || project_->path.empty()) {
+        result.error = "未打开项目";
+        return result;
+    }
+
+    auto report = [&](const std::string& msg) {
+        if (progress) progress(msg);
+    };
+
+    report("正在为项目内容建立向量索引...");
+
+    retrieval::NovelChunker chunker;
+    std::vector<retrieval::TextChunk> all_chunks;
+
+    // ① 章节正文切分
+    for (const auto& ch : project_->outline.chapters) {
+        if (ch.file_path.empty()) continue;
+        std::string md = ProjectIO::readChapter(project_->path, ch.file_path);
+        if (md.empty()) continue;
+        auto chunks = chunker.chunkChapter(ch, md);
+        for (auto& c : chunks) all_chunks.push_back(std::move(c));
+        ++result.chapters;
+    }
+    report("  章节: " + std::to_string(result.chapters) + " 章 → "
+         + std::to_string(all_chunks.size()) + " 个片段");
+
+    // ② 角色嵌入
+    for (const auto& c : project_->characters) {
+        std::string text = retrieval::NovelChunker::chunkCharacter(c);
+        if (text.empty()) continue;
+        all_chunks.push_back(retrieval::TextChunk::characterChunk(c.id, text));
+        ++result.characters;
+    }
+    report("  角色: " + std::to_string(result.characters) + " 个");
+
+    // ③ 设定嵌入
+    for (const auto& s : project_->settings) {
+        std::string text = retrieval::NovelChunker::chunkSetting(s);
+        if (text.empty()) continue;
+        all_chunks.push_back(retrieval::TextChunk::settingChunk(s.id, text));
+        ++result.settings;
+    }
+    report("  设定: " + std::to_string(result.settings) + " 个");
+
+    // ④ 世界规则嵌入
+    for (const auto& r : project_->world_rules) {
+        std::string text = retrieval::NovelChunker::chunkWorldRule(r);
+        if (text.empty()) continue;
+        all_chunks.push_back(retrieval::TextChunk::worldRuleChunk(r.id, text));
+        ++result.world_rules;
+    }
+    report("  世界规则: " + std::to_string(result.world_rules) + " 条");
+
+    result.total_chunks = static_cast<int>(all_chunks.size());
+    if (all_chunks.empty()) {
+        result.error = "没有可索引的内容";
+        return result;
+    }
+
+    // ⑤ 批量生成嵌入向量
+    report("正在生成嵌入向量 (" + std::to_string(all_chunks.size()) + " 条)...");
+    std::vector<std::string> texts;
+    texts.reserve(all_chunks.size());
+    for (const auto& c : all_chunks) texts.push_back(c.text);
+    auto embeddings = embedding_gen_.generateEmbeddings(texts);
+
+    if (embeddings.size() != all_chunks.size()) {
+        result.error = "嵌入向量数量不匹配: " + std::to_string(embeddings.size())
+                     + " vs " + std::to_string(all_chunks.size());
+        return result;
+    }
+
+    // ⑥ 插入向量库 + 持久化
+    for (size_t i = 0; i < all_chunks.size(); ++i) {
+        vector_store_.insert(all_chunks[i].id, embeddings[i], all_chunks[i].metadata);
+    }
+    vector_store_.saveToFile();
+
+    report("向量索引已建立: " + std::to_string(all_chunks.size()) + " 条 → "
+         + project_->path + "/.novelagent/vectors.json");
+    return result;
 }

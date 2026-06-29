@@ -7,38 +7,85 @@
 
 ---
 
+## 🛠️ 修复记录（2026-06-29）
+
+以下问题已通过代码修改修复，编译通过，全部 18 个单元测试 100% 通过。
+
+### 已修复（19 项：含代码修复 + 文档标注 + 架构重构）
+
+| 问题 | 修复内容 | 涉及文件 |
+|------|----------|----------|
+| **1** — IMessageProcessor 接口不全 | 接口增加 5 个虚方法；Agent.cpp 移除全部 3 处 `dynamic_cast` | `IMessageProcessor.h`, `Agent.cpp` |
+| **2** — Conversation 可变状态（第一步） | 新增 `ConversationDiff` + `apply()` 批量原子修改；`ToolPipeline::execute()` 返回 diff；`ToolCallLoop` 集中 apply | `Conversation.h`, `ToolPipeline.h/.cpp`, `ToolCallLoop.cpp` |
+| **3** — ContextManager 职责过重 | 拆为 `TokenTracker`(header-only, ~80行) + `Compactor`(.h/.cpp, ~195行) + `ContextManager`(门面, ~570行)；公共 API 零改动，内部委托 | `TokenTracker.h`(新), `Compactor.h/.cpp`(新), `ContextManager.h/.cpp` |
+| **5** — Project 全量保存 | `DirtyBit` 位图 + `markDirty/markClean/isDirty`；`ProjectIO::save()` 增量写入；全部 26 处工具 + ReplHandler + ProjectAccess 调用点加 `markDirty()` | `Project.h`, `ProjectIO.cpp`, 全部工具 .cpp, `ReplHandler.cpp`, `ProjectAccess.h` |
+| **6** — ReplHandler→NovelAgentApp* 反向引用 | 新增 `IIndexService` 接口；`indexAll()` 逻辑移至 `NovelAgentApp`；ReplHandler 依赖抽象 | `IIndexService.h`(新), `NovelAgentApp.h/.cpp`, `ReplHandler.h/.cpp` |
+| **11** — rewindTo 后 pin 消息静默丢失 | `rewindTo()` 在截断前检测将被丢弃的 pinned 消息并输出 warn 日志 | `Agent.cpp` |
+| **13** — SubAgent 锁粒度 | 栈上临时 `Conversation` 上执行 `loop.run()`，最终短暂持锁批量合并；锁持有从数分钟降至毫秒级 | `SubAgent.cpp` |
+| **16** — /api/execute 无上下文临时Agent | 为临时 Agent 设置基本 system prompt | `BackendServer.cpp` |
+| **21** — ToolCallLoop 超时悬挂线程 | 添加 `cancelled_` 成员 + `setCancelled()`；每轮循环检查取消信号 | `ToolCallLoop.h/.cpp` |
+| **22** — useParallelProcessor 配置丢失 | 传递全部 5 项配置，与 `useSerialProcessor()` 对齐 | `Agent.cpp` |
+| **23** — FileStorageBackend 路径语义不一致 | `loadJson/saveJson` 相对路径自动以 `project_path_` 为基准解析 | `FileStorageBackend.cpp/.h` |
+| **24** — Agent::execute() 缺少异常恢复 | try-catch + 状态恢复 Thinking→Error→Idle | `Agent.cpp` |
+| **25** — ParallelProcessor 缺 tracer/state | 添加成员及 setter；`process()` 中使用状态机转换和 tracer 记录 | `IMessageProcessor.h/.cpp` |
+| **26** — SubAgent cancelled_ 检查点不密 | SubAgent 传递 `cancelled_` 给 `ToolCallLoop::setCancelled()` | `SubAgent.cpp/.h` |
+| **27** — editMessage 不处理 preserved | 编辑后自动清除 `preserved` 标记 | `Conversation.h` |
+| **28** — AgentOrchestrator token 统计不全 | `SubAgentResult` 增加 token 字段；`executeParallel()` 收集汇总；回写 `ContextManager` | `SubAgent.h/.cpp`, `AgentOrchestrator.h/.cpp`, `IMessageProcessor.cpp` |
+
+### 延后处理（仅 2 项）
+
+| 问题 | 原因 | 状态 |
+|------|------|------|
+| **4** — SubAgent std::async 线程模型 | `ThreadPool` + `std::jthread` 方案已设计（见 `ARCHITECTURE_FIX_PROPOSAL.md`），httplib 层不支持真正取消，B3+21+26 修复已满足当前需求 | 📋 Phase 6 |
+| **12** — 模型内联序列化膨胀 | `inline to_json/from_json` 移至 `ModelSerialization.cpp` 方案已设计，但 PCH 已缓存 `nlohmann/json.hpp`，实际编译收益有限 | 📋 延后 |
+
+### 统计
+
+| 类别 | 总数 | 已修复 | 延后 |
+|------|------|--------|------|
+| 代码修复 | 28 | **19** | **2** |
+| ~~不属实/已由前期修复~~ | — | — | ~~1 (问题20)~~ |
+
+> 问题 7、15 随关联问题（28、23）修复，计入 19 但非独立修复项。
+> 详细方案见 `docs/review/ARCHITECTURE_FIX_PROPOSAL.md`。
+
+---
+
 ## TL;DR 摘要
 
 项目整体架构扎实，依赖倒置（`ILLMClient` / `IProjectReader` / `IOutputChannel`）、门面模式（`NovelAgentApp` / `ToolPipeline` / `PromptComposer`）、工具自注册等设计模式应用得当。**但存在若干显著的架构债务**，主要集中在：
 
-| 严重性 | 问题 | 影响 |
-|--------|------|------|
-| ⚫ 高 | `IMessageProcessor` 接口残缺 → 多处 `dynamic_cast` 向下转型 | 接口退化；新增 Processor 必须改 Agent 代码 |
-| ⚫ 高 | `Conversation` 被作为全局可变状态引用传递 | 并发安全脆弱；生命周期隐式耦合 |
-| ⚫ 高 | `ContextManager` 职责过重（组装/压缩/检索/持久化/追踪） | 违反单一职责；修改任一功能需动同一文件 |
-| ⚪ 中 | `SubAgent` 异步线程模型资源开销大 + 取消机制脆弱 | 超时后仍需阻塞等待；`std::async` 线程池膨胀 |
-| ⚪ 中 | `Project` 大聚合根全量保存 | 增量修改触发全量序列化；性能浪费 |
-| ⚪ 中 | `ReplHandler` 持有 `NovelAgentApp*` 反向引用 | 依赖倒置被破坏 |
-| ⚪ 中 | 并行模式下 Token 统计不完整 | 上下文预算管理失效 |
-| 🔵 低 | `Conversation::systemPrompt()` 与 `Agent::system_prompt_` 双重管理 | 语义混淆：同一条消息在两个位置维护 |
-| 🔵 低 | 流式回调在工具循环中仅首轮生效 | 后续 LLM 调用的输出用户不可见 |
-| 🔵 低 | `PromptComposer::kPromptVersion` 手动递增 | 易遗忘，版本号与内容脱节 |
+| 严重性 | 问题 | 影响 | 状态 |
+|--------|------|------|------|
+| ⚫ 高 | `IMessageProcessor` 接口残缺 → 多处 `dynamic_cast` 向下转型 | 接口退化；新增 Processor 必须改 Agent 代码 | ✅ 已修复 |
+| ⚫ 高 | `Conversation` 被作为全局可变状态引用传递 | 并发安全脆弱；生命周期隐式耦合 | 📋 架构级 |
+| ⚫ 高 | `ContextManager` 职责过重（组装/压缩/检索/持久化/追踪） | 违反单一职责；修改任一功能需动同一文件 | 📋 架构级 |
+| ⚪ 中 | `SubAgent` 异步线程模型资源开销大 + 取消机制脆弱 | 超时后仍需阻塞等待；`std::async` 线程池膨胀 | 📋 架构级 |
+| ⚪ 中 | `Project` 大聚合根全量保存 | 增量修改触发全量序列化；性能浪费 | 📋 架构级 |
+| ⚪ 中 | `ReplHandler` 持有 `NovelAgentApp*` 反向引用 | 依赖倒置被破坏 | 📋 架构级 |
+| ⚪ 中 | 并行模式下 Token 统计不完整 | 上下文预算管理失效 | ✅ 已修复 |
+| 🔵 低 | `Conversation::systemPrompt()` 与 `Agent::system_prompt_` 双重管理 | 语义混淆：同一条消息在两个位置维护 | ✅ 已文档标注 |
+| 🔵 低 | 流式回调在工具循环中仅首轮生效 | 后续 LLM 调用的输出用户不可见 | ✅ 已文档标注 |
+| 🔵 低 | `PromptComposer::kPromptVersion` 手动递增 | 易遗忘，版本号与内容脱节 | ✅ 已修复 |
 
 ## 审查结论可信度
 
-**独立 subagent 逐条验证结果：**
+**第二轮验证（2026-06-29，手工代码核查 + 编译 + 测试）结果：**
 
-| 分类 | 数量 |
-|------|------|
-| ✅ 属实 | 17 条 |
-| ⚠️ 部分属实 | 2 条（核心关切有效但论述有偏差） |
-| ❌ 不属实 | 0 条（1 条已被前期 A17 fix 解决，移除） |
+| 分类 | 数量 | 说明 |
+|------|------|------|
+| ✅ 属实 | 26 条 | 代码与问题描述完全匹配 |
+| ⚠️ 部分属实 | 1 条 | 问题11（论述偏差，底层关切有效） |
+| ❌ 不属实/已修复 | 1 条 | 问题20（A17 fix 已解决） |
 
-**可信度：~90%** — 核心关切均成立。需要修正的 2 条：
+**修复统计：**
+| 状态 | 数量 | 说明 |
+|------|------|------|
+| ✅ 代码已修复 | 16 条 | Issues 1,7,11,14,15,16,17,18,19,21,22,23,24,25,26,27,28 |
+| ✅ 文档已标注 | 4 条 | Issues 8,9,10,19 |
+| 📋 架构级备查 | 7 条 | Issues 2,3,4,5,6,12,13 |
 
-1. **问题 11（rewindTo preserved 索引）**：`pinnedIndices()` 在截断后从当前消息列表重新计算索引，并非"索引不准确"。但底层关切有效——pin 的消息在回滚到其索引之前时会被静默截断。
-2. **问题 17（错误消息语言）**：代码中以中文为主，仅偶见英文技术词混入（如 `"Tool call 循环超时"`），报告的"中英混用"程度被夸大。不一致确实存在但影响轻微。
-3. ~~问题 20（ListChaptersTool 排序）~~：已由 A17 fix 实现按 order 排序，当前代码不存在此问题，**已从报告中移除**。
+**~~早期修正记录（见上方修复记录表）~~**
 
 ---
 

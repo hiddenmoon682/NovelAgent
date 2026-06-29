@@ -152,6 +152,7 @@ json CreateVolumeTool::execute(const json& args) {
     }
 
     project_->outline.volumes.push_back(vol);
+    project_->markDirty(Project::DIRTY_OUTLINE);
     ProjectIO::save(*project_);
     spdlog::info("[create_volume] {} '{}'", vol.id, title);
     return {{"success", true}, {"volume", {{"id", vol.id}, {"title", title}, {"order", vol.order}}}};
@@ -224,6 +225,7 @@ json UpdateVolumeTool::execute(const json& args) {
         }
     }
     if (n == 0) return {{"error", "没有可更新的字段"}};
+    project_->markDirty(Project::DIRTY_OUTLINE);
     ProjectIO::save(*project_);
     spdlog::info("[update_volume] {} 更新 {} 个字段", vid, n);
     return {{"success", true}, {"volume_id", vid}, {"updated_fields", n}};
@@ -289,6 +291,7 @@ json CreatePlotThreadTool::execute(const json& args) {
     }
 
     project_->outline.plot_threads.push_back(pt);
+    project_->markDirty(Project::DIRTY_OUTLINE);
     ProjectIO::save(*project_);
     spdlog::info("[create_plot_thread] {} '{}'", pt.id, name);
     return {{"success", true}, {"plot_thread", {{"id", pt.id}, {"name", name}, {"type", pt.type}}}};
@@ -361,6 +364,7 @@ json UpdatePlotThreadTool::execute(const json& args) {
         }
     }
     if (n == 0) return {{"error", "没有可更新的字段"}};
+    project_->markDirty(Project::DIRTY_OUTLINE);
     ProjectIO::save(*project_);
     spdlog::info("[update_plot_thread] {} 更新 {} 个字段", pid, n);
     return {{"success", true}, {"plot_thread_id", pid}, {"updated_fields", n}};

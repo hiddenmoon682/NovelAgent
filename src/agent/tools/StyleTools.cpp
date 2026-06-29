@@ -134,6 +134,7 @@ json UpdateStyleTool::execute(const json& args) {
         return {{"error", "没有可以更新的字段。请检查字段名是否在白名单中，以及值的类型是否匹配。"}};
     }
 
+    project_->markDirty(Project::DIRTY_STYLE);
     ProjectIO::save(*project_);
     std::string fields_str;
     for (size_t i = 0; i < updated.size(); ++i) {

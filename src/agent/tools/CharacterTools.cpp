@@ -144,6 +144,7 @@ json CreateCharacterTool::execute(const json& args) {
     new_ch.external_conflict = args.value("external_conflict", "");
 
     project_->characters.push_back(new_ch);
+    project_->markDirty(Project::DIRTY_CHARACTERS);
     ProjectIO::save(*project_);
 
     spdlog::info("[create_character] {} '{}' (role={})", new_ch.id, name, new_ch.role);
@@ -268,6 +269,7 @@ json UpdateCharacterTool::execute(const json& args) {
         return {{"error", "没有可以更新的字段"}};
     }
 
+    project_->markDirty(Project::DIRTY_CHARACTERS);
     ProjectIO::save(*project_);
     // 拼接更新字段名用于日志
     std::string fields_str;
@@ -359,6 +361,8 @@ json DeleteCharacterTool::execute(const json& args) {
         }
     }
 
+    project_->markDirty(Project::DIRTY_CHARACTERS);
+    project_->markDirty(Project::DIRTY_OUTLINE);
     ProjectIO::save(*project_);
     spdlog::info("[delete_character] {} 已删除 (cascade: rel={} st={} pt={} vol={} ch={} sc={})",
                  cid, cascade_rel, cascade_setting, cascade_pt, cascade_vol, cascade_ch, cascade_scene);
@@ -415,6 +419,7 @@ json UpdateCharacterRelationshipsTool::execute(const json& args) {
     }
 
     ch->relationships = std::move(parsed);
+    project_->markDirty(Project::DIRTY_CHARACTERS);
     ProjectIO::save(*project_);
     spdlog::info("[update_character_relationships] {} 更新 {} 条关系", ch->id, ch->relationships.size());
     return {{"success", true}, {"character_id", ch->id}, {"relationship_count", ch->relationships.size()}};
@@ -475,6 +480,7 @@ json AddCharacterDevelopmentTool::execute(const json& args) {
     }
 
     ch->development.push_back(std::move(dev));
+    project_->markDirty(Project::DIRTY_CHARACTERS);
     ProjectIO::save(*project_);
     spdlog::info("[add_character_development] {}: {} → {} (category={})",
                  ch->development.back().id, char_id, chapter_id, ch->development.back().category);

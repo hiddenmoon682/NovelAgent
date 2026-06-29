@@ -10,6 +10,7 @@
 #include "llm/Message.h"
 #include "llm/TokenCounter.h"
 
+#include <atomic>
 #include <chrono>
 #include <string>
 #include <unordered_map>
@@ -19,7 +20,12 @@ namespace agent {
 
 struct ToolCallLoopConfig {
     int max_rounds = 10;
+    /// 首轮 LLM 调用是否启用流式输出（用户可见实时打字效果）。
+    /// 默认 true：首轮流式，用户体验好。
     bool first_round_streaming = true;
+    /// 后续 tool_call 轮次是否也启用流式输出。
+    /// 默认 false：减少 SSE 连接开销。设为 true 可让用户在中间轮次也看到 LLM 输出，
+    /// 但会增加网络流量和 API 调用延迟（Issue 9 — 流式回调默认仅首轮生效）。
     bool all_rounds_streaming = false;
     std::chrono::seconds timeout{0};
     int max_repeated_calls = 3;
@@ -29,6 +35,7 @@ struct ToolCallLoopConfig {
 struct ToolCallLoopResult {
     llm::LLMResponse response;
     bool timed_out = false;
+    bool cancelled = false;            ///< Issue 21+26: 外部取消信号触发
     std::string error;
     int rounds_executed = 0;
     int total_tokens_used = 0;
@@ -45,6 +52,10 @@ public:
     ToolCallLoop(llm::ILLMClient& client, IToolProvider& tools,
                  ExecutionTracer* tracer = nullptr,
                  StateMachine* state = nullptr);
+
+    /// Issue 21+26: 设置外部取消标志（SubAgent 的超时取消信号）。
+    /// 在每轮循环开始处检查，被设置后立即终止并返回。
+    void setCancelled(std::atomic<bool>* cancelled) { cancelled_ = cancelled; }
 
     /// 执行 tool_call 循环。
     ///
@@ -66,6 +77,7 @@ private:
     IToolProvider& tools_;  // Fix #1: IToolProvider& 替代 ToolRegistry&
     ExecutionTracer* tracer_;
     StateMachine* state_;   // D1.1
+    std::atomic<bool>* cancelled_ = nullptr;  // Issue 21+26: 外部取消信号
 
     bool isRepeatedCall(const std::string& tool_name, const std::string& args_json,
                         std::unordered_map<std::string, int>& call_history,

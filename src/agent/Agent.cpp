@@ -64,23 +64,16 @@ void Agent::setSystemPrompt(std::string prompt) {
 }
 void Agent::setMaxToolRounds(int n) {
     max_tool_rounds_ = (n >= 1) ? n : 1;
-    // D5: 当前通过 dynamic_cast 探测 SerialProcessor，切到 ParallelProcessor 后
-    // 此处配置会静默丢失。切换时 useParallelProcessor 会通过构造参数传递部分配置
-    // （ContextManager 经 A18.3 已传递），但运行时 setter 的单向限制仍存在。
-    // 根治需在 IMessageProcessor 接口加统一 setter（含 ParallelProcessor 的
-    // orchestrator 子 Agent max_rounds 转发）——留待下一次 API 演进。
-    if (auto* sp = dynamic_cast<SerialProcessor*>(processor_.get()))
-        sp->setMaxToolRounds(max_tool_rounds_);
+    // Issue 1 修复：通过 IMessageProcessor 统一接口传递配置，消除 dynamic_cast。
+    if (processor_) processor_->setMaxToolRounds(max_tool_rounds_);
 }
 void Agent::setContextManager(ContextManager* cm) {
     context_manager_ = cm;
-    if (auto* sp = dynamic_cast<SerialProcessor*>(processor_.get()))
-        sp->setContextManager(cm);
+    if (processor_) processor_->setContextManager(cm);
 }
 void Agent::setMaxContextTokens(int tokens) {
     max_context_tokens_ = tokens;
-    if (auto* sp = dynamic_cast<SerialProcessor*>(processor_.get()))
-        sp->setMaxContextTokens(tokens);
+    if (processor_) processor_->setMaxContextTokens(tokens);
 }
 void Agent::clearConversation() { conversation_.clear(); }
 
@@ -124,6 +117,24 @@ void Agent::setCurrentChapter(const std::string& chapter_id) {
 
 bool Agent::rewindTo(size_t index) {
     if (index >= conversation_.size()) return false;
+
+    // Issue 11: 检测回滚是否会丢失 pinned 消息
+    auto pinned = conversation_.pinnedIndices();
+    std::vector<size_t> lost_pins;
+    for (auto pi : pinned) {
+        if (pi > index) lost_pins.push_back(pi);
+    }
+    if (!lost_pins.empty()) {
+        std::string ids;
+        for (size_t i = 0; i < lost_pins.size(); ++i) {
+            if (i > 0) ids += ", ";
+            ids += "#" + std::to_string(lost_pins[i]);
+        }
+        spdlog::warn("[Agent] 回滚到 #{} 将丢弃 {} 条 pinned 消息 ({}), "
+                     "其 preserved 标记将失去意义",
+                     index, lost_pins.size(), ids);
+    }
+
     conversation_.truncateTo(index + 1);  // 保留到 index（含）
 
     // 修复时空悖论：回滚到压缩点之前，清空失效摘要
@@ -236,6 +247,11 @@ void Agent::useParallelProcessor(TemplateManager* tm) {
     if (tm) pp->setTemplateManager(tm);
     // A18.3: 并行模式也传递 ContextManager
     pp->setContextManager(context_manager_);
+    // Issue 22 修复：传递全部配置，与 useSerialProcessor 对齐
+    pp->setMaxContextTokens(max_context_tokens_);
+    pp->setMaxToolRounds(max_tool_rounds_);
+    pp->setTracer(&tracer_);
+    pp->setStateMachine(&state_);
     processor_ = std::move(pp);
     spdlog::info("[Agent] 切换到并行处理器");
 }
@@ -407,9 +423,19 @@ llm::LLMResponse Agent::execute(const std::string& command,
             effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
     }
 
-    auto response = client_->chat(messages, tools, effective_prompt, std::move(callbacks));
-    state_.transition(AgentState::Idle);
-    return response;
+    // B8 补充：execute() 异常恢复，防止 LLM API 异常（网络超时、HTTP 错误）
+    // 导致状态机卡在 Thinking 永久拒输入。与 processUserMessage() 的异常处理对齐。
+    try {
+        auto response = client_->chat(messages, tools, effective_prompt, std::move(callbacks));
+        state_.transition(AgentState::Idle);
+        return response;
+    } catch (const std::exception& e) {
+        spdlog::error("[Agent] execute 异常，强制状态恢复: {}", e.what());
+        tracer_.record("error", 0, 0, {{"reason", "execute 异常: " + std::string(e.what())}});
+        state_.transition(AgentState::Error);
+        state_.recover();
+        return {};
+    }
 }
 
 } // namespace agent

@@ -107,6 +107,7 @@ json UpdateWorldRuleTool::execute(const json& args) {
         }
     }
     if (n == 0) return {{"error", "没有可更新的字段"}};
+    project_->markDirty(Project::DIRTY_WORLD_RULES);
     ProjectIO::save(*project_);
     spdlog::info("[update_world_rule] {} 更新 {} 个字段", r->id, n);
     return {{"success", true}, {"rule_id", r->id}, {"updated_fields", n}};
@@ -153,6 +154,7 @@ json CreateWorldRuleTool::execute(const json& args) {
     new_r.known_by    = args.value("known_by", "");
 
     project_->world_rules.push_back(new_r);
+    project_->markDirty(Project::DIRTY_WORLD_RULES);
     ProjectIO::save(*project_);
 
     spdlog::info("[create_world_rule] {} '{}'", new_r.id, name);
@@ -195,6 +197,7 @@ json DeleteWorldRuleTool::execute(const json& args) {
         if (rr.size() < before) cascade_settings += static_cast<int>(before - rr.size());
     }
 
+    project_->markDirty(Project::DIRTY_WORLD_RULES);
     ProjectIO::save(*project_);
     spdlog::info("[delete_world_rule] {} 已删除 (cascade: settings={})", rid, cascade_settings);
     return {

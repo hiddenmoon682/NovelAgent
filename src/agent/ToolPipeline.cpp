@@ -9,8 +9,10 @@
 
 namespace agent {
 
-void ToolPipeline::executeAndAppend(const std::vector<llm::ToolCall>& tool_calls)
+llm::ConversationDiff ToolPipeline::execute(const std::vector<llm::ToolCall>& tool_calls)
 {
+    llm::ConversationDiff diff;
+
     // A9: 设定类工具——执行结果对长篇小说一致性至关重要
     static const std::set<std::string> kSettingTools = {
         "create_character", "update_character",
@@ -22,12 +24,23 @@ void ToolPipeline::executeAndAppend(const std::vector<llm::ToolCall>& tool_calls
     for (const auto& tc : tool_calls) {
         spdlog::info("[ToolPipeline] 执行: {} (id={})", tc.function_name, tc.id);
         std::string result = executeOne(tc);
-        conversation_.addToolResult(tc.id, std::move(result));
+        size_t idx = diff.added.size();
+        diff.added.push_back(llm::Message::toolResult(tc.id, std::move(result)));
 
-        // A9：设定类工具结果自动 pin，防止 token 截断时丢失关键世界设定
+        // A9：设定类工具结果自动 pin
         if (kSettingTools.count(tc.function_name)) {
-            conversation_.pinMessage(conversation_.size() - 1);
+            diff.pinned_indices.push_back(idx);
         }
+    }
+    return diff;
+}
+
+void ToolPipeline::executeAndAppend(const std::vector<llm::ToolCall>& tool_calls)
+{
+    // Issue 2: 委托 execute() + apply()，保持向后兼容
+    auto diff = execute(tool_calls);
+    if (conversation_) {
+        conversation_->apply(diff);
     }
 }
 

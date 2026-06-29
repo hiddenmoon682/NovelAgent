@@ -32,35 +32,44 @@ SubAgentResult SubAgent::execute(const SubAgentConfig& config)
 
     cancelled_ = false;
 
-    // 捕获 this 而非单独捕获成员引用，确保取消信号可见
+    // Issue 13 修复：使用栈上临时 Conversation 执行 tool_call 循环，
+    // 仅在最终合并结果时持锁。避免 lock_guard 跨越 HTTP 调用（数分钟）。
     auto future = std::async(std::launch::async, [this, config, tool_defs]() -> SubAgentResult {
         SubAgentResult r;
         try {
-            if (cancelled_) return r;  // 启动前检查取消信号
+            if (cancelled_) return r;
 
-            {
-                std::lock_guard<std::mutex> lock(conv_mutex_);
-                conversation_.addUser(config.task);
-            }
+            // 步骤 1: 在本地 Conversation 上添加用户消息（无锁）
+            llm::Conversation localConv;
+            localConv.addUser(config.task);
 
-            if (cancelled_) return r;  // 添加用户消息后检查
+            if (cancelled_) return r;
 
+            // 步骤 2: 在本地 Conversation 上执行 tool_call 循环（无锁）
             ToolCallLoop loop(*client_, tools_);
+            loop.setCancelled(&cancelled_);
             ToolCallLoopConfig cfg;
             cfg.max_rounds = config.max_tool_rounds;
             cfg.first_round_streaming = false;  // SubAgent 无需流式输出
             cfg.max_repeated_calls = 3;
 
-            // 注意：loop.run() 内部会修改 conversation_，此处依赖 ToolPipeline 的 Conversation& 引用
-            // 由于主线程在超时后会等待 future 结束，conversation_ 不会并发访问
-            std::lock_guard<std::mutex> lock2(conv_mutex_);
-            if (cancelled_) return r;
-
             auto loop_result = loop.run(
-                conversation_, tool_defs, config.system_prompt, {}, cfg);
+                localConv, tool_defs, config.system_prompt, {}, cfg);
+
             r.output = loop_result.response.content;
+            r.input_tokens = loop_result.input_tokens;
+            r.output_tokens = loop_result.output_tokens;
             if (loop_result.timed_out) { r.timed_out = true; r.error = loop_result.error; }
             if (loop_result.loop_detected) r.error = loop_result.error;
+            if (loop_result.cancelled) { r.cancelled = true; r.error = loop_result.error; }
+
+            // 步骤 3: 短暂持锁，批量合并 localConv → conversation_
+            {
+                std::lock_guard<std::mutex> lock(conv_mutex_);
+                for (const auto& msg : localConv.all()) {
+                    conversation_.add(msg);
+                }
+            }
         } catch (const std::exception& e) {
             r.error = e.what();
             spdlog::error("[SubAgent] 异常: {}", e.what());

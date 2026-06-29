@@ -287,6 +287,10 @@ void BackendServer::setupRoutes() {
             return;
         }
         agent::Agent tempAgent(factory_, registry_);
+        // Issue 16: 为临时 Agent 设置基本 system prompt 和上下文。
+        // 注意：临时 Agent 仍无法使用 ToolCallLoop 和项目上下文，
+        // 这是 Agent::execute() 的设计限制（见 issue 10）。
+        tempAgent.setSystemPrompt("你是一个小说创作助手。请直接回答问题，不使用工具。");
         auto response = tempAgent.execute(command);
         json r;
         r["content"] = response.content;

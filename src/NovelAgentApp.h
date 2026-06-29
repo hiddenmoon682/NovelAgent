@@ -2,6 +2,7 @@
 
 #include "agent/Agent.h"
 #include "agent/ContextManager.h"
+#include "agent/IIndexService.h"
 #include "agent/TemplateManager.h"
 #include "agent/ToolRegistry.h"
 #include "config/AppConfig.h"
@@ -17,7 +18,10 @@ struct Project;
 #include <string>
 #include <vector>
 
-class NovelAgentApp {
+/// NovelAgent 应用层组装器 — 门面模式封装全部组件装配。
+/// Issue 6: 实现 IIndexService，ReplHandler 通过抽象接口访问索引功能，
+/// 消除 ReplHandler → NovelAgentApp* 的反向依赖。
+class NovelAgentApp : public agent::IIndexService {
 public:
     /// @param provider  LLM Provider 配置
     /// @param project   已打开的小说项目
@@ -36,9 +40,8 @@ public:
     agent::TemplateManager& templateManager() { return template_mgr_; }
     std::shared_ptr<Project> project() { return project_; }
 
-    // A2: 暴露检索组件供 ReplHandler 的 /index 命令使用
-    retrieval::VectorStore& vectorStore() { return vector_store_; }
-    retrieval::EmbeddingGenerator& embeddingGenerator() { return embedding_gen_; }
+    // Issue 6: IIndexService 实现 — 替代原来的 vectorStore()/embeddingGenerator()
+    agent::IndexResult indexAll(std::function<void(const std::string&)> progress = nullptr) override;
 
 private:
     std::unique_ptr<IOutputChannel> ownedOutput_;

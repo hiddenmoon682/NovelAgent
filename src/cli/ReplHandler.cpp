@@ -2,13 +2,12 @@
 
 #include "cli/ReplHandler.h"
 #include "cli/StreamDisplay.h"
-#include "NovelAgentApp.h"
 #include "agent/ContextManager.h"
+#include "agent/IIndexService.h"
 #include "project/FileStorageBackend.h"
 #include "project/Models.h"
 #include "project/ProjectIO.h"
 #include "project/ProjectManager.h"
-#include "retrieval/NovelChunker.h"
 
 #include <iostream>
 #include <algorithm>
@@ -145,7 +144,7 @@ void ReplHandler::setupPhase5Commands() {
 
     parser_.registerCommand("save", "手动保存项目", [this](const auto&) {
         if (!project_ || project_->path.empty()) { out_.write(Ansi::dim() + "请先打开项目。\n" + Ansi::reset()); return true; }
-        try { ProjectIO::save(*project_); gui_.writeWarning("项目已保存。"); }
+        try { project_->markDirty(Project::DIRTY_ALL); ProjectIO::save(*project_); gui_.writeWarning("项目已保存。"); }
         catch (const std::exception& e) { gui_.writeError(std::string("保存失败: ") + e.what()); }
         return true;
     });
@@ -160,89 +159,23 @@ void ReplHandler::setupPhase5Commands() {
             out_.write(Ansi::dim() + "请先打开项目。\n" + Ansi::reset());
             return true;
         }
-        if (!app_) {
-            out_.write(Ansi::error() + "内部错误：app 引用未设置。\n" + Ansi::reset());
+        if (!index_service_) {
+            out_.write(Ansi::error() + "内部错误：索引服务未设置。\n" + Ansi::reset());
             return true;
         }
 
-        out_.write(Ansi::dim() + "正在为项目内容建立向量索引...\n" + Ansi::reset());
+        // Issue 6: 通过 IIndexService 接口调用，进度通过 lambda 输出
+        auto result = index_service_->indexAll([this](const std::string& msg) {
+            out_.write(Ansi::dim() + msg + "\n" + Ansi::reset());
+        });
 
-        auto& store = app_->vectorStore();
-        auto& emb = app_->embeddingGenerator();
-        retrieval::NovelChunker chunker;
-
-        std::vector<retrieval::TextChunk> all_chunks;
-        int ch_count = 0;
-
-        // ① 章节正文切分
-        for (const auto& ch : project_->outline.chapters) {
-            if (ch.file_path.empty()) continue;
-            std::string md = ProjectIO::readChapter(project_->path, ch.file_path);
-            if (md.empty()) continue;
-            auto chunks = chunker.chunkChapter(ch, md);
-            for (auto& c : chunks) all_chunks.push_back(std::move(c));
-            ++ch_count;
+        if (!result.ok()) {
+            if (result.error == "没有可索引的内容") {
+                out_.write(Ansi::warning() + "没有可索引的内容。请先创建章节/角色/设定。\n" + Ansi::reset());
+            } else {
+                out_.write(Ansi::error() + "索引失败: " + result.error + "\n" + Ansi::reset());
+            }
         }
-        out_.write(Ansi::dim() + "  章节: " + std::to_string(ch_count) + " 章 → "
-                  + std::to_string(all_chunks.size()) + " 个片段\n" + Ansi::reset());
-
-        // ② 角色嵌入
-        int char_count = 0;
-        for (const auto& c : project_->characters) {
-            std::string text = retrieval::NovelChunker::chunkCharacter(c);
-            if (text.empty()) continue;
-            all_chunks.push_back(retrieval::TextChunk::characterChunk(c.id, text));
-            ++char_count;
-        }
-        out_.write(Ansi::dim() + "  角色: " + std::to_string(char_count) + " 个\n" + Ansi::reset());
-
-        // ③ 设定嵌入
-        int st_count = 0;
-        for (const auto& s : project_->settings) {
-            std::string text = retrieval::NovelChunker::chunkSetting(s);
-            if (text.empty()) continue;
-            all_chunks.push_back(retrieval::TextChunk::settingChunk(s.id, text));
-            ++st_count;
-        }
-        out_.write(Ansi::dim() + "  设定: " + std::to_string(st_count) + " 个\n" + Ansi::reset());
-
-        // ④ 世界规则嵌入
-        int wr_count = 0;
-        for (const auto& r : project_->world_rules) {
-            std::string text = retrieval::NovelChunker::chunkWorldRule(r);
-            if (text.empty()) continue;
-            all_chunks.push_back(retrieval::TextChunk::worldRuleChunk(r.id, text));
-            ++wr_count;
-        }
-        out_.write(Ansi::dim() + "  世界规则: " + std::to_string(wr_count) + " 条\n" + Ansi::reset());
-
-        if (all_chunks.empty()) {
-            out_.write(Ansi::warning() + "没有可索引的内容。请先创建章节/角色/设定。\n" + Ansi::reset());
-            return true;
-        }
-
-        // ⑤ 批量生成嵌入向量
-        out_.write(Ansi::dim() + "正在生成嵌入向量 (" + std::to_string(all_chunks.size()) + " 条)...\n" + Ansi::reset());
-        std::vector<std::string> texts;
-        texts.reserve(all_chunks.size());
-        for (const auto& c : all_chunks) texts.push_back(c.text);
-        auto embeddings = emb.generateEmbeddings(texts);
-
-        if (embeddings.size() != all_chunks.size()) {
-            out_.write(Ansi::error() + "嵌入向量数量不匹配: " + std::to_string(embeddings.size())
-                      + " vs " + std::to_string(all_chunks.size()) + "\n" + Ansi::reset());
-            return true;
-        }
-
-        // ⑥ 插入向量库 + 持久化
-        for (size_t i = 0; i < all_chunks.size(); ++i) {
-            store.insert(all_chunks[i].id, embeddings[i], all_chunks[i].metadata);
-        }
-        store.saveToFile();
-
-        out_.write(Ansi::success() + "向量索引已建立: "
-                  + std::to_string(all_chunks.size()) + " 条 → "
-                  + project_->path + "/.novelagent/vectors.json\n" + Ansi::reset());
         return true;
     });
 }
@@ -485,7 +418,7 @@ void ReplHandler::showCompletions(const std::vector<std::string>& completions) c
 
 void ReplHandler::autoSaveOnError() {
     if (!project_ || project_->path.empty()) return;
-    try { ProjectIO::save(*project_); out_.write(Ansi::warning() + "[自动保存] 项目已保存。\n" + Ansi::reset()); } catch (...) {}
+    try { project_->markDirty(Project::DIRTY_ALL); ProjectIO::save(*project_); out_.write(Ansi::warning() + "[自动保存] 项目已保存。\n" + Ansi::reset()); } catch (...) {}
 }
 
 void ReplHandler::run() {

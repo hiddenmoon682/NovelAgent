@@ -18,6 +18,12 @@
 #include <string>
 
 /// 基于 ProjectIO 的文件系统存储后端。
+///
+/// 路径语义（Issue 23 修复后统一）：
+/// - 所有接受 filePath 参数的方法，相对路径自动以 project_path_ 为基准解析
+/// - readChapter/writeChapter: filePath 为相对路径（如 "chapters/001.md"）
+/// - loadJson/saveJson: filePath 可以是相对路径（如 "conversation.json"）
+///   或已包含 project_path_ 的绝对路径（向后兼容已有调用方）
 class FileStorageBackend {
 public:
     /// @param project_path 项目根目录路径

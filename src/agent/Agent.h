@@ -49,7 +49,20 @@ public:
     /// 并在多轮 tool_call 循环后返回最终 LLMResponse。
     llm::LLMResponse processUserMessage(const std::string& input,
                                          llm::StreamCallbacks callbacks = {});
-    /// 执行单条命令（非对话模式），直接调用 LLM 并返回响应，不维护历史。
+    /// 执行单条命令（单次非工具模式），直接调用 LLM 并返回响应，不维护历史。
+    ///
+    /// ⚠️ 注意：此方法不使用 ToolCallLoop（无工具调用能力）、不维护 conversation_
+    /// 对话历史、不触发章节检测/自动 compact/增量保存。与 processUserMessage() 的对比：
+    /// | 维度 | processUserMessage | execute |
+    /// |------|-------------------|---------|
+    /// | 工具循环 | ✅ ToolCallLoop 多轮 | ❌ 直接 chat，无工具 |
+    /// | 对话历史 | ✅ 维护 conversation_ | ❌ 每次全新临时消息 |
+    /// | 状态机 | ✅ Thinking→AwaitingTool→Idle | ⚠️ 仅 Thinking→Idle |
+    /// | 异常恢复 | ✅ B8 try-catch | ✅ Issue 24 已补 |
+    /// | 上下文注入 | ✅ assemble 完整注入 | ⚠️ 手动简单拼接 |
+    ///
+    /// 适用场景：REST API /api/execute（外部脚本单次查询）、不需要工具链的简单问答。
+    /// 如需多轮对话或工具调用，请使用 processUserMessage()。
     llm::LLMResponse execute(const std::string& command,
                               llm::StreamCallbacks callbacks = {});
 

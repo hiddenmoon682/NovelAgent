@@ -6,6 +6,9 @@
 /// 未来可选：SqliteVectorStore（sqlite-vec ANN 搜索）
 ///
 /// 所有依赖向量搜索的模块均通过此接口交互，替换后端不影响上层代码。
+///
+/// Issue 18: EmbeddingVector 类型别名 — 当前为 std::vector<float>，
+/// 未来可切换为 float16/int8 量化向量类型，仅需修改此处。
 
 #include <nlohmann/json_fwd.hpp>
 
@@ -13,6 +16,9 @@
 #include <vector>
 
 namespace retrieval {
+
+/// 嵌入向量类型别名 — 所有模块通过此别名使用，方便未来切换精度。
+using EmbeddingVector = std::vector<float>;
 
 /// 搜索结果条目。
 struct SearchResult {
@@ -24,7 +30,7 @@ struct SearchResult {
 /// 向量条目（内部存储格式，供批量操作使用）。
 struct VectorEntry {
     std::string id;
-    std::vector<float> embedding;
+    EmbeddingVector embedding;
     nlohmann::json metadata;
 };
 
@@ -36,7 +42,7 @@ public:
     // ── CRUD ──
 
     virtual void insert(const std::string& id,
-                        const std::vector<float>& embedding,
+                        const EmbeddingVector& embedding,
                         const nlohmann::json& metadata) = 0;
 
     virtual void insertBatch(const std::vector<VectorEntry>& entries) = 0;
@@ -44,12 +50,12 @@ public:
     virtual bool remove(const std::string& id) = 0;
 
     virtual void update(const std::string& id,
-                        const std::vector<float>& embedding) = 0;
+                        const EmbeddingVector& embedding) = 0;
 
     // ── 搜索 ──
 
     virtual std::vector<SearchResult> search(
-        const std::vector<float>& query_embedding,
+        const EmbeddingVector& query_embedding,
         int top_k = 10) const = 0;
 
     // ── 查询 ──

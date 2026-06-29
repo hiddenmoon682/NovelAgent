@@ -72,6 +72,15 @@ ToolCallLoopResult ToolCallLoop::run(
 
         // ── 循环 ──
         for (int round = 0; round < config.max_rounds; ++round) {
+            // Issue 21+26: 每轮检查外部取消信号（SubAgent 超时 → cancelled_=true）
+            if (cancelled_ && *cancelled_) {
+                r.cancelled = true;
+                r.error = "任务已取消";
+                if (tracer_) tracer_->record("error", r.total_tokens_used, 0,
+                    {{"reason", "外部取消信号"}, {"round", round}});
+                return r;
+            }
+
             if (response.tool_calls.empty()) {
                 r.response = response;
                 r.rounds_executed = round;
@@ -120,9 +129,10 @@ ToolCallLoopResult ToolCallLoop::run(
             // D1.1: 工具执行前 → AwaitingTool
             if (state_) state_->transition(AgentState::AwaitingTool);
 
-            // 执行工具
+            // 执行工具 — Issue 2: 使用 execute() 返回 diff，集中 apply
             auto t3 = std::chrono::steady_clock::now();
-            pipeline.executeAndAppend(response.tool_calls);
+            auto diff = pipeline.execute(response.tool_calls);
+            conversation.apply(diff);
             auto t4 = std::chrono::steady_clock::now();
 
             // D1.1: 工具执行后 → Thinking
@@ -166,7 +176,7 @@ ToolCallLoopResult ToolCallLoop::run(
         auto future = std::async(std::launch::async, executeLoop);
         if (future.wait_for(config.timeout) == std::future_status::timeout) {
             result.timed_out = true;
-            result.error = "Tool call 循环超时 (" + std::to_string(config.timeout.count()) + "s)";
+            result.error = "工具调用循环超时 (" + std::to_string(config.timeout.count()) + "s)";
             if (tracer_) tracer_->record("error", 0, static_cast<int>(config.timeout.count()) * 1000,
                 {{"reason", "工具调用循环超时"}, {"timeout_s", config.timeout.count()}});
             return result;

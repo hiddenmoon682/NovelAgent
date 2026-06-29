@@ -18,7 +18,7 @@
 #include <vector>
 
 struct Project;
-class NovelAgentApp;  // A2: /index 命令需访问向量存储和嵌入生成器
+namespace agent { class IIndexService; }  // Issue 6: 通过接口访问索引功能
 
 class ReplHandler {
 public:
@@ -31,8 +31,8 @@ public:
     /// 切换当前项目（供 /load /new 使用）。
     void setProject(std::shared_ptr<Project> p);
 
-    /// A2: 设置 app 后向引用（供 /index 命令访问检索组件）
-    void setApp(NovelAgentApp* app) { app_ = app; }
+    /// Issue 6: 设置索引服务（通过抽象接口，消除 NovelAgentApp* 反向依赖）
+    void setIndexService(agent::IIndexService* svc) { index_service_ = svc; }
 
 private:
     agent::Agent& agent_;
@@ -41,7 +41,7 @@ private:
     TerminalGUI gui_;
     std::shared_ptr<Project> project_;
     std::string welcome_;
-    NovelAgentApp* app_ = nullptr;  // A2
+    agent::IIndexService* index_service_ = nullptr;  // Issue 6: 替代 NovelAgentApp* app_
 
     void setupCommands();
     void setupPhase5Commands();

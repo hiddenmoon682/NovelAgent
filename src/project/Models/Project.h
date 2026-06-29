@@ -61,6 +61,28 @@ struct Project {
     // ── 运行期字段（不参与序列化）──
     std::string path;                    ///< 项目根目录的磁盘路径（运行期设置）
 
+    // ── Issue 5: 增量保存脏标记 ──
+    /// 脏数据位图 — 标记哪些子实体自上次 save 后发生了变化。
+    /// save() 仅写入置位的文件，避免每次修改都触发全量 6 文件写入。
+    enum DirtyBit : uint32_t {
+        DIRTY_NOVEL       = 1 << 0,  ///< novel.json（标题/状态/元数据）
+        DIRTY_OUTLINE     = 1 << 1,  ///< outline.json（大纲/章节/卷/剧情线）
+        DIRTY_CHARACTERS  = 1 << 2,  ///< characters.json
+        DIRTY_SETTINGS    = 1 << 3,  ///< settings.json
+        DIRTY_WORLD_RULES = 1 << 4,  ///< world_rules.json
+        DIRTY_STYLE       = 1 << 5,  ///< style.json
+        DIRTY_ALL         = 0x3F,    ///< 全部文件（向后兼容：首次保存/手动保存）
+    };
+    /// 标记指定子实体为脏（下次 save 时写入对应文件）。
+    /// 接受 uint32_t 以支持位运算 OR 组合（如 DIRTY_OUTLINE | DIRTY_CHARACTERS）。
+    void markDirty(uint32_t bit) { dirty_flags |= bit; }
+    /// 清除所有脏标记（save 成功后调用）。
+    void markClean() { dirty_flags = 0; }
+    /// 检查指定位是否为脏。
+    bool isDirty(DirtyBit bit) const { return (dirty_flags & static_cast<uint32_t>(bit)) != 0; }
+
+    uint32_t dirty_flags = DIRTY_ALL;  ///< 内部：请使用 markDirty/markClean/isDirty 方法操作
+
     // ── 子对象（分别独立 JSON 文件存储）──
     Outline outline;                     ///< 全局大纲（story beats / arcs 等）
     std::vector<Character> characters;   ///< 角色列表

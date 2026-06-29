@@ -30,6 +30,21 @@ public:
     /// Fix #3: 运行时更新 system prompt（避免 Agent::setSystemPrompt 的 dynamic_cast）。
     virtual void setSystemPrompt(const std::string& prompt) = 0;
 
+    /// 统一配置接口 — 消除 Agent 中的 dynamic_cast 向下转型。
+    /// 新增 Processor 类型只需 override 相关方法，不需修改 Agent 代码。
+    /// 默认实现为空操作，子类按需覆盖。
+
+    /// 设置上下文管理器（可选）。
+    virtual void setContextManager(class ContextManager* /*cm*/) {}
+    /// 设置每次请求的最大上下文 token 数。
+    virtual void setMaxContextTokens(int /*tokens*/) {}
+    /// 设置单次请求的最大工具调用轮数。
+    virtual void setMaxToolRounds(int /*n*/) {}
+    /// 设置执行轨迹记录器。
+    virtual void setTracer(class ExecutionTracer* /*t*/) {}
+    /// 设置状态机。
+    virtual void setStateMachine(class StateMachine* /*s*/) {}
+
     /// 处理用户消息，返回 LLM 的最终回复文本。
     struct Result {
         std::string text;
@@ -54,11 +69,11 @@ public:
                    llm::StreamCallbacks callbacks) override;
 
     /// 设置上下文管理器（可选）。
-    void setContextManager(class ContextManager* cm) { context_manager_ = cm; }
-    void setMaxContextTokens(int tokens) { max_context_tokens_ = tokens; }
-    void setMaxToolRounds(int n) { max_tool_rounds_ = n; }
-    void setTracer(class ExecutionTracer* t) { tracer_ = t; }
-    void setStateMachine(class StateMachine* s) { state_ = s; }  // D1.1
+    void setContextManager(class ContextManager* cm) override { context_manager_ = cm; }
+    void setMaxContextTokens(int tokens) override { max_context_tokens_ = tokens; }
+    void setMaxToolRounds(int n) override { max_tool_rounds_ = n; }
+    void setTracer(class ExecutionTracer* t) override { tracer_ = t; }
+    void setStateMachine(class StateMachine* s) override { state_ = s; }  // D1.1
 
     // Fix #3: 实现接口
     void setSystemPrompt(const std::string& p) override { system_prompt_ = p; }
@@ -115,11 +130,15 @@ public:
                    llm::StreamCallbacks callbacks) override;
     void setSystemPrompt(const std::string& p) override;
 
+    // 统一配置接口 — 与 SerialProcessor 对齐（Issue 22+25 修复）
+    void setContextManager(class ContextManager* cm) override { context_manager_ = cm; }
+    void setMaxContextTokens(int tokens) override { max_context_tokens_ = tokens; }
+    void setMaxToolRounds(int n) override { max_tool_rounds_ = n; }
+    void setTracer(class ExecutionTracer* t) override { tracer_ = t; }
+    void setStateMachine(class StateMachine* s) override { state_ = s; }
+
     AgentOrchestrator& orchestrator() { return *orchestrator_; }
     void setTemplateManager(class TemplateManager* tm);
-
-    // A18.3: 并行模式补 ContextManager — 在 process 中动态注入项目上下文
-    void setContextManager(class ContextManager* cm) { context_manager_ = cm; }
 
 private:
     llm::LLMClientFactory& factory_;
@@ -127,6 +146,10 @@ private:
     std::unique_ptr<AgentOrchestrator> orchestrator_;
     std::string system_prompt_;
     class ContextManager* context_manager_ = nullptr;  // A18.3
+    int max_context_tokens_ = 131072;                  // Issue 22: 与 SerialProcessor 对齐
+    int max_tool_rounds_ = 10;                         // Issue 22: 与 SerialProcessor 对齐
+    class ExecutionTracer* tracer_ = nullptr;           // Issue 25: 与 SerialProcessor 对齐
+    class StateMachine* state_ = nullptr;               // Issue 25: 与 SerialProcessor 对齐
 };
 
 } // namespace agent

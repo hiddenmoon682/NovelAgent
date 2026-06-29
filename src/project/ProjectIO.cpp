@@ -218,15 +218,29 @@ void ProjectIO::save(const Project& project) {
     mutableCopy.modified = nowTimestamp();
     migrateProject(mutableCopy);
 
+    // Issue 5: 增量保存 — 仅写入脏标记置位的文件。
+    // dirty_flags == DIRTY_ALL 时全量写入（首次保存/手动保存）。
+    // 注意：novel.json 始终写入（含 modified 时间戳 + format_version），
+    // 避免 projectSettingsMtime 等 staleness 检测失效。
     const json novelJson = mutableCopy;
     saveJsonFile(fu::joinPath(p, kNovelJson), novelJson);
-    saveJsonFile(fu::joinPath(p, kOutlineJson), mutableCopy.outline);
-    saveJsonFile(fu::joinPath(p, kCharactersJson), mutableCopy.characters);
-    saveJsonFile(fu::joinPath(p, kSettingsJson), mutableCopy.settings);
-    saveJsonFile(fu::joinPath(p, kWorldRulesJson), mutableCopy.world_rules);
-    saveJsonFile(fu::joinPath(p, kStyleJson), mutableCopy.style);
 
-    spdlog::info("Saved project '{}' to {}", project.title, p);
+    if (project.isDirty(Project::DIRTY_OUTLINE))
+        saveJsonFile(fu::joinPath(p, kOutlineJson), mutableCopy.outline);
+    if (project.isDirty(Project::DIRTY_CHARACTERS))
+        saveJsonFile(fu::joinPath(p, kCharactersJson), mutableCopy.characters);
+    if (project.isDirty(Project::DIRTY_SETTINGS))
+        saveJsonFile(fu::joinPath(p, kSettingsJson), mutableCopy.settings);
+    if (project.isDirty(Project::DIRTY_WORLD_RULES))
+        saveJsonFile(fu::joinPath(p, kWorldRulesJson), mutableCopy.world_rules);
+    if (project.isDirty(Project::DIRTY_STYLE))
+        saveJsonFile(fu::joinPath(p, kStyleJson), mutableCopy.style);
+
+    // save 成功，清除脏标记
+    // 注意：mutableCopy 是栈上副本，需要修改原始 project 的 dirty_flags
+    const_cast<Project&>(project).markClean();
+
+    spdlog::info("Saved project '{}' to {} (dirty=0x{:x})", project.title, p, project.dirty_flags);
 }
 
 // ── 章节 Markdown 读写 ──

@@ -106,6 +106,7 @@ json UpdateSettingTool::execute(const json& args) {
         }
     }
     if (n == 0) return {{"error", "没有可更新的字段"}};
+    project_->markDirty(Project::DIRTY_SETTINGS);
     ProjectIO::save(*project_);
     spdlog::info("[update_setting] {} 更新 {} 个字段", s->id, n);
     return {{"success", true}, {"setting_id", s->id}, {"updated_fields", n}};
@@ -152,6 +153,7 @@ json CreateSettingTool::execute(const json& args) {
     new_s.notes           = args.value("notes", "");
 
     project_->settings.push_back(new_s);
+    project_->markDirty(Project::DIRTY_SETTINGS);
     ProjectIO::save(*project_);
 
     spdlog::info("[create_setting] {} '{}' (category={})", new_s.id, name, new_s.category);
@@ -223,6 +225,7 @@ json DeleteSettingTool::execute(const json& args) {
         if (rr.size() < before) cascade_other_settings += static_cast<int>(before - rr.size());
     }
 
+    project_->markDirty(Project::DIRTY_SETTINGS);
     ProjectIO::save(*project_);
     spdlog::info("[delete_setting] {} 已删除 (cascade: ch={} sc={} pt={} wr={} s={})",
                  sid, cascade_chapters, cascade_scenes, cascade_plots, cascade_rules, cascade_other_settings);

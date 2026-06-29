@@ -146,6 +146,7 @@ json WriteChapterTool::execute(const json& args) {
     ch->word_count = llm::TokenCounter::estimateChineseChars(content)
                    + llm::TokenCounter::estimateEnglishWords(content);
     project_->current_word_count += (ch->word_count - old_count);
+    project_->markDirty(Project::DIRTY_NOVEL | Project::DIRTY_OUTLINE);
     ProjectIO::save(*project_);
     spdlog::info("[write_chapter] {} ← {} 字节, 字数 {} → {}", chapter_id, content.size(),
                  old_count, ch->word_count);
@@ -190,6 +191,7 @@ json AppendChapterTool::execute(const json& args) {
     ch->word_count = llm::TokenCounter::estimateChineseChars(combined)
                    + llm::TokenCounter::estimateEnglishWords(combined);
     project_->current_word_count += (ch->word_count - old_count);
+    project_->markDirty(Project::DIRTY_NOVEL | Project::DIRTY_OUTLINE);
     ProjectIO::save(*project_);
     spdlog::info("[append_to_chapter] {} += {} 字节, 字数 {} → {}",
                  chapter_id, append_content.size(), old_count, ch->word_count);
@@ -318,6 +320,7 @@ json CreateChapterTool::execute(const json& args) {
     new_ch.file_path = "chapters/" + new_ch.id + ".md";
 
     project_->outline.chapters.push_back(new_ch);
+    project_->markDirty(Project::DIRTY_OUTLINE);
     ProjectIO::save(*project_);
 
     std::string init_content = "# " + title + "\n\n";
@@ -448,6 +451,7 @@ json UpdateChapterTool::execute(const json& args) {
         return {{"error", "没有可以更新的字段。请检查字段名是否在白名单中，以及值的类型是否匹配。"}};
     }
 
+    project_->markDirty(Project::DIRTY_OUTLINE);
     ProjectIO::save(*project_);
     // 拼接字段名用于日志
     std::string fields_str;
@@ -524,6 +528,7 @@ json DeleteChapterTool::execute(const json& args) {
         if (cr.development.size() < before) cascade_dev += static_cast<int>(before - cr.development.size());
     }
 
+    project_->markDirty(Project::DIRTY_OUTLINE | Project::DIRTY_CHARACTERS);
     ProjectIO::save(*project_);
     spdlog::info("[delete_chapter] {} 已删除 (cascade: pt={} vol={} char={} dev={})",
                  cid, cascade_pt, cascade_vol, cascade_char, cascade_dev);
@@ -584,6 +589,7 @@ json UpdateChapterScenesTool::execute(const json& args) {
         validateSceneRefs(*project_, sc, "update_chapter_scenes");
     }
     ch->scenes = std::move(parsed);
+    project_->markDirty(Project::DIRTY_OUTLINE);
     ProjectIO::save(*project_);
     spdlog::info("[update_chapter_scenes] {} 更新 {} 个场景", ch->id, ch->scenes.size());
     return {{"success", true}, {"chapter_id", ch->id}, {"scene_count", ch->scenes.size()}};

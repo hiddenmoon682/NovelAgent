@@ -2,6 +2,7 @@
 
 #include "agent/IMessageProcessor.h"
 #include "agent/AgentOrchestrator.h"
+#include "agent/AgentState.h"
 #include "agent/ContextManager.h"
 #include "agent/PromptComposer.h"
 #include "agent/ToolCallLoop.h"
@@ -241,13 +242,16 @@ ParallelProcessor::Result ParallelProcessor::process(
 {
     Result r;
 
+    // Issue 25: 并行模式状态机支持 — 与 SerialProcessor 对齐
+    if (state_) state_->transition(AgentState::Thinking);
+
     // A18.3: 并行模式补 ContextManager — 与 SerialProcessor 一样注入动态上下文
     try {
         std::string effective_prompt = system_prompt_;
         if (context_manager_) {
             llm::Conversation tempConv;
             tempConv.addUser(input);
-            auto assembly = context_manager_->assemble(tempConv, 131072);
+            auto assembly = context_manager_->assemble(tempConv, max_context_tokens_);
             if (!assembly.system_prompt.empty())
                 effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
         }
@@ -257,6 +261,10 @@ ParallelProcessor::Result ParallelProcessor::process(
     }
 
     try {
+        // Issue 25: tracer 支持 — 记录并行编排关键事件
+        if (tracer_) tracer_->record("parallel_start", 0, 0,
+            {{"input", input.substr(0, 200)}});
+
         auto text = orchestrator_->processMessage(input);
         conversation.addUser(input);
         conversation.addAssistant(text);
@@ -273,14 +281,36 @@ ParallelProcessor::Result ParallelProcessor::process(
                 orchestrator_->lastOutputTokens());
         }
 
+        // Issue 28: 收集子任务 token 统计
+        if (context_manager_) {
+            int sub_input = orchestrator_->lastSubInputTokens();
+            int sub_output = orchestrator_->lastSubOutputTokens();
+            if (sub_input > 0 || sub_output > 0) {
+                context_manager_->recordUsage(sub_input, sub_output);
+            }
+        }
+
+        if (tracer_) tracer_->record("parallel_done", r.raw_response.total_tokens, 0);
+
         if (callbacks.on_complete) {
             callbacks.on_complete(r.raw_response);
         }
     } catch (const std::exception& e) {
         spdlog::error("[ParallelProcessor] 并行处理异常: {}", e.what());
         r.raw_response.finish_reason = "error";
+        if (tracer_) tracer_->record("error", 0, 0,
+            {{"reason", "并行处理异常: " + std::string(e.what())}});
         if (callbacks.on_error) {
             callbacks.on_error(e.what());
+        }
+    }
+
+    // Issue 25: 恢复状态
+    if (state_) {
+        if (state_->isError()) {
+            state_->transition(AgentState::Idle);
+        } else {
+            state_->transition(AgentState::Idle);
         }
     }
 

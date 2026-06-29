@@ -2,17 +2,20 @@
 
 /// 上下文管理器（增强版 — 会话级追踪 + pin 保留 + 手动 compaction）。
 ///
-/// 核心职责：
+/// Issue 3 拆分后：TokenTracker（③ Token 追踪）+ Compactor（②⑤ 对话压缩）
+/// 已抽为独立类。ContextManager 保留核心职责作为门面：
 ///   1. 构建动态 system prompt（项目/章节上下文 + 压缩摘要）
-///   2. 按 token 预算截断对话历史（支持 preserved 标记优先保留）
-///   3. 会话级 token 追踪（累计输入/输出，阈值检查）
-///   4. 手动 compaction（LLM 驱动的对话摘要，形成中期记忆层）
-///   5. 会话持久化委托给 SessionPersistence
+///   3. (委托 TokenTracker)  会话级 token 追踪（累计输入/输出，阈值检查）
+///   4. 向量检索协调（IVectorStore + IEmbeddingGenerator）
+///   5. (委托 Compactor)    手动/自动 compaction（LLM 对话压缩）
+///   6. 会话持久化委托给 SessionPersistence
 ///
 /// 依赖：通过 FileStorageBackend 访问存储（封装项目路径 + 转发 ProjectIO）。
 
+#include "agent/Compactor.h"
 #include "agent/ContextManagerTypes.h"
 #include "agent/SessionPersistence.h"
+#include "agent/TokenTracker.h"
 #include "llm/Conversation.h"
 
 #include <optional>
@@ -80,55 +83,48 @@ public:
     void setCurrentChapter(const std::string& id) { current_chapter_id_ = id; }
 
     // ================================================================
-    // 会话级 Token 追踪
+    // 会话级 Token 追踪（委托 TokenTracker）
     // ================================================================
 
     /// 设置模型上下文窗口上限（从 ProviderConfig 获取）。
-    void setModelContextLimit(int limit);
+    void setModelContextLimit(int limit) { tracker_.setModelLimit(limit); }
 
     /// 累计一次请求的 token 消耗。
-    void recordUsage(int input_tokens, int output_tokens);
+    void recordUsage(int input_tokens, int output_tokens) { tracker_.record(input_tokens, output_tokens); }
 
     /// 请求前检查上下文用量状态。
-    PreRequestResult checkThresholds() const;
+    PreRequestResult checkThresholds() const { return tracker_.check(); }
 
     /// 返回累计统计。
-    SessionTokenState sessionStats() const;
+    SessionTokenState sessionStats() const { return tracker_.snapshot(); }
 
     /// 返回当前用量百分比 [0, 100]。
-    int usagePercent() const;
+    int usagePercent() const { return tracker_.usagePercent(); }
 
     /// 重置会话统计（/clear 时调用）。
     void resetSession();
 
     // ================================================================
-    // Compaction（中期记忆层）
+    // Compaction（中期记忆层 — 委托 Compactor）
     // ================================================================
 
     /// 执行对话压缩 — 用 LLM 将旧消息摘要为一段文本。
-    ///
-    /// 保留最近 ~20 条消息不动，将更早的消息发送给 LLM 生成摘要。
-    /// 摘要存入内部状态，后续 assemble() 会自动注入到 system prompt。
-    ///
-    /// @param conversation  当前对话历史（非const：压缩成功后会从头部删除被压缩的消息）
     CompactResult compact(
         llm::Conversation& conversation,
         llm::ILLMClient& llm_client,
         std::optional<std::string> focus = std::nullopt);
 
     /// 当前是否有压缩摘要。
-    bool hasCompactedSummary() const { return !compacted_summary_.empty(); }
+    bool hasCompactedSummary() const { return compactor_.hasSummary(); }
 
     /// 清除压缩摘要。
-    void clearCompactedSummary() { compacted_summary_.clear(); compaction_marker_ = 0; }
+    void clearCompactedSummary() { compactor_.clear(); }
 
     /// 返回压缩标记位（被 compact() 压缩的消息数，0 = 无压缩）。
-    int compactionMarker() const { return compaction_marker_; }
+    int compactionMarker() const { return compactor_.marker(); }
 
     /// 设置自动 compaction（达到阈值自动触发）。
     void setAutoCompact(bool enabled, int threshold_pct = 70);
-
-    /// 是否应该触发自动 compaction。
     bool shouldAutoCompact() const;
 
     /// 返回最后一次 assemble() 产生的警告列表。
@@ -176,31 +172,31 @@ public:
     void loadSessionState(llm::Conversation& conv,
                           std::string& out_chapter_id);
 
+    /// 公开子组件（只读访问，供测试/诊断/Agent 直接使用）
+    const TokenTracker& tracker() const { return tracker_; }
+    const Compactor& compactor() const { return compactor_; }
+
 private:
     FileStorageBackend& storage_;
     SessionPersistence persistence_;
+
+    // Issue 3: 拆分为 TokenTracker + Compactor
+    TokenTracker tracker_;
+    Compactor compactor_;
 
     // ── Project 注入（非拥有）──
     const Project* project_ = nullptr;
     std::string current_chapter_id_;
 
-    // ── 会话级状态 ──
-    SessionTokenState token_state_;
-    std::string compacted_summary_;   ///< LLM 生成的压缩摘要（空 = 无）
-    int compaction_marker_ = 0;       ///< 被压缩的消息数标记，/rewind 检测用
+    // ── 会话级状态（精简后）──
     std::vector<std::string> last_warnings_;  ///< 最后一次 assemble() 的警告缓存
     int last_truncated_count_ = 0;            ///< 最后一次 assemble() 的截断数
-    int current_context_size_ = 0;            ///< 最后一次请求的实际上下文 token 数（非累计值，用于阈值检查）
 
     // ── 向量检索后端（非拥有）──
     retrieval::IVectorStore* vector_store_ = nullptr;
     retrieval::IEmbeddingGenerator* embedding_gen_ = nullptr;
     int retrieval_top_k_ = 3;
     bool vector_store_dirty_ = false;  // /rewind 后标记，跳过检索并提示 /index
-
-    // ── 自动 compaction ──
-    bool auto_compact_ = false;
-    int auto_compact_threshold_ = 70;  // 用量百分比阈值
 
     /// 按 token 预算从新到旧截断消息（preserved 消息优先保留）。
     static std::vector<llm::Message> truncateMessages(

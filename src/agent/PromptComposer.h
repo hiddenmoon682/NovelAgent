@@ -42,8 +42,12 @@ public:
             result += components.task;
         }
 
-        // Fix #5: 附加版本标记（不影响 LLM 行为，仅供审计）
-        result += "\n\n[prompt_v" + std::to_string(kPromptVersion) + "]";
+        // Fix #5: 附加版本标记（不影响 LLM 行为，仅供审计）。
+        // Issue 14: 同时附加内容 hash，当开发者忘记递增 kPromptVersion 时，
+        // hash 变化可作为辅助审计线索（同一版本号 + 不同 hash = 内容已变但版本未更新）。
+        // hash 不含版本标记自身，避免循环依赖。
+        result += "\n\n[prompt_v" + std::to_string(kPromptVersion)
+               + "_h" + std::to_string(hash(result)) + "]";
 
         return result;
     }

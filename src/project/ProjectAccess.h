@@ -52,7 +52,7 @@ public:
     void writeChapterFile(const std::string& fp, const std::string& content) override
         { ProjectIO::writeChapter(project_.path, fp, content); }
     void saveProject() override
-        { ProjectIO::save(project_); }
+        { project_.markDirty(Project::DIRTY_ALL); ProjectIO::save(project_); }
 
     // ── 便捷: 获取底层 Project& ──
     Project& project() { return project_; }

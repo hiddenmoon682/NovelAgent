@@ -10,6 +10,12 @@ FileStorageBackend::FileStorageBackend(std::string project_path)
 
 nlohmann::json FileStorageBackend::loadJson(const std::string& filePath)
 {
+    // Issue 23: 统一路径语义 — 相对路径以 project_path_ 为基准解析。
+    // 若 filePath 已经包含 project_path_（绝对路径），直接使用。
+    if (!filePath.empty() && filePath.find(project_path_) != 0) {
+        auto j = ProjectIO::loadJsonFile(project_path_ + "/" + filePath);
+        return j.value_or(nlohmann::json{});
+    }
     auto j = ProjectIO::loadJsonFile(filePath);
     return j.value_or(nlohmann::json{});
 }
@@ -17,7 +23,12 @@ nlohmann::json FileStorageBackend::loadJson(const std::string& filePath)
 void FileStorageBackend::saveJson(const std::string& filePath,
                                    const nlohmann::json& data)
 {
-    ProjectIO::saveJsonFile(filePath, data);
+    // Issue 23: 统一路径语义 — 相对路径以 project_path_ 为基准解析。
+    if (!filePath.empty() && filePath.find(project_path_) != 0) {
+        ProjectIO::saveJsonFile(project_path_ + "/" + filePath, data);
+    } else {
+        ProjectIO::saveJsonFile(filePath, data);
+    }
 }
 
 std::string FileStorageBackend::readChapter(const std::string& filePath)
