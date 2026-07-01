@@ -92,6 +92,23 @@ CompactResult Compactor::compact(
 
     // 构建 compaction 请求
     std::string compact_prompt = kCompactSystemPrompt;
+
+    // MED-1: 估算总 token，超出模型窗口则降级截断，防止 API 400
+    int convo_tokens = llm::TokenCounter::countTokens(conversation_text);
+    int prompt_tokens = llm::TokenCounter::countTokens(compact_prompt);
+    int total_estimated = convo_tokens + prompt_tokens + 50; // 50 预留消息结构开销
+    if (model_context_limit_ > 0 && total_estimated > model_context_limit_) {
+        spdlog::warn("[Compactor] 待压缩对话 {} tokens 超过模型窗口 {}，"
+                     "截断后再提交", total_estimated, model_context_limit_);
+        // 截断 conversation_text 到窗口的 70%（留 30% 给 prompt+摘要回复）
+        size_t max_convo_chars = conversation_text.size()
+            * model_context_limit_ / total_estimated * 7 / 10;
+        if (max_convo_chars < conversation_text.size()) {
+            max_convo_chars = (std::max)(max_convo_chars, size_t{500});
+            conversation_text = conversation_text.substr(0, max_convo_chars)
+                              + "\n...(已截断)";
+        }
+    }
     std::string ctx = buildProjectRef(project, chapter_id);
     if (!ctx.empty()) {
         compact_prompt += "\n\n当前项目设定参考（用于正确识别人物指代）：\n" + ctx;

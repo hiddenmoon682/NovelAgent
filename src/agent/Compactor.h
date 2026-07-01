@@ -68,11 +68,15 @@ public:
     /// 压缩后向量索引位置失效，由 ContextManager 调用此方法清除脏标记。
     void clearVectorDirtyFlag(bool& dirty) const { dirty = false; }
 
+    /// MED-1: 设置模型上下文窗口上限，compact 前做 token 预算检查防 API 400。
+    void setModelContextLimit(int limit) { model_context_limit_ = limit; }
+
 private:
     std::string summary_;            ///< LLM 生成的压缩摘要
     int marker_ = 0;                 ///< 被压缩的消息数标记，/rewind 检测用
     bool auto_compact_ = false;      ///< 是否启用自动压缩
     int auto_compact_threshold_ = 70; ///< 自动压缩触发阈值（用量百分比）
+    int model_context_limit_ = 0;    ///< MED-1: 模型上下文窗口上限（0=不限制）
 };
 
 } // namespace agent

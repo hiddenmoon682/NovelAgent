@@ -87,7 +87,10 @@ public:
     // ================================================================
 
     /// 设置模型上下文窗口上限（从 ProviderConfig 获取）。
-    void setModelContextLimit(int limit) { tracker_.setModelLimit(limit); }
+    void setModelContextLimit(int limit) {
+        tracker_.setModelLimit(limit);
+        compactor_.setModelContextLimit(limit);  // MED-1: 同步到 compactor 做 token 预算保护
+    }
 
     /// 累计一次请求的 token 消耗。
     void recordUsage(int input_tokens, int output_tokens) { tracker_.record(input_tokens, output_tokens); }

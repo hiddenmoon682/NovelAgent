@@ -151,9 +151,7 @@ void ContextManager::loadSessionState(
 
     // 恢复 preserved 标记
     for (auto idx : meta.preserved_indices) {
-        if (idx < conv.size()) {
-            const_cast<llm::Message&>(conv.all()[idx]).preserved = true;
-        }
+        conv.pinMessage(idx);
     }
 
     spdlog::info("[ContextManager] 完整会话状态已恢复 (消息={}, preserved={}, compact={}, requests={})",

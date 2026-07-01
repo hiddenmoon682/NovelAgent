@@ -62,6 +62,7 @@ set(NOVELAGENT_AGENT
     src/agent/ExecutionTracer.h src/agent/ExecutionTracer.cpp
     src/agent/TokenTracker.h                                    # Issue 3: Token 追踪器
     src/agent/Compactor.h src/agent/Compactor.cpp               # Issue 3: 对话压缩器
+    src/agent/ThreadPool.h                                      # Issue 4: 固定线程池
     src/agent/ToolCallLoop.h src/agent/ToolCallLoop.cpp
     src/agent/IMessageProcessor.h src/agent/IMessageProcessor.cpp
     src/agent/ISynthesisStrategy.h src/agent/ISynthesisStrategy.cpp

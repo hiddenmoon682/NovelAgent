@@ -225,15 +225,31 @@ void ProjectIO::save(const Project& project) {
     const json novelJson = mutableCopy;
     saveJsonFile(fu::joinPath(p, kNovelJson), novelJson);
 
-    if (project.isDirty(Project::DIRTY_OUTLINE))
+    // Safety guard: 脏标记为空但有子实体数据 → 工具可能漏调 markDirty()。
+    // 此时全量写入以防静默数据丢失，并记录告警以便排查。
+    uint32_t flags = project.dirty_flags;
+    if (flags == 0) {
+        bool has_entities = !mutableCopy.characters.empty()
+                         || !mutableCopy.settings.empty()
+                         || !mutableCopy.world_rules.empty();
+        bool has_outline = !mutableCopy.outline.chapters.empty()
+                        || !mutableCopy.outline.volumes.empty()
+                        || !mutableCopy.outline.plot_threads.empty();
+        if (has_entities || has_outline) {
+            spdlog::warn("[ProjectIO] 脏标记为空但有子实体——可能遗漏 markDirty()，已全量保存");
+            flags = Project::DIRTY_ALL;
+        }
+    }
+
+    if (flags & Project::DIRTY_OUTLINE)
         saveJsonFile(fu::joinPath(p, kOutlineJson), mutableCopy.outline);
-    if (project.isDirty(Project::DIRTY_CHARACTERS))
+    if (flags & Project::DIRTY_CHARACTERS)
         saveJsonFile(fu::joinPath(p, kCharactersJson), mutableCopy.characters);
-    if (project.isDirty(Project::DIRTY_SETTINGS))
+    if (flags & Project::DIRTY_SETTINGS)
         saveJsonFile(fu::joinPath(p, kSettingsJson), mutableCopy.settings);
-    if (project.isDirty(Project::DIRTY_WORLD_RULES))
+    if (flags & Project::DIRTY_WORLD_RULES)
         saveJsonFile(fu::joinPath(p, kWorldRulesJson), mutableCopy.world_rules);
-    if (project.isDirty(Project::DIRTY_STYLE))
+    if (flags & Project::DIRTY_STYLE)
         saveJsonFile(fu::joinPath(p, kStyleJson), mutableCopy.style);
 
     // save 成功，清除脏标记

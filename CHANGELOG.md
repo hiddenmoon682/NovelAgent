@@ -1,6 +1,29 @@
 # Changelog
 
-## [2026-06-29] 设计评审修复复核 + 遗留项补齐
+## [2026-06-30] 审查修复补充：测试全覆盖 + DirtyBit 防护 + Shell 扩展
+
+> 基于设计审查修复评估报告，按优先级完成全部遗留修复项。
+> 全量 22/22 通过。
+
+### 测试覆盖（新增 4 个测试套件 + 22 个用例）
+- `test_setting_tools.cpp`（6 用例）：create/get/get_all/update/delete+级联/错误处理
+- `test_world_rule_tools.cpp`（5 用例）：create/get/update/delete+级联/错误处理
+- `test_outline_tools.cpp`（7 用例）：get/create_volume/update_volume/create_plot_thread/update_plot_thread/get_project_status/错误处理
+- `test_style_tools.cpp`（5 用例）：read_default/update_string/update_int/update_array/空fields错误
+- `test_shell_tools.cpp`：新增扩展白名单测试（Get-Process/Get-Service/Get-Acl/Get-Member/Write-Output/别名）
+
+### DirtyBit 防护（Issue 5 安全加固）
+- `ProjectIO::save()`：dirty_flags==0 但有子实体时全量保存 + 告警，防止新增工具漏调 markDirty()
+
+### ShellTools 白名单扩展
+- 新增 `get-process`/`get-service`/`get-itemproperty`/`get-acl`/`get-member`/`write-output`/`write-host` 及别名（`ps`/`echo`/`gp`/`gl`）
+
+### StyleTools 修正
+- `UpdateStyleTool::parameters()`：空 fields schema → 完整列出 22 个可更新字段（C5 修复遗漏）
+- 修复由此导致的 C4 校验误阻断 LLM 传入合法字段
+
+### 代码清理
+- `ChapterTools.cpp`：删除 `AppendChapterTool` 中重复的 return 语句（死代码）
 
 > 对 DESIGN_REVIEW.md 全部 35 项已修复条目做逐项源码复核（三路并行核实 + 人工二次确认）。
 > 复核结论：核心修复（B1/B2/B3/B8/A1/A2/A4/A5/A7/A8/D2/A15 等）均已实质到位且有测试；

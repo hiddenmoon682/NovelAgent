@@ -63,8 +63,32 @@ json ReadStyleTool::execute(const json& /*args*/) {
 // ===========================================================================
 
 json UpdateStyleTool::parameters() const {
+    // C5: fields 列出全部可更新字段
     return utils::schema::object({
-        {"fields", utils::schema::object({}, {})}
+        {"fields", utils::schema::object({
+            {"tone", utils::schema::stringProp("语调，如 '黑暗史诗' / '温馨治愈'")},
+            {"pacing", utils::schema::stringProp("节奏，如 '快节奏' / '舒缓' / '快慢交替'")},
+            {"pov", utils::schema::stringProp("叙事视角，如 '第三人称有限' / '第一人称'")},
+            {"tense", utils::schema::stringProp("时态/时间定位")},
+            {"prose_style", utils::schema::stringProp("文风，如 '简洁' / '华丽' / '诗意'")},
+            {"dialogue_style", utils::schema::stringProp("对话风格")},
+            {"narrative_distance", utils::schema::stringProp("叙事距离")},
+            {"sentence_length", utils::schema::stringProp("句式长度偏好")},
+            {"vocabulary", utils::schema::stringProp("词汇风格")},
+            {"voice_reference", utils::schema::stringProp("语调参考")},
+            {"show_vs_tell_bias", utils::schema::stringProp("展示 vs 讲述偏向")},
+            {"dialogue_density", utils::schema::stringProp("对话密度")},
+            {"description_density", utils::schema::stringProp("描写密度")},
+            {"introspection_density", utils::schema::stringProp("内心独白密度")},
+            {"humor_level", utils::schema::stringProp("幽默程度")},
+            {"sensory_focus", utils::schema::stringProp("感官焦点")},
+            {"chapter_opening_style", utils::schema::stringProp("章节开头风格")},
+            {"chapter_ending_style", utils::schema::stringProp("章节结尾风格")},
+            {"notes", utils::schema::stringProp("备注")},
+            {"chapter_length_target", utils::schema::integerProp("每章目标字数")},
+            {"forbidden_phrases", utils::schema::stringArrayProp("禁用短语清单")},
+            {"forbidden_tropes", utils::schema::stringArrayProp("禁用套路清单")},
+        }, {}, /*allowExtra=*/false)}
     }, {"fields"});
 }
 

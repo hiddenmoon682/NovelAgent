@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <nlohmann/json.hpp>
+#include <optional>
 
 using json = nlohmann::json;
 
@@ -31,6 +32,7 @@ namespace retrieval {
 
 void VectorStore::init(const std::string& db_path)
 {
+    std::unique_lock lock(mutex_);
     db_path_ = db_path;
     loadFromFile();
     initialized_ = true;
@@ -39,6 +41,7 @@ void VectorStore::init(const std::string& db_path)
 
 void VectorStore::close()
 {
+    std::unique_lock lock(mutex_);
     if (dirty_) {
         saveToFile();
     }
@@ -56,6 +59,7 @@ void VectorStore::insert(
     const std::vector<float>& embedding,
     const json& metadata)
 {
+    std::unique_lock lock(mutex_);
     // 检查是否已存在（覆盖更新）
     auto it = std::find_if(entries_.begin(), entries_.end(),
         [&id](const VectorEntry& e) { return e.id == id; });
@@ -72,6 +76,7 @@ void VectorStore::insert(
 
 void VectorStore::insertBatch(const std::vector<VectorEntry>& entries)
 {
+    std::unique_lock lock(mutex_);
     // 逐条处理以支持覆盖
     for (const auto& entry : entries) {
         auto it = std::find_if(entries_.begin(), entries_.end(),
@@ -91,6 +96,7 @@ void VectorStore::insertBatch(const std::vector<VectorEntry>& entries)
 
 bool VectorStore::remove(const std::string& id)
 {
+    std::unique_lock lock(mutex_);
     auto it = std::find_if(entries_.begin(), entries_.end(),
         [&id](const VectorEntry& e) { return e.id == id; });
 
@@ -105,6 +111,7 @@ bool VectorStore::remove(const std::string& id)
 
 void VectorStore::update(const std::string& id, const std::vector<float>& embedding)
 {
+    std::unique_lock lock(mutex_);
     auto it = std::find_if(entries_.begin(), entries_.end(),
         [&id](const VectorEntry& e) { return e.id == id; });
 
@@ -125,6 +132,7 @@ std::vector<SearchResult> VectorStore::search(
     const std::vector<float>& query_embedding,
     int top_k) const
 {
+    std::shared_lock lock(mutex_);
     if (entries_.empty() || top_k <= 0) {
         return {};
     }
@@ -160,24 +168,27 @@ std::vector<SearchResult> VectorStore::search(
 
 int VectorStore::count() const
 {
+    std::shared_lock lock(mutex_);
     return static_cast<int>(entries_.size());
 }
 
 bool VectorStore::contains(const std::string& id) const
 {
+    std::shared_lock lock(mutex_);
     return std::any_of(entries_.begin(), entries_.end(),
         [&id](const VectorEntry& e) { return e.id == id; });
 }
 
-const VectorEntry* VectorStore::get(const std::string& id) const
+std::optional<VectorEntry> VectorStore::get(const std::string& id) const
 {
+    std::shared_lock lock(mutex_);
     auto it = std::find_if(entries_.begin(), entries_.end(),
         [&id](const VectorEntry& e) { return e.id == id; });
 
     if (it != entries_.end()) {
-        return &(*it);
+        return *it;  // 返回副本，避免锁释放后的悬空指针
     }
-    return nullptr;
+    return std::nullopt;
 }
 
 // ===========================================================================

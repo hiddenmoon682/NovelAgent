@@ -25,11 +25,20 @@ struct ToolCallLoopConfig {
     bool first_round_streaming = true;
     /// 后续 tool_call 轮次是否也启用流式输出。
     /// 默认 false：减少 SSE 连接开销。设为 true 可让用户在中间轮次也看到 LLM 输出，
-    /// 但会增加网络流量和 API 调用延迟（Issue 9 — 流式回调默认仅首轮生效）。
+    /// 但会增加网络流量和 API 调用延迟。
+    /// 注意：即使设为 true，后续轮次也会通过 SSE 连接发送数据，
+    /// 流式连接与回调触发是不同机制；仅在首轮触发用户回调。
     bool all_rounds_streaming = false;
     std::chrono::seconds timeout{0};
     int max_repeated_calls = 3;
     int token_warning_threshold = 0;
+    /// CRIT-2: 最大反思轮数。检测到重复工具调用后，注入反思 prompt 让 LLM 自修正，
+    /// 达到此上限后仍未解决则终止（默认 3 轮）。0=不启用反思直接终止。
+    int max_reflection_rounds = 3;
+    /// A4: 启用预思考步骤。开启后在工具调用循环前额外做一轮无工具的 LLM 调用，
+    /// 让 LLM 先推理再行动（ReAct 模式：思考→行动→观察）。
+    /// 默认 false 以节省 token。对复杂创作任务（规划章节、分析角色弧光）建议开启。
+    bool use_thinking_step = false;
 };
 
 struct ToolCallLoopResult {
@@ -79,9 +88,16 @@ private:
     StateMachine* state_;   // D1.1
     std::atomic<bool>* cancelled_ = nullptr;  // Issue 21+26: 外部取消信号
 
+    /// CRIT-2: 当前反思轮数计数器（累计此 loop.run 调用中的反思次数）。
+    int reflection_rounds_ = 0;
+
     bool isRepeatedCall(const std::string& tool_name, const std::string& args_json,
                         std::unordered_map<std::string, int>& call_history,
                         int max_repeats) const;
+
+    /// CRIT-2: 构建反思 prompt。告知 LLM 它陷入了重复调用循环，要求尝试不同方法。
+    static std::string buildReflectionPrompt(
+        const std::string& tool_name, const std::string& args_preview, int round);
 };
 
 } // namespace agent

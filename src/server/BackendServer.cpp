@@ -132,10 +132,23 @@ void BackendServer::setupRoutes() {
 
     server_->Post("/api/session/destroy", [this](const httplib::Request& req, httplib::Response& res) {
         if (!checkBodySize(req.body, res)) return;
-        auto j = json::parse(req.body);
+        nlohmann::json j;
+        try {
+            j = nlohmann::json::parse(req.body);
+        } catch (...) {
+            res.status = 400;
+            res.set_content("{\"error\":\"请求体不是有效的 JSON\"}", "application/json");
+            return;
+        }
         std::string sid = j.value("session_id", "");
+        if (sid.empty()) {
+            res.status = 400;
+            res.set_content("{\"error\":\"缺少 session_id\"}", "application/json");
+            return;
+        }
         session_mgr_.destroySession(sid);
-        active_clients_--;
+        // 防止伪造 destroy 请求导致 active_clients_ 下溢
+        if (active_clients_.load() > 0) active_clients_--;
         res.set_content("{\"status\":\"ok\"}", "application/json");
     });
 
@@ -150,7 +163,14 @@ void BackendServer::setupRoutes() {
     server_->Post("/api/chat", [this](const httplib::Request& req, httplib::Response& res) {
         if (!checkBodySize(req.body, res)) return;
 
-        auto j = json::parse(req.body);
+        nlohmann::json j;
+        try {
+            j = nlohmann::json::parse(req.body);
+        } catch (...) {
+            res.status = 400;
+            res.set_content("{\"error\":\"请求体不是有效的 JSON\"}", "application/json");
+            return;
+        }
         std::string sid = j.value("session_id", "");
         std::string message = j.value("message", "");
 
@@ -279,7 +299,14 @@ void BackendServer::setupRoutes() {
     // ── 单次执行 ──
     server_->Post("/api/execute", [this](const httplib::Request& req, httplib::Response& res) {
         if (!checkBodySize(req.body, res)) return;
-        auto j = json::parse(req.body);
+        nlohmann::json j;
+        try {
+            j = nlohmann::json::parse(req.body);
+        } catch (...) {
+            res.status = 400;
+            res.set_content("{\"error\":\"请求体不是有效的 JSON\"}", "application/json");
+            return;
+        }
         std::string command = j.value("command", "");
         if (command.empty()) {
             res.status = 400;

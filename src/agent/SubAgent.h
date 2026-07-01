@@ -11,6 +11,7 @@
 /// - 每个 SubAgent 通过 LLMClientFactory 创建独立的 LLMClient 实例
 /// - 并行 SubAgent 之间不共享 HTTP 连接状态
 
+#include "agent/ExecutionTracer.h"
 #include "agent/IToolProvider.h"
 #include "llm/Conversation.h"
 #include "llm/ILLMClient.h"
@@ -44,6 +45,7 @@ struct SubAgentResult {
     std::string error;
     int input_tokens = 0;          ///< Issue 28: 子任务 LLM 调用的输入 token 数
     int output_tokens = 0;         ///< Issue 28: 子任务 LLM 调用的输出 token 数
+    std::string trace_summary;     ///< A3: 子任务执行轨迹摘要（JSON 字符串），供父 Agent 日志/调试使用
 };
 
 /// 子 Agent — 拥有独立的 LLMClient 实例，实现线程隔离。
@@ -64,7 +66,11 @@ public:
     /// 执行子任务，阻塞直到完成或超时。
     SubAgentResult execute(const SubAgentConfig& config);
 
+    /// A3: 设置外部 tracer（可选），其摘要将随结果一并返回。
+    void setTracer(ExecutionTracer* tracer) { external_tracer_ = tracer; }
+
     const llm::Conversation& conversation() const { return conversation_; }
+    const ExecutionTracer& tracer() const { return tracer_; }
 
 private:
     std::unique_ptr<llm::ILLMClient> client_;  // 独立 LLMClient 实例
@@ -72,6 +78,8 @@ private:
     llm::Conversation conversation_;
     std::mutex conv_mutex_;               // 保护 conversation_ 并发访问
     std::atomic<bool> cancelled_{false};  // 超时时通知异步任务停止
+    ExecutionTracer tracer_;              // A3: 子任务执行轨迹记录器，由 setTracer 或 execute 内部使用
+    ExecutionTracer* external_tracer_ = nullptr;  // A3: 外部注入的 tracer（可选），非拥有
 };
 
 } // namespace agent

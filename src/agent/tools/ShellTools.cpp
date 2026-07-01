@@ -46,8 +46,11 @@ static bool isAllowedCommand(const std::string& cmd) {
         "select-string", "get-location", "get-date", "get-filehash",
         "measure-object", "select-object", "where-object",
         "sort-object", "group-object",
-        "get-command", "get-help",
+        "get-command", "get-help", "get-process", "get-service",
+        "get-itemproperty", "get-acl", "get-member",
+        "write-output", "write-host",
         "ls", "dir", "cat", "type", "gi", "pwd", "sls", "sort", "group",
+        "echo", "ps", "gp", "gl",
     };
     // 提取管道中每段的首个 token（cmdlet 名或别名），逐段校验。
     // 关键：只校验每段的"首个 token"（命令名），段内参数（如 Get-Content 的文件名）
@@ -82,13 +85,15 @@ static bool isAllowedCommand(const std::string& cmd) {
 }
 
 /// 使用 CreateProcess 执行命令，支持超时（Windows）。
-/// @param cmd     PowerShell 命令
+/// @param cmd     PowerShell 命令（已通过白名单校验的安全查询命令）
 /// @param output  出参：stdout 输出
 /// @param timeoutMs 超时毫秒数
 /// @return        进程退出码（超时时返回 -1）
 int execWithTimeout(const std::string& cmd, std::string& output, DWORD timeoutMs = 30000) {
 #ifdef _WIN32
-    std::string fullCmd = "powershell.exe -NoProfile -Command " + cmd;
+    // PowerShell 命令用双引号包裹，确保含空格的文件路径等参数正确传递
+    // 注意：cmd 本身经过白名单校验 + 注入字符过滤，不含 $() ` {} ; & 等注入向量
+    std::string fullCmd = "powershell.exe -NoProfile -Command \"" + cmd + "\"";
 
     HANDLE hRead, hWrite;
     SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
@@ -102,7 +107,10 @@ int execWithTimeout(const std::string& cmd, std::string& output, DWORD timeoutMs
     si.hStdError = hWrite;
 
     PROCESS_INFORMATION pi = {};
-    if (!CreateProcessA(nullptr, const_cast<char*>(fullCmd.c_str()),
+    // CreateProcessA 的 lpCommandLine 参数可能修改缓冲区内容（替换空格为 \0 以解析 argv）。
+    // 因此需要可写缓冲区，不能直接传 c_str() 的 const 指针。
+    std::vector<char> mutableCmd(fullCmd.begin(), fullCmd.end() + 1); // +1 包含结尾 \0
+    if (!CreateProcessA(nullptr, mutableCmd.data(),
                         nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
                         nullptr, nullptr, &si, &pi)) {
         CloseHandle(hRead); CloseHandle(hWrite);
@@ -113,7 +121,7 @@ int execWithTimeout(const std::string& cmd, std::string& output, DWORD timeoutMs
     // 等待进程完成或超时
     DWORD waitResult = WaitForSingleObject(pi.hProcess, timeoutMs);
 
-    int exitCode = -1;
+    DWORD exitCode = (DWORD)-1;
     if (waitResult == WAIT_TIMEOUT) {
         TerminateProcess(pi.hProcess, 1);
         output = "(命令超时)";
@@ -129,13 +137,13 @@ int execWithTimeout(const std::string& cmd, std::string& output, DWORD timeoutMs
                 break;
             }
         }
-        GetExitCodeProcess(pi.hProcess, reinterpret_cast<LPDWORD>(&exitCode));
+        GetExitCodeProcess(pi.hProcess, &exitCode);
     }
 
     CloseHandle(hRead);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
-    return exitCode;
+    return static_cast<int>(exitCode);
 #else
     (void)cmd; (void)output; (void)timeoutMs;
     output = "(Shell 工具在非 Windows 平台不可用)";

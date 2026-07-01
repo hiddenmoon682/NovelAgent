@@ -14,6 +14,7 @@
 #include "agent/AgentOrchestratorTypes.h"
 #include "agent/ISynthesisStrategy.h"
 #include "agent/SubAgent.h"
+#include "agent/ThreadPool.h"
 
 #include <functional>
 #include <memory>
@@ -112,6 +113,10 @@ public:
     int lastSubInputTokens() const { return last_sub_input_tokens_; }
     int lastSubOutputTokens() const { return last_sub_output_tokens_; }
 
+    /// CRIT-1: 最近一次 processMessage 中所有子任务的状态/结果详情。
+    /// 供 ParallelProcessor 注入对话历史，使后续 LLM 轮次能看到子任务工具调用链。
+    const std::vector<SubTask>& lastSubTasks() const { return last_sub_tasks_; }
+
     void setTemplateManager(TemplateManager* tm);
 
     /// A18.3: 运行时更新主提示词（供 ParallelProcessor 注入动态上下文）。
@@ -122,6 +127,9 @@ public:
     void setDecompositionStrategy(std::unique_ptr<IDecompositionStrategy> strategy);
     void setSynthesisStrategy(std::unique_ptr<ISynthesisStrategy> strategy);
     void setSubAgentFactory(SubAgentFactory factory);
+
+    /// Issue 4: 注入外部线程池（nullptr 时使用内置默认池）。
+    void setThreadPool(ThreadPool* pool) { thread_pool_ = pool ? pool : &default_pool_; }
 
 private:
     llm::LLMClientFactory& factory_;                      // 供 SubAgent 创建独立客户端
@@ -136,12 +144,15 @@ private:
     int last_output_tokens_ = 0;
     int last_sub_input_tokens_ = 0;   // Issue 28: 子任务累计输入 token
     int last_sub_output_tokens_ = 0;  // Issue 28: 子任务累计输出 token
+    std::vector<SubTask> last_sub_tasks_;  // CRIT-1: 最近一次子任务详情
 
     TemplateManager* template_mgr_ = nullptr;
     std::unique_ptr<IParallelDetector> detector_;
     std::unique_ptr<IDecompositionStrategy> decomposition_;
     std::unique_ptr<ISynthesisStrategy> synthesis_;
     SubAgentFactory agent_factory_ = defaultSubAgentFactory();
+    ThreadPool default_pool_;          // Issue 4: 内置默认线程池（12 线程）
+    ThreadPool* thread_pool_ = &default_pool_;  // 当前使用的池（可外部注入覆盖）
 
     IParallelDetector& getDetector();
     IDecompositionStrategy& getDecomposition();

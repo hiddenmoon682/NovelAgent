@@ -197,8 +197,6 @@ json AppendChapterTool::execute(const json& args) {
                  chapter_id, append_content.size(), old_count, ch->word_count);
 
     return {{"success", true}, {"chapter_id", chapter_id}};
-
-    return {{"success", true}, {"chapter_id", chapter_id}};
 }
 
 // ===========================================================================

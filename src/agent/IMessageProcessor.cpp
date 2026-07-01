@@ -116,7 +116,9 @@ SerialProcessor::Result SerialProcessor::process(
     config.max_rounds = max_tool_rounds_;              // 最大 tool_call 轮数
     config.all_rounds_streaming = false;               // 首轮流式 + 后续非流式
     config.max_repeated_calls = 3;                     // Fix #2: 循环检测上限
-    config.timeout = std::chrono::seconds(300);        // B5: 主循环超时保护，防止 HTTP 半开永久卡死
+    config.timeout = std::chrono::seconds(0);            // A1: 串行路径不设 ToolCallLoop 级超时，避免每次请求创建线程。
+                                                          //     HTTP 客户端已有 180s read_timeout 兜底网络挂起。
+                                                          //     子任务（SubAgent）的超时由各自 config 独立管理。
     config.token_warning_threshold = 0;                // Fix #4: 默认不监控 token
 
     // ── 步骤 6: 执行 ToolCallLoop ──
@@ -232,7 +234,14 @@ ParallelProcessor::~ParallelProcessor() = default;
 
 void ParallelProcessor::setSystemPrompt(const std::string& p) {
     system_prompt_ = p;
-    orchestrator_ = std::make_unique<AgentOrchestrator>(factory_, registry_, system_prompt_);
+    // CRIT-7: 使用 setMainPrompt 而非重建编排器，保留已注入的策略配置
+    // （setParallelDetector/setDecompositionStrategy/setSynthesisStrategy 等）。
+    // 仅在编排器尚未创建时的首次调用才真正构造。
+    if (orchestrator_) {
+        orchestrator_->setMainPrompt(system_prompt_);
+    } else {
+        orchestrator_ = std::make_unique<AgentOrchestrator>(factory_, registry_, system_prompt_);
+    }
 }
 
 ParallelProcessor::Result ParallelProcessor::process(
@@ -249,9 +258,9 @@ ParallelProcessor::Result ParallelProcessor::process(
     try {
         std::string effective_prompt = system_prompt_;
         if (context_manager_) {
-            llm::Conversation tempConv;
-            tempConv.addUser(input);
-            auto assembly = context_manager_->assemble(tempConv, max_context_tokens_);
+            // 使用真实 conversation 而非临时单消息对话，确保上下文组装能看到
+            // 完整的对话历史（token 预算、向量检索上下文、压缩摘要等）。
+            auto assembly = context_manager_->assemble(conversation, max_context_tokens_);
             if (!assembly.system_prompt.empty())
                 effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
         }
@@ -268,6 +277,30 @@ ParallelProcessor::Result ParallelProcessor::process(
         auto text = orchestrator_->processMessage(input);
         conversation.addUser(input);
         conversation.addAssistant(text);
+
+        // CRIT-1: 注入子任务工具调用详情，使后续 LLM 轮次能看到并行编排中执行的查询链
+        {
+            const auto& sub_tasks = orchestrator_->lastSubTasks();
+            if (!sub_tasks.empty()) {
+                std::string sub_detail;
+                for (const auto& st : sub_tasks) {
+                    sub_detail += "[" + st.id + ":" + st.status + "] " + st.description + "\n";
+                    if (!st.result.empty()) {
+                        sub_detail += "  结果: " + st.result.substr(0, 300);
+                        if (st.result.size() > 300) sub_detail += "...";
+                        sub_detail += "\n";
+                    }
+                    if (!st.error.empty()) {
+                        sub_detail += "  错误: " + st.error + "\n";
+                    }
+                }
+                if (!sub_detail.empty()) {
+                    llm::Message ass = llm::Message::assistant(
+                        "(并行分析完成，子任务详情:)\n" + sub_detail);
+                    conversation.add(std::move(ass));
+                }
+            }
+        }
 
         r.text = text;
         r.raw_response.content = text;

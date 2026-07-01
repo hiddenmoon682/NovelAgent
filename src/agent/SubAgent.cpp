@@ -46,7 +46,8 @@ SubAgentResult SubAgent::execute(const SubAgentConfig& config)
             if (cancelled_) return r;
 
             // 步骤 2: 在本地 Conversation 上执行 tool_call 循环（无锁）
-            ToolCallLoop loop(*client_, tools_);
+            tracer_.clear();
+            ToolCallLoop loop(*client_, tools_, &tracer_);
             loop.setCancelled(&cancelled_);
             ToolCallLoopConfig cfg;
             cfg.max_rounds = config.max_tool_rounds;
@@ -62,6 +63,8 @@ SubAgentResult SubAgent::execute(const SubAgentConfig& config)
             if (loop_result.timed_out) { r.timed_out = true; r.error = loop_result.error; }
             if (loop_result.loop_detected) r.error = loop_result.error;
             if (loop_result.cancelled) { r.cancelled = true; r.error = loop_result.error; }
+            // A3: 捕获轨迹摘要 — json summary() 转 string，供父 Agent 日志/调试
+            r.trace_summary = tracer_.summary().dump();
 
             // 步骤 3: 短暂持锁，批量合并 localConv → conversation_
             {

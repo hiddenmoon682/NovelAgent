@@ -12,9 +12,14 @@
 ///   2. store.init("path/to/vectors.json");
 ///   3. store.insert("ch-001-seg-0", embedding, {{"type", "chapter"}});
 ///   4. auto results = store.search(query_embedding, 5);
+///
+/// 线程安全：search/count/contains/get 支持并发读；insert/remove/update/write 互斥写。
+///           读操作使用 shared_lock，写操作使用 unique_lock，读写互斥。
 
 #include "retrieval/IVectorStore.h"
 
+#include <optional>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -23,8 +28,6 @@ namespace retrieval {
 /// 向量存储 — JSON 文件后端 + 暴力余弦相似度搜索。
 ///
 /// 实现 IVectorStore 抽象接口，API 兼容 sqlite-vec（后续替换只需修改 .cpp）。
-///
-/// 线程安全：不安全。同一实例不应并发调用。
 class VectorStore : public IVectorStore {
 public:
     VectorStore() = default;
@@ -43,55 +46,32 @@ public:
 
     /// 插入单个向量及其元数据。
     /// 若 id 已存在则覆盖。
-    /// @param id         向量唯一标识
-    /// @param embedding  浮点嵌入向量（维度由 EmbeddingGenerator 决定）
-    /// @param metadata   关联元数据（type, chapter_id, chunk_index 等）
     void insert(const std::string& id,
                 const std::vector<float>& embedding,
                 const nlohmann::json& metadata);
 
     /// 批量插入向量，比逐条 insert 更高效（只需一次文件写入）。
-    /// @param entries 向量条目列表
     void insertBatch(const std::vector<VectorEntry>& entries);
 
     /// 删除指定 ID 的向量。
-    /// @param id 向量 ID
-    /// @return    是否找到并删除了条目
     bool remove(const std::string& id);
 
     /// 更新指定 ID 的嵌入向量（保留元数据不变）。
-    /// 若 id 不存在则等同于 insert。
-    /// @param id         向量 ID
-    /// @param embedding  新的嵌入向量
     void update(const std::string& id, const std::vector<float>& embedding);
 
     // ── 搜索 ──
 
-    /// ANN 语义搜索 — 余弦相似度 Top-K。
-    ///
-    /// 当前实现：暴力遍历所有向量计算余弦相似度。
-    /// 对于万级向量规模，延迟 < 10ms。
-    ///
-    /// @param query_embedding  查询向量
-    /// @param top_k            返回最相似的前 K 条
-    /// @return                 按相似度降序排列的搜索结果
     std::vector<SearchResult> search(
         const std::vector<float>& query_embedding,
-        int top_k = 10) const;
+        int top_k = 10) const override;
 
     // ── 查询 ──
 
-    /// 返回存储中的向量总数。
-    int count() const;
+    int count() const override;
+    bool contains(const std::string& id) const override;
+    /// 获取指定 ID 的向量条目副本（线程安全，返回副本避免悬空指针）。
+    std::optional<VectorEntry> get(const std::string& id) const;
 
-    /// 检查指定 ID 的向量是否存在。
-    bool contains(const std::string& id) const;
-
-    /// 获取指定 ID 的向量条目（用于调试）。
-    /// @return 条目指针；不存在时返回 nullptr（调用方不得持有此指针超过下一次修改操作）
-    const VectorEntry* get(const std::string& id) const;
-
-    /// 将内存中的向量持久化到 JSON 文件（/index 命令结束后调用）。
     void saveToFile() const;
 
 private:
@@ -99,17 +79,14 @@ private:
     std::vector<VectorEntry> entries_;
     bool dirty_ = false;
     bool initialized_ = false;
+    mutable std::shared_mutex mutex_;  ///< 读写锁：search 等读操作共享锁，insert/remove/write 互斥锁
 
-    /// 从 JSON 文件加载所有向量到内存。
     void loadFromFile();
 
-    /// 计算两个向量的余弦相似度。
-    /// @return [0, 1] 区间内的相似度值
     static double cosineSimilarity(
         const std::vector<float>& a,
         const std::vector<float>& b);
 
-    /// 计算向量的 L2 范数。
     static double vectorNorm(const std::vector<float>& v);
 };
 

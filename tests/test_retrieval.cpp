@@ -118,8 +118,8 @@ void test_vector_store_persistence() {
         CHECK(store.contains("persist-1"));
         CHECK(store.contains("persist-2"));
 
-        auto* entry = store.get("persist-1");
-        CHECK(entry != nullptr);
+        auto entry = store.get("persist-1");
+        CHECK(entry.has_value());
         CHECK(entry->embedding.size() == 3);
         CHECK(std::abs(entry->embedding[0] - 0.1f) < 0.001f);
 
@@ -169,8 +169,8 @@ void test_vector_store_update() {
     // 更新
     store.update("up-1", {0.9f, 0.8f});
 
-    auto* entry = store.get("up-1");
-    CHECK(entry != nullptr);
+    auto entry = store.get("up-1");
+    CHECK(entry.has_value());
     CHECK(std::abs(entry->embedding[0] - 0.9f) < 0.001f);
 
     // 更新不存在的 id → 等同于 insert

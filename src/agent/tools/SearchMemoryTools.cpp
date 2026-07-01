@@ -19,14 +19,14 @@ using json = nlohmann::json;
 // 在 registry_（持有工具实例）之后析构，不会出现悬垂指针。
 // ===========================================================================
 namespace {
-    retrieval::IVectorStore*        g_vector_store   = nullptr;
-    retrieval::IEmbeddingGenerator* g_embedding_gen  = nullptr;
+    std::atomic<retrieval::IVectorStore*>        g_vector_store{nullptr};
+    std::atomic<retrieval::IEmbeddingGenerator*> g_embedding_gen{nullptr};
 } // anonymous namespace
 
 void initSearchMemoryBackend(retrieval::IVectorStore* vs,
                               retrieval::IEmbeddingGenerator* eg) {
-    g_vector_store  = vs;
-    g_embedding_gen = eg;
+    g_vector_store.store(vs, std::memory_order_release);
+    g_embedding_gen.store(eg, std::memory_order_release);
 }
 
 // ===========================================================================
@@ -59,7 +59,9 @@ json SearchMemoryTool::parameters() const {
 
 json SearchMemoryTool::execute(const json& args) {
     // ── 前置检查：后端指针 ──────────────────────────────────────────────
-    if (!g_vector_store || !g_embedding_gen) {
+    auto* vs = g_vector_store.load(std::memory_order_acquire);
+    auto* eg = g_embedding_gen.load(std::memory_order_acquire);
+    if (!vs || !eg) {
         return {{"error", "向量检索后端未初始化。请先执行 /index 命令构建索引。"}};
     }
 
@@ -77,8 +79,8 @@ json SearchMemoryTool::execute(const json& args) {
 
     // ── 生成查询向量 + 语义搜索 ──────────────────────────────────────────
     try {
-        auto query_emb = g_embedding_gen->generateEmbedding(query);
-        auto results = g_vector_store->search(query_emb, top_k);
+        auto query_emb = eg->generateEmbedding(query);
+        auto results = vs->search(query_emb, top_k);
 
         // 格式化结果：提取 id / similarity / text / chapter_id
         json arr = json::array();

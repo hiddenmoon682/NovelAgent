@@ -115,6 +115,8 @@ public:
     void reserve(size_t n) { messages_.reserve(n); }
 
     /// 截断到前 N 条消息（保留 [0, keep_count)），丢弃其余。
+    /// 注意：被截断的消息中若有 preserved 标记的消息将被静默丢弃，
+    /// 调用方（如 Agent::rewindTo）应在截断前检查并提示用户。
     void truncateTo(size_t keep_count) {
         if (keep_count < messages_.size()) messages_.resize(keep_count);
     }

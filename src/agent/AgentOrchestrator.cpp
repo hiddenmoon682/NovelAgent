@@ -32,6 +32,7 @@ std::vector<SubTask> TemplateDecomposition::decompose(
                     st.system_prompt = tmpl.system_prompt;
                     st.allowed_tools = tmpl.allowed_tools;
                     st.suggested_max_rounds = tmpl.suggested_max_rounds;
+                    st.timeout_seconds = tmpl.suggested_max_rounds * 20 + 60;  // MED-2: 根据轮数推算超时，最少 60s
                     st.status = "pending";
                     tasks.push_back(std::move(st));
                 }
@@ -115,6 +116,7 @@ std::string AgentOrchestrator::processMessage(const std::string& input)
         // D6: 累计串行回退路径的 token
         last_input_tokens_ += resp.prompt_tokens;
         last_output_tokens_ += resp.completion_tokens;
+        last_sub_tasks_.clear();  // CRIT-1: 串行路径不产生子任务，清空上次的残留
         return resp.content;
     }
 
@@ -126,11 +128,13 @@ std::string AgentOrchestrator::processMessage(const std::string& input)
         auto resp = client_->chatNonStreaming(msgs, {}, main_prompt_);
         last_input_tokens_ += resp.prompt_tokens;
         last_output_tokens_ += resp.completion_tokens;
+        last_sub_tasks_.clear();  // CRIT-1: 无子任务时清空残留
         return resp.content;
     }
 
     spdlog::info("[Orchestrator] {} 个子任务", tasks.size());
     executeParallel(tasks);
+    last_sub_tasks_ = tasks;  // CRIT-1: 保存子任务详情供 ParallelProcessor 注入对话
     auto result = synthesize(tasks);
     // D6: 汇总 LLM 调用也计入 token（LlmSynthesis 内部调 chatNonStreaming，
     // 但其 client_ 来自 AgentOrchestrator 的独立 client_ 引用，token 未直接暴露。
@@ -147,58 +151,38 @@ std::vector<SubTask> AgentOrchestrator::decompose(const std::string& input)
 
 void AgentOrchestrator::executeParallel(std::vector<SubTask>& tasks)
 {
+    // CRIT-3: 消除 O(n²) 轮询。直接提交所有任务到线程池（工作线程数 = 12 ≥ max_parallel_=4），
+    // 线程池内部自动限制并行度。全部提交后统一收集结果，避免每次 100ms 轮询遍历未来列表。
     std::vector<std::future<SubAgentResult>> futures(tasks.size());
-    std::vector<bool> consumed(tasks.size(), false);  // 追踪已被节流循环消费的 future
-    int running = 0;
 
     for (size_t i = 0; i < tasks.size(); ++i) {
-        // ── 节流控制：当并发数达到上限时，等待任一任务完成 ──
-        while (running >= max_parallel_) {
-            for (size_t j = 0; j < i; ++j) {
-                if (!consumed[j] && futures[j].valid() &&
-                    futures[j].wait_for(std::chrono::milliseconds(100)) == std::future_status::ready) {
-                    // 提前收集已完成任务的结果，避免最终循环重复 get()
-                    auto result = futures[j].get();
-                    consumed[j] = true;
-                    tasks[j].status = result.timed_out ? "timed_out" :
-                                      !result.error.empty() ? "failed" : "completed";
-                    tasks[j].result = result.output;
-                    tasks[j].error = result.error;
-                    // Issue 28: 收集子任务 token 统计
-                    last_sub_input_tokens_ += result.input_tokens;
-                    last_sub_output_tokens_ += result.output_tokens;
-                    --running; break;
-                }
-            }
-            // 避免忙等待——在轮询间隙让出 CPU
-            if (running >= max_parallel_) {
-                std::this_thread::yield();
-            }
-        }
-
-        futures[i] = std::async(std::launch::async, [this, task = tasks[i]]() {
+        auto submitTask = [this, task = tasks[i]]() -> SubAgentResult {
             SubAgentConfig config;
             config.task = task.description;
             config.system_prompt = task.system_prompt;
             config.allowed_tools = task.allowed_tools;
-            config.timeout = std::chrono::seconds(120);
+            config.timeout = std::chrono::seconds(task.timeout_seconds);  // MED-2: 从 SubTask 读取
             config.max_tool_rounds = task.suggested_max_rounds;
 
             // P0 改进：SubAgent 通过 RestrictedToolProvider 受限视图访问工具
             RestrictedToolProvider tools(registry_, task.allowed_tools);
             auto agent = agent_factory_(factory_, tools);
             return agent->execute(config);
-        });
-        ++running;
+        };
+
+        // Issue 4: 使用线程池替代 std::async，复用线程
+        futures[i] = thread_pool_->submit(submitTask);
     }
 
-    // ── 最终收集：跳过已被节流循环消费的 future ──
+    // ── 统一收集所有任务结果 ──
     for (size_t i = 0; i < futures.size(); ++i) {
-        if (consumed[i]) {
-            spdlog::info("[Orchestrator] {} {}: {} 字", tasks[i].id, tasks[i].status, tasks[i].result.size());
-            continue;
+        SubAgentResult result;
+        try {
+            result = futures[i].get();
+        } catch (const std::exception& e) {
+            spdlog::error("[Orchestrator] {} 异常: {}", tasks[i].id, e.what());
+            result.error = e.what();
         }
-        auto result = futures[i].get();
         tasks[i].status = result.timed_out ? "timed_out" :
                           !result.error.empty() ? "failed" : "completed";
         tasks[i].result = result.output;
@@ -207,6 +191,10 @@ void AgentOrchestrator::executeParallel(std::vector<SubTask>& tasks)
         last_sub_input_tokens_ += result.input_tokens;
         last_sub_output_tokens_ += result.output_tokens;
         spdlog::info("[Orchestrator] {} {}: {} 字", tasks[i].id, tasks[i].status, tasks[i].result.size());
+        // A3: 日志子任务轨迹摘要（LLM 调用数/工具调用数/错误数）
+        if (!result.trace_summary.empty() && result.trace_summary != "null") {
+            spdlog::debug("[Orchestrator] {} 轨迹: {}", tasks[i].id, result.trace_summary);
+        }
     }
 }
 

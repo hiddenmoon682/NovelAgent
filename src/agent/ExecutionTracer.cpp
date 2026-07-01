@@ -9,8 +9,9 @@
 #include <nlohmann/json.hpp>
 #include <ctime>
 #include <iomanip>
-#include <sstream>
+#include <mutex>
 #include <random>
+#include <sstream>
 
 using json = nlohmann::json;
 
@@ -146,9 +147,13 @@ std::string ExecutionTracer::generateSessionId() {
 #endif
     std::ostringstream oss;
     oss << std::put_time(&tm, "%Y%m%d-%H%M%S");
-    // 加随机后缀避免同一秒内多次会话冲突
+    // 加随机后缀避免同一秒内多次会话冲突（mutex 保护 RNG 线程安全）
     static std::mt19937 rng(static_cast<unsigned>(now));
-    oss << "-" << (rng() % 10000);
+    static std::mutex rng_mutex;
+    {
+        std::lock_guard<std::mutex> lock(rng_mutex);
+        oss << "-" << (rng() % 10000);
+    }
     return oss.str();
 }
 

@@ -106,6 +106,28 @@ void test_empty_command_blocked() {
 }
 
 // =========================================================================
+// 测试 6: 扩展白名单新增的 cmdlet 放行
+// =========================================================================
+
+void test_expanded_whitelist() {
+    TEST("扩展白名单 — 新增只读 cmdlet 放行");
+    // Get-Process / Get-Service / Get-ItemProperty / Get-Acl / Get-Member
+    CHECK(!isBlocked("Get-Process"));
+    CHECK(!isBlocked("Get-Service"));
+    CHECK(!isBlocked("Get-ItemProperty -Path .\\config.json"));
+    CHECK(!isBlocked("Get-Acl .\\file.txt"));
+    CHECK(!isBlocked("Get-Member -InputObject x"));
+    // Write-Output / Write-Host
+    CHECK(!isBlocked("Write-Output 'hello'"));
+    CHECK(!isBlocked("Write-Host 'done'"));
+    // 别名
+    CHECK(!isBlocked("ps"));        // Get-Process
+    CHECK(!isBlocked("echo hello"));
+    CHECK(!isBlocked("gp .\\path")); // Get-ItemProperty
+    PASS();
+}
+
+// =========================================================================
 
 int main() {
     std::cout << "=== test_shell_tools ===\n\n";
@@ -114,6 +136,7 @@ int main() {
     test_injection_chars_blocked();
     test_pipeline_all_segments_checked();
     test_empty_command_blocked();
+    test_expanded_whitelist();
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;
 }
