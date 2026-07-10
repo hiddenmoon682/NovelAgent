@@ -26,7 +26,7 @@
 //   或已包含 project_path_ 的绝对路径（向后兼容已有调用方）
 class FileStorageBackend {
 public:
-    // @param project_path 项目根目录路径
+    // project_path 项目根目录路径
     explicit FileStorageBackend(std::string project_path);
 
     nlohmann::json loadJson(const std::string& filePath);

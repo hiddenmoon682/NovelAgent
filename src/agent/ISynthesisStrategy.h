@@ -24,9 +24,9 @@ public:
     virtual ~ISynthesisStrategy() = default;
 
     // 汇总子任务执行结果。
-    // @param tasks          已完成的子任务列表
-    // @param original_query 用户的原始查询
-    // @return               汇总后的文本
+    // tasks          已完成的子任务列表
+    // original_query 用户的原始查询
+    // 汇总后的文本
     virtual std::string synthesize(
         const std::vector<SubTask>& tasks,
         const std::string& original_query) = 0;
@@ -36,9 +36,9 @@ public:
 // 使用 AgentOrchestrator 拥有的独立 LLMClient 引用，不与其他组件共享。
 class LlmSynthesis : public ISynthesisStrategy {
 public:
-    // @param client       LLM 客户端（来自 AgentOrchestrator 的独立实例，LlmSynthesis 不持有所有权）
-    // @param main_prompt  主 Agent 的 system prompt
-    // @param max_result_chars 每个子任务结果的最大展示字符数（默认 3000）
+    // client       LLM 客户端（来自 AgentOrchestrator 的独立实例，LlmSynthesis 不持有所有权）
+    // main_prompt  主 Agent 的 system prompt
+    // max_result_chars 每个子任务结果的最大展示字符数（默认 3000）
     LlmSynthesis(llm::ILLMClient& client, std::string main_prompt,
                  int max_result_chars = 3000);
 

@@ -44,7 +44,7 @@ public:
     ContextManager();
 
     // 构造函数注入存储后端。
-    // @param storage 文件存储后端（封装项目路径，转发 ProjectIO）
+    // storage 文件存储后端（封装项目路径，转发 ProjectIO）
     explicit ContextManager(FileStorageBackend& storage);
 
     // ================================================================

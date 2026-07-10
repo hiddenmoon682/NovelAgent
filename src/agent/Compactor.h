@@ -26,12 +26,12 @@ public:
     Compactor() = default;
 
     // 执行 LLM 驱动的对话压缩。
-    // @param conversation  当前对话历史（压缩成功后会从头部删除被压缩的消息）
-    // @param llm_client    LLM 客户端（用于生成压缩摘要）
-    // @param chapter_id    当前活跃章节 ID（用于注入项目设定参考）
-    // @param project       项目指针（用于 buildSystemPrompt，可为 nullptr）
-    // @param focus         可选压缩焦点
-    // @returns 压缩结果（摘要文本 + token 变化 + 压缩消息数）
+    // conversation  当前对话历史（压缩成功后会从头部删除被压缩的消息）
+    // llm_client    LLM 客户端（用于生成压缩摘要）
+    // chapter_id    当前活跃章节 ID（用于注入项目设定参考）
+    // project       项目指针（用于 buildSystemPrompt，可为 nullptr）
+    // focus         可选压缩焦点
+    // 压缩结果（摘要文本 + token 变化 + 压缩消息数）
     CompactResult compact(
         llm::Conversation& conversation,
         llm::ILLMClient& llm_client,

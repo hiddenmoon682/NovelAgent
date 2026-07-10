@@ -85,10 +85,10 @@ static bool isAllowedCommand(const std::string& cmd) {
 }
 
 // 使用 CreateProcess 执行命令，支持超时（Windows）。
-// @param cmd     PowerShell 命令（已通过白名单校验的安全查询命令）
-// @param output  出参：stdout 输出
-// @param timeoutMs 超时毫秒数
-// @return        进程退出码（超时时返回 -1）
+// cmd     PowerShell 命令（已通过白名单校验的安全查询命令）
+// output  出参：stdout 输出
+// timeoutMs 超时毫秒数
+// 进程退出码（超时时返回 -1）
 int execWithTimeout(const std::string& cmd, std::string& output, DWORD timeoutMs = 30000) {
 #ifdef _WIN32
     // PowerShell 命令用双引号包裹，确保含空格的文件路径等参数正确传递

@@ -41,7 +41,7 @@ struct Session {
 // 多会话管理器（线程安全）。
 class SessionManager {
 public:
-    // @param factory  LLM 客户端工厂（每个会话创建独立的 Agent/LLMClient）
+    // factory  LLM 客户端工厂（每个会话创建独立的 Agent/LLMClient）
     SessionManager(llm::LLMClientFactory& factory, agent::ToolRegistry& registry,
                    std::shared_ptr<Project> project);
 

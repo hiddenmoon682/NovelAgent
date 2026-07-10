@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-07-10] 注释清理：移除 Doxygen 标记
+
+> 移除所有 `@param`、`@return`、`@note`、`@warning`、`@brief`、`@throws` 等 Doxygen 标记，
+> 与已统一为 `//` 的注释风格保持一致。
+
+### 代码清理
+- 31 个文件中的 `@param`/`@return`/`@note`/`@warning`/`@brief`/`@throws` 标记已移除
+
 ## [2026-07-10] 注释风格统一：/// → //
 
 > 将项目中所有 `///` 注释统一替换为 `//`，消除 Doxygen 风格的多斜杠注释。

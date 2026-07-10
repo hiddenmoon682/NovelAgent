@@ -37,9 +37,9 @@ class ParameterValidator {
 public:
     // 根据 JSON Schema 校验参数。
     //
-    // @param schema      工具定义的 parameters JSON Schema
-    // @param arguments   LLM 传入的 arguments JSON
-    // @return            校验结果（valid=true 表示通过）
+    // schema      工具定义的 parameters JSON Schema
+    // arguments   LLM 传入的 arguments JSON
+    // 校验结果（valid=true 表示通过）
     static ValidationResult validate(
         const nlohmann::json& schema,
         const nlohmann::json& arguments);

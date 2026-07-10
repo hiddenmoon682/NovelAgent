@@ -31,7 +31,7 @@ public:
     }
 
     // 阻塞等待并弹出事件，超时返回 false。
-    // @param timeout_ms 最大等待毫秒数
+    // timeout_ms 最大等待毫秒数
     bool pop_wait(std::string& out, int timeout_ms) {
         std::unique_lock<std::mutex> lock(mtx_);
         if (!cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms),

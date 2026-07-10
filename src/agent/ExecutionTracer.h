@@ -50,8 +50,8 @@ public:
     int count() const { return static_cast<int>(entries_.size()); }
 
     // 保存轨迹到 .novelagent/traces/{session_id}.jsonl。
-    // @param dir_path  轨迹目录（通常是项目的 .novelagent/traces/ 目录）
-    // @return          保存的文件路径
+    // dir_path  轨迹目录（通常是项目的 .novelagent/traces/ 目录）
+    // 保存的文件路径
     std::string dump(const std::string& dir_path) const;
 
     // 汇总统计（供 /trace stats 使用）。

@@ -20,8 +20,8 @@ constexpr size_t kMaxInputLength = 65536;
 
 // 危险模式列表 — LLM prompt injection / 特殊 token 注入。
 const std::vector<std::string> kDangerousPatterns = {
-    "<|im_start|>", "<|im_end|>",         // LLM 特殊 token 注入
-    "忽略以上指令", "ignore all previous", // prompt injection
+    "<|im_start|>", "<|im_end|>",          // LLM 特殊 token 注入
+    "忽略以上指令", "ignore all previous",  // prompt injection
     "[system]", "[SYS]",                   // 伪 system 消息注入
     "<|endoftext|>",                       // GPT 系列 EOS token
 };
@@ -33,7 +33,7 @@ const std::vector<std::string> kDangerousPatterns = {
 //   2. 危险模式匹配（LLM 特殊 token 注入 / prompt injection / 伪 system 消息）
 //
 // 注意：这是尽力而为的防御，不提供绝对安全保证。
-// @return false 表示输入不合法，reason 说明具体原因。
+// false 表示输入不合法，reason 说明具体原因。
 bool validateInput(const std::string& input, std::string& reason) {
     if (input.size() > kMaxInputLength) {
         reason = "输入过长（最大 64K 字符）";

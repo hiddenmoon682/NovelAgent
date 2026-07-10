@@ -36,7 +36,7 @@ public:
     // ── 生命周期 ──
 
     // 初始化存储，打开或创建向量文件。
-    // @param db_path 向量文件的完整路径（如 .novelagent/vectors.json）
+    // db_path 向量文件的完整路径（如 .novelagent/vectors.json）
     void init(const std::string& db_path);
 
     // 关闭存储，自动保存未写入的变更。

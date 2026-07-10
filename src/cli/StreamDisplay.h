@@ -20,14 +20,14 @@
 class StreamDisplay {
 public:
     // 创建流式回调（Phase 5 增强版）。
-    // @param out      输出通道
-    // @param show_token_stats  是否显示 token 统计（默认 true）
+    // out      输出通道
+    // show_token_stats  是否显示 token 统计（默认 true）
     static llm::StreamCallbacks create(IOutputChannel& out,
                                        bool show_token_stats = true);
 
     // 创建带状态感知的回调（供 Agent 使用）。
-    // @param out          输出通道
-    // @param state_signal 状态信号（Agent 在回调中更新状态机）
+    // out          输出通道
+    // state_signal 状态信号（Agent 在回调中更新状态机）
     static llm::StreamCallbacks createWithState(
         IOutputChannel& out,
         std::function<void()> on_content_start,

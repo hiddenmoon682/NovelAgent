@@ -59,9 +59,9 @@ public:
     NovelChunker() = default;
 
     // 配置切分参数。
-    // @param min_chunk_size 最小 chunk 大小（字符数），默认 500
-    // @param max_chunk_size 最大 chunk 大小（字符数），默认 2000
-    // @param overlap_ratio  相邻 chunk 重叠比例，默认 0.15 (15%)
+    // min_chunk_size 最小 chunk 大小（字符数），默认 500
+    // max_chunk_size 最大 chunk 大小（字符数），默认 2000
+    // overlap_ratio  相邻 chunk 重叠比例，默认 0.15 (15%)
     void configure(int min_chunk_size = 500,
                    int max_chunk_size = 2000,
                    double overlap_ratio = 0.15);
@@ -73,9 +73,9 @@ public:
     // 优先按 chapter.scenes 的边界切分；
     // 若无 Scene 信息，退化为按段落/空行边界切分。
     //
-    // @param chapter          章节元数据（含 scenes[]）
-    // @param markdown_content 章节 Markdown 全文
-    // @return                 文本块列表（按章节顺序排列）
+    // chapter          章节元数据（含 scenes[]）
+    // markdown_content 章节 Markdown 全文
+    // 文本块列表（按章节顺序排列）
     std::vector<TextChunk> chunkChapter(
         const Chapter& chapter,
         const std::string& markdown_content) const;
@@ -101,9 +101,9 @@ private:
     double overlap_ratio_ = 0.15;
 
     // 将长文本按段落边界切分为 chunk 列表。
-    // @param text      输入文本
-    // @param source_id 来源 ID（用于生成 chunk id）
-    // @return          文本块列表
+    // text      输入文本
+    // source_id 来源 ID（用于生成 chunk id）
+    // 文本块列表
     std::vector<TextChunk> chunkByParagraphs(
         const std::string& text,
         const std::string& source_id) const;

@@ -49,9 +49,9 @@ public:
     // ── 状态栏 ──
 
     // 渲染状态栏：[模式] 进度 | token 用量。
-    // @param mode     当前模式（如 "Serial", "Parallel", "Plan"）
-    // @param tokens   最近一次请求的 token 用量
-    // @param extra    额外信息（如 "ch-003 写作中"）
+    // mode     当前模式（如 "Serial", "Parallel", "Plan"）
+    // tokens   最近一次请求的 token 用量
+    // extra    额外信息（如 "ch-003 写作中"）
     void renderStatusBar(const std::string& mode, int tokens, const std::string& extra = "");
 
     // ── 进度指示器 ──

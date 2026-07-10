@@ -28,9 +28,9 @@ public:
     virtual ~IIndexService() = default;
 
     // 为当前项目建立向量索引（章节/角色/设定/世界规则）。
-    // @param progress  可选进度回调，每完成一个阶段调用一次（参数为中文描述）。
+    // progress  可选进度回调，每完成一个阶段调用一次（参数为中文描述）。
     //                  为 nullptr 时不报告进度。
-    // @returns 索引结果统计，error 非空表示失败。
+    // 索引结果统计，error 非空表示失败。
     virtual IndexResult indexAll(std::function<void(const std::string&)> progress = nullptr) = 0;
 };
 

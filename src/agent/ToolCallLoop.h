@@ -57,7 +57,7 @@ class StateMachine;
 
 class ToolCallLoop {
 public:
-    // @param state 可选状态机指针（D1.1：工具执行前后触发状态转换，nullptr=不触发）
+    // state 可选状态机指针（D1.1：工具执行前后触发状态转换，nullptr=不触发）
     ToolCallLoop(llm::ILLMClient& client, IToolProvider& tools,
                  ExecutionTracer* tracer = nullptr,
                  StateMachine* state = nullptr);
@@ -68,7 +68,7 @@ public:
 
     // 执行 tool_call 循环。
     //
-    // @param initial_messages 可选的外部消息列表（通常为 ContextManager 截断后的消息）。
+    // initial_messages 可选的外部消息列表（通常为 ContextManager 截断后的消息）。
     //   首轮 LLM 调用优先使用此列表而非 conversation.messages()，
     //   确保 token 截断策略真正生效（否则截断后的消息从未被使用）。
     //   后续轮次（tool_call → tool_result 往返）仍使用 conversation.messages()

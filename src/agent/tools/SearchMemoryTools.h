@@ -44,8 +44,8 @@ public:
 // 必须在 BuiltInTool::registerAllTo() 之前调用，
 // 否则工具实例化时后端指针为空，execute() 将返回错误。
 //
-// @param vs  向量存储实例（非拥有指针，生命周期由调用方管理）
-// @param eg  嵌入生成器实例（非拥有指针，生命周期由调用方管理）
+// vs  向量存储实例（非拥有指针，生命周期由调用方管理）
+// eg  嵌入生成器实例（非拥有指针，生命周期由调用方管理）
 void initSearchMemoryBackend(retrieval::IVectorStore* vs,
                               retrieval::IEmbeddingGenerator* eg);
 

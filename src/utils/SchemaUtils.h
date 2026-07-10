@@ -20,8 +20,8 @@
 namespace utils::schema {
 
 // 构造 object 类型的 JSON Schema 根节点。
-// @param properties  属性名 → 属性 schema 的键值对列表（保持插入顺序）
-// @param required    必填字段名列表（可选）
+// properties  属性名 → 属性 schema 的键值对列表（保持插入顺序）
+// required    必填字段名列表（可选）
 inline nlohmann::json object(
     std::vector<std::pair<std::string, nlohmann::json>> properties,
     std::vector<std::string> required = {},

@@ -11,9 +11,9 @@
 namespace llm::test {
 
 // 构造文本增量 SSE chunk（OpenAI 流式 delta 格式）。
-// @param content  文本增量内容
-// @param id       响应 ID（首个 chunk 携带）
-// @param model    模型名
+// content  文本增量内容
+// id       响应 ID（首个 chunk 携带）
+// model    模型名
 inline std::string sseContentChunk(const std::string& content,
                                    const std::string& id = "test-id",
                                    const std::string& model = "test") {
@@ -30,7 +30,7 @@ inline std::string sseContentChunk(const std::string& content,
 }
 
 // 构造流结束 SSE chunk（携带 finish_reason + usage）。
-// @param reason  结束原因，如 "stop" / "length" / "tool_calls"
+// reason  结束原因，如 "stop" / "length" / "tool_calls"
 inline std::string sseFinishChunk(const std::string& reason = "stop") {
     using json = nlohmann::json;
     json j;
@@ -56,10 +56,10 @@ constexpr const char* sseDone = "data: [DONE]\n\n";
 // - chunk 0（首次）：携带 index + id + type + function.name，arguments 为空
 // - chunk 1+：仅携带 index + arguments 增量片段
 //
-// @param index       tool_call 在数组中的索引
-// @param call_id     工具调用唯一 ID
-// @param func_name   函数名
-// @param arguments   JSON 参数的增量片段
+// index       tool_call 在数组中的索引
+// call_id     工具调用唯一 ID
+// func_name   函数名
+// arguments   JSON 参数的增量片段
 inline std::string sseToolCallChunk(int index,
                                     const std::string& call_id,
                                     const std::string& func_name,

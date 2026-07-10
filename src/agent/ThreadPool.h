@@ -26,7 +26,7 @@ namespace agent {
 
 class ThreadPool {
 public:
-    // @param num_threads  工作线程数（默认 12，上限 32）
+    // num_threads  工作线程数（默认 12，上限 32）
     explicit ThreadPool(size_t num_threads = 12)
         : stop_(false)
     {

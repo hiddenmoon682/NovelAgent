@@ -23,10 +23,10 @@ struct Project;
 // 消除 ReplHandler → NovelAgentApp* 的反向依赖。
 class NovelAgentApp : public agent::IIndexService {
 public:
-    // @param provider  LLM Provider 配置
-    // @param project   已打开的小说项目
-    // @param out       输出通道（默认=控制台）
-    // @param disabledTools  禁用的工具名列表（空=全部启用）
+    // provider  LLM Provider 配置
+    // project   已打开的小说项目
+    // out       输出通道（默认=控制台）
+    // disabledTools  禁用的工具名列表（空=全部启用）
     NovelAgentApp(const ProviderConfig& provider, std::shared_ptr<Project> project,
                   IOutputChannel* out = nullptr,
                   std::vector<std::string> disabledTools = {});

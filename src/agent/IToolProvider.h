@@ -31,9 +31,9 @@ public:
     virtual std::vector<llm::ToolDefinition> getDefinitions() const = 0;
 
     // 执行指定工具。
-    // @param name  工具名称
-    // @param args  调用参数 JSON
-    // @return      执行结果 JSON
+    // name  工具名称
+    // args  调用参数 JSON
+    // 执行结果 JSON
     virtual nlohmann::json execute(const std::string& name,
                                     const nlohmann::json& args) = 0;
 
@@ -47,8 +47,8 @@ public:
 // 也无法执行白名单之外的工具。
 class RestrictedToolProvider : public IToolProvider {
 public:
-    // @param registry     底层完整 ToolRegistry
-    // @param allowed_names 允许的工具名列表（白名单）
+    // registry     底层完整 ToolRegistry
+    // allowed_names 允许的工具名列表（白名单）
     RestrictedToolProvider(ToolRegistry& registry,
                            std::vector<std::string> allowed_names);
 

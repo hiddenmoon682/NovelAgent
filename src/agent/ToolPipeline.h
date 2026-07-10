@@ -18,8 +18,8 @@ public:
     static constexpr size_t kMaxResultChars = 65536;   //  工具结果总字符上限（64KB）
     static constexpr size_t kMaxContentChars = 56000;  //  content 字段字符上限（A15：JSON 对象层面截断，确保 LLM 拿到合法 JSON）
 
-    // @param tools     工具提供者（ToolRegistry 或 RestrictedToolProvider）
-    // @param conv      对话历史（仅 executeAndAppend 使用；execute() 不需要）
+    // tools     工具提供者（ToolRegistry 或 RestrictedToolProvider）
+    // conv      对话历史（仅 executeAndAppend 使用；execute() 不需要）
     ToolPipeline(IToolProvider& tools, llm::Conversation& conv)
         : tools_(tools), conversation_(&conv) {}
     // 仅执行工具，不持有 Conversation 引用（供 SubAgent 本地隔离使用）。

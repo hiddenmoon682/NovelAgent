@@ -29,7 +29,18 @@ constexpr const char* kCompactSystemPrompt =
     "\n"
     "总长度控制在 2000 字以内，事实与风格的比例由你判断。";
 
-// 构建项目设定参考文本（截断到 1200 字节）。
+// 构建项目设定参考文本，供 compaction 时附加到 LLM 请求中。
+// 目的是让压缩器在生成摘要时能正确识别当前章节的角色、设定、世界规则等人称指代，
+// 避免因缺少上下文而导致摘要中人物指代混乱或情节事实失真。
+//
+// 流程：
+//   1. 通过 PromptContextBuilder 获取当前章节的项目上下文（角色/设定/规则等）
+//   2. 将渲染后的提示文本截断到 1200 字节（保留最核心信息，避免挤占压缩空间）
+//   3. 截断时按 UTF-8 字符边界对齐，不会切断多字节中文字符
+//
+// project    项目数据（可能为 nullptr，此时返回空串）
+// chapter_id 当前章节 ID，用于提取相关上下文
+// 截断后的项目设定参考文本，UTF-8 安全截断
 std::string buildProjectRef(const Project* project, const std::string& chapter_id) {
     if (!project) return {};
     prompt::PromptContextOptions options;
@@ -38,6 +49,7 @@ std::string buildProjectRef(const Project* project, const std::string& chapter_i
     auto ctx = prompt::PromptContextBuilder::buildForChapter(*project, options);
     if (!ctx) return {};
     std::string text = ctx->rendered_prompt;
+    // 截断到 1200 字节，确保按 UTF-8 字符边界对齐
     if (text.size() > 1200) {
         size_t trunc_len = 1200;
         while (trunc_len > 0 && (static_cast<unsigned char>(text[trunc_len]) & 0xC0) == 0x80) {

@@ -34,11 +34,11 @@ public:
     // ================================================================
 
     // 注册函数式工具（轻量、无状态）。
-    // @param name         工具名称（与 LLM function calling name 一致）
-    // @param description  工具功能描述
-    // @param parameters   参数 JSON Schema
-    // @param category     工具类别
-    // @param fn           执行回调：接收 args JSON，返回 result JSON
+    // name         工具名称（与 LLM function calling name 一致）
+    // description  工具功能描述
+    // parameters   参数 JSON Schema
+    // category     工具类别
+    // fn           执行回调：接收 args JSON，返回 result JSON
     void registerTool(std::string name,
                       std::string description,
                       const nlohmann::json& parameters,
@@ -67,9 +67,9 @@ public:
     // ================================================================
 
     // 执行指定工具。
-    // @param name  工具名称
-    // @param args  调用参数（LLM 传来的 arguments JSON）
-    // @return      工具执行结果 JSON
+    // name  工具名称
+    // args  调用参数（LLM 传来的 arguments JSON）
+    // 工具执行结果 JSON
     //              若工具不存在，返回 {"error": "..."}
     //              若执行抛异常，返回 {"error": "..."}
     nlohmann::json executeTool(const std::string& name,

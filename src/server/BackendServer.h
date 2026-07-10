@@ -41,7 +41,7 @@ struct ServerConfig {
 
 class BackendServer {
 public:
-    // @param factory  LLM 客户端工厂（用于创建临时 Agent 和会话的独立客户端）
+    // factory  LLM 客户端工厂（用于创建临时 Agent 和会话的独立客户端）
     BackendServer(llm::LLMClientFactory& factory, agent::ToolRegistry& registry,
                   std::shared_ptr<Project> project, const ServerConfig& config);
     ~BackendServer();

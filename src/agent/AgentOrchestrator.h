@@ -89,7 +89,7 @@ inline auto defaultSubAgentFactory() {
 
 class AgentOrchestrator {
 public:
-    // @param factory  LLM 客户端工厂（用于创建编排器自身及子 Agent 的独立客户端）
+    // factory  LLM 客户端工厂（用于创建编排器自身及子 Agent 的独立客户端）
     AgentOrchestrator(llm::LLMClientFactory& factory, ToolRegistry& registry,
                       std::string mainPrompt = "");
     ~AgentOrchestrator();

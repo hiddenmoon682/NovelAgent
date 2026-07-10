@@ -43,10 +43,10 @@ public:
 
     // 发送 POST JSON 请求，自动重试，返回解析后的 JSON 响应体。
     //
-    // @param path  API 路径（如 "/v1/chat/completions"）
-    // @param body  请求体 JSON
-    // @return      API 返回的 JSON（HTTP 200 的 body）
-    // @throws std::runtime_error 网络错误、API 错误、JSON 解析错误
+    // path  API 路径（如 "/v1/chat/completions"）
+    // body  请求体 JSON
+    // API 返回的 JSON（HTTP 200 的 body）
+    // std::runtime_error 网络错误、API 错误、JSON 解析错误
     nlohmann::json post(const std::string& path,
                         const nlohmann::json& body);
 
@@ -54,10 +54,10 @@ public:
 
     // 发送流式 POST 请求（通过 content_receiver 接收增量数据）。
     //
-    // @param path             API 路径
-    // @param body             请求体 JSON 字符串
-    // @param content_receiver 接收流式数据的回调
-    // @return                 HTTP 响应结果（调用方检查 res.error() 和 res->status）
+    // path             API 路径
+    // body             请求体 JSON 字符串
+    // content_receiver 接收流式数据的回调
+    // HTTP 响应结果（调用方检查 res.error() 和 res->status）
     httplib::Result postStreaming(
         const std::string& path,
         const std::string& body,
