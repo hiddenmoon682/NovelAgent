@@ -206,7 +206,6 @@ std::string SerialProcessor::buildEffectivePrompt(
     // assemble() 内部根据 max_context_tokens_ 做消息裁剪和警告生成，
     // 警告通过 ContextManager::lastWarnings() 传递到 Agent → REPL 展示。
     // 返回组装后的消息列表和附加的系统提示词。
-    // TODO 上下文压缩问题
     auto assembly = context_manager_->assemble(conversation, max_context_tokens_);
     out_messages = std::move(assembly.messages);
 
