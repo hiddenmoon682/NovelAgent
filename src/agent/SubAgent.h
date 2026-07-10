@@ -41,11 +41,11 @@ struct SubAgentConfig {
 struct SubAgentResult {
     std::string output;
     bool timed_out = false;
-    bool cancelled = false;        //< Issue 26: 外部取消信号触发
+    bool cancelled = false;        //  Issue 26: 外部取消信号触发
     std::string error;
-    int input_tokens = 0;          //< Issue 28: 子任务 LLM 调用的输入 token 数
-    int output_tokens = 0;         //< Issue 28: 子任务 LLM 调用的输出 token 数
-    std::string trace_summary;     //< A3: 子任务执行轨迹摘要（JSON 字符串），供父 Agent 日志/调试使用
+    int input_tokens = 0;          //  Issue 28: 子任务 LLM 调用的输入 token 数
+    int output_tokens = 0;         //  Issue 28: 子任务 LLM 调用的输出 token 数
+    std::string trace_summary;     //  A3: 子任务执行轨迹摘要（JSON 字符串），供父 Agent 日志/调试使用
 };
 
 // 子 Agent — 拥有独立的 LLMClient 实例，实现线程隔离。

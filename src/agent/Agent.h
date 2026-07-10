@@ -138,15 +138,15 @@ public:
     ToolRegistry& registry() { return registry_; }
 
 private:
-    llm::LLMClientFactory& factory_;                //< LLM 客户端工厂，供 useParallelProcessor 创建子 Agent 时传递给编排器
-    std::unique_ptr<llm::ILLMClient> client_;       //< Agent 自己的独立 LLMClient，通过 factory_ 创建，确保 HTTP 连接隔离
-    ToolRegistry& registry_;                        //< 工具注册表，维护所有可用工具的定义和查找
-    llm::Conversation conversation_;                //< 对话历史（Message 列表），每次 processUserMessage 自动追加
-    std::string system_prompt_;                     //< 系统提示词，设定 Agent 行为边界和写作风格
-    int max_tool_rounds_ = 10;                      //< 单次用户消息的最大工具调用轮数，防止无限循环
-    ContextManager* context_manager_ = nullptr;     //< 上下文管理器（非拥有指针），管理知识库检索和动态上下文注入
-    int max_context_tokens_ = 131072;               //< 每次请求的最大上下文 token 数（应用层预算上限），用于截断对话历史
-    std::unique_ptr<IMessageProcessor> processor_;  //< 消息处理策略（串行/并行），决定多轮 tool_call 的执行模式
+    llm::LLMClientFactory& factory_;                //  LLM 客户端工厂，供 useParallelProcessor 创建子 Agent 时传递给编排器
+    std::unique_ptr<llm::ILLMClient> client_;       //  Agent 自己的独立 LLMClient，通过 factory_ 创建，确保 HTTP 连接隔离
+    ToolRegistry& registry_;                        //  工具注册表，维护所有可用工具的定义和查找
+    llm::Conversation conversation_;                //  对话历史（Message 列表），每次 processUserMessage 自动追加
+    std::string system_prompt_;                     //  系统提示词，设定 Agent 行为边界和写作风格
+    int max_tool_rounds_ = 10;                      //  单次用户消息的最大工具调用轮数，防止无限循环
+    ContextManager* context_manager_ = nullptr;     //  上下文管理器（非拥有指针），管理知识库检索和动态上下文注入
+    int max_context_tokens_ = 131072;               //  每次请求的最大上下文 token 数（应用层预算上限），用于截断对话历史
+    std::unique_ptr<IMessageProcessor> processor_;  //  消息处理策略（串行/并行），决定多轮 tool_call 的执行模式
 
     // Fix #3: 执行轨迹记录器 — 自动记录每次 LLM 调用、工具执行和状态转换的详细轨迹
     ExecutionTracer tracer_;
@@ -155,7 +155,7 @@ private:
     StateMachine state_;
 
     // ── 章节边界检测 ──
-    std::string last_chapter_id_;               //< 上一轮检测到的活跃章节 ID
+    std::string last_chapter_id_;               //  上一轮检测到的活跃章节 ID
     // 章节边界自动 compact。
     //
     // 在 LLM 响应返回后检查 tool_calls 中是否包含 create_chapter 或 read_chapter，

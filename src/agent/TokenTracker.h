@@ -72,7 +72,7 @@ public:
 
 private:
     SessionTokenState state_;
-    int current_context_size_ = 0;  //< 最后一次请求的实际上下文 token 数
+    int current_context_size_ = 0;  //  最后一次请求的实际上下文 token 数
 };
 
 } // namespace agent

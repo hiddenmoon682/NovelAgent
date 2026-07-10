@@ -79,7 +79,7 @@ private:
     std::vector<VectorEntry> entries_;
     bool dirty_ = false;
     bool initialized_ = false;
-    mutable std::shared_mutex mutex_;  //< 读写锁：search 等读操作共享锁，insert/remove/write 互斥锁
+    mutable std::shared_mutex mutex_;  //  读写锁：search 等读操作共享锁，insert/remove/write 互斥锁
 
     void loadFromFile();
 

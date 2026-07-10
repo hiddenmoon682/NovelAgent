@@ -9,9 +9,9 @@ namespace llm {
 // Issue 2: 对话修改的批量描述 — 将多次 add/pin/truncate 合并为一次原子操作。
 // 生产者（ToolPipeline/SubAgent）返回 diff，消费者（Conversation）统一 apply。
 struct ConversationDiff {
-    std::vector<Message> added;          //< 按顺序追加的消息
-    std::vector<size_t> pinned_indices;  //< 需 pin 的消息索引（相对于 apply 前状态）
-    bool retryable = false;              //< 错误是否可重试（由 ToolPipeline 设置）
+    std::vector<Message> added;          //  按顺序追加的消息
+    std::vector<size_t> pinned_indices;  //  需 pin 的消息索引（相对于 apply 前状态）
+    bool retryable = false;              //  错误是否可重试（由 ToolPipeline 设置）
 };
 
 // 对话历史管理器 — 封装消息列表的便捷操作。

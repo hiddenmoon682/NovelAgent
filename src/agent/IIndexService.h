@@ -17,7 +17,7 @@ struct IndexResult {
     int settings = 0;
     int world_rules = 0;
     int total_chunks = 0;
-    std::string error;           //< 空 = 成功，非空 = 失败原因
+    std::string error;           //  空 = 成功，非空 = 失败原因
 
     bool ok() const { return error.empty() && total_chunks > 0; }
 };

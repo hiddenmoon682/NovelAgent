@@ -44,12 +44,12 @@ struct ToolCallLoopConfig {
 struct ToolCallLoopResult {
     llm::LLMResponse response;
     bool timed_out = false;
-    bool cancelled = false;            //< Issue 21+26: 外部取消信号触发
+    bool cancelled = false;            //  Issue 21+26: 外部取消信号触发
     std::string error;
     int rounds_executed = 0;
     int total_tokens_used = 0;
-    int input_tokens = 0;          //< 累计 prompt_tokens（所有轮次），供 ContextManager::recordUsage 使用
-    int output_tokens = 0;         //< 累计 completion_tokens（所有轮次），供 ContextManager::recordUsage 使用
+    int input_tokens = 0;          //  累计 prompt_tokens（所有轮次），供 ContextManager::recordUsage 使用
+    int output_tokens = 0;         //  累计 completion_tokens（所有轮次），供 ContextManager::recordUsage 使用
     bool loop_detected = false;
 };
 

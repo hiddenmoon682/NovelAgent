@@ -192,8 +192,8 @@ private:
     std::string current_chapter_id_;
 
     // ── 会话级状态（精简后）──
-    std::vector<std::string> last_warnings_;  //< 最后一次 assemble() 的警告缓存
-    int last_truncated_count_ = 0;            //< 最后一次 assemble() 的截断数
+    std::vector<std::string> last_warnings_;  //  最后一次 assemble() 的警告缓存
+    int last_truncated_count_ = 0;            //  最后一次 assemble() 的截断数
 
     // ── 向量检索后端（非拥有）──
     retrieval::IVectorStore* vector_store_ = nullptr;
