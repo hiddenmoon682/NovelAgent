@@ -56,15 +56,15 @@ public:
 
     using Factory = std::function<std::unique_ptr<BuiltInTool>(std::shared_ptr<Project>)>;
 
-    /// 注册工具工厂（由 REGISTER_TOOL 宏调用）
+    // 注册工具工厂（由 REGISTER_TOOL 宏调用）
     static void registerFactory(std::string name, Factory factory);
 
-    /// 将所有已注册工具实例化并添加到 ToolRegistry
+    // 将所有已注册工具实例化并添加到 ToolRegistry
     static void registerAllTo(class ToolRegistry& registry,
                                std::shared_ptr<Project> project,
                                const std::vector<std::string>& disabled = {});
 
-    /// 列出所有已注册的工具名
+    // 列出所有已注册的工具名
     static const std::vector<std::string>& registeredToolNames();
 
 private:
@@ -74,18 +74,18 @@ private:
 
 } // namespace agent
 
-/// 在工具 .cpp 文件中使用此宏实现自注册。
-/// 示例: REGISTER_TOOL(ReadChapterTool, "read_chapter", read_chapter)
-///
-/// ⚠️ 静态初始化顺序限制（Issue 19）：
-/// 此宏在文件作用域创建 static const bool 变量，利用 C++ 动态初始化阶段
-/// （main() 之前）执行 lambda 完成注册。不同编译单元（.cpp 文件）之间的
-/// 动态初始化顺序是未定义的（C++ 标准 3.6.2）。
-///
-/// 因此工具构造函数 **不得** 依赖其他工具已注册的状态（如调用
-/// BuiltInTool::registeredToolNames() 查找其他工具）。当前所有工具
-/// 构造函数仅接受 std::shared_ptr<Project> 参数，无交叉依赖，安全。
-/// 未来新增工具时请保持此约束。
+// 在工具 .cpp 文件中使用此宏实现自注册。
+// 示例: REGISTER_TOOL(ReadChapterTool, "read_chapter", read_chapter)
+//
+// ⚠️ 静态初始化顺序限制（Issue 19）：
+// 此宏在文件作用域创建 static const bool 变量，利用 C++ 动态初始化阶段
+// （main() 之前）执行 lambda 完成注册。不同编译单元（.cpp 文件）之间的
+// 动态初始化顺序是未定义的（C++ 标准 3.6.2）。
+//
+// 因此工具构造函数 **不得** 依赖其他工具已注册的状态（如调用
+// BuiltInTool::registeredToolNames() 查找其他工具）。当前所有工具
+// 构造函数仅接受 std::shared_ptr<Project> 参数，无交叉依赖，安全。
+// 未来新增工具时请保持此约束。
 #define REGISTER_TOOL(ToolClass, toolName, varSuffix) \
     namespace { \
         static const bool _reg_##varSuffix = []() { \

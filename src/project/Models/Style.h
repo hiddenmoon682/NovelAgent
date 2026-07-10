@@ -1,6 +1,6 @@
 #pragma once
 
-/// Style — 写作风格配置。
+// Style — 写作风格配置。
 
 #include "project/Models/ModelDetail.h"
 

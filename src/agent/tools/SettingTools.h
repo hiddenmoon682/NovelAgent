@@ -4,7 +4,7 @@
 
 namespace agent {
 
-/// 查询单个设定。
+// 查询单个设定。
 class GetSettingTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -16,7 +16,7 @@ public:
     ToolCategory category() const override { return ToolCategory::Setting; }
 };
 
-/// 列出所有设定摘要。
+// 列出所有设定摘要。
 class ListSettingsTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -28,7 +28,7 @@ public:
     ToolCategory category() const override { return ToolCategory::Setting; }
 };
 
-/// 更新设定字段。
+// 更新设定字段。
 class UpdateSettingTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -40,8 +40,8 @@ public:
     ToolCategory category() const override { return ToolCategory::Setting; }
 };
 
-/// 创建新的世界观设定。
-/// 参数: name (string, required), category/description/story_function/... (string, optional)
+// 创建新的世界观设定。
+// 参数: name (string, required), category/description/story_function/... (string, optional)
 class CreateSettingTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -56,7 +56,7 @@ public:
     ToolCategory category() const override { return ToolCategory::Setting; }
 };
 
-/// 删除指定设定，并级联清理引用（Chapter/Scene/PlotThread/WorldRule/Setting 中对该 ID 的引用）。
+// 删除指定设定，并级联清理引用（Chapter/Scene/PlotThread/WorldRule/Setting 中对该 ID 的引用）。
 class DeleteSettingTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:

@@ -16,7 +16,7 @@ using json = nlohmann::json;
 
 namespace {
 
-/// 按 ID 查找角色
+// 按 ID 查找角色
 Character* findCharacter(std::vector<Character>& chars, const std::string& id) {
     auto it = std::find_if(chars.begin(), chars.end(),
         [&](const Character& c) { return c.id == id; });
@@ -192,14 +192,14 @@ json UpdateCharacterTool::parameters() const {
     }, {"character_id", "fields"});
 }
 
-/// 支持的 Character 字符串字段名列表（用于安全校验和赋值）
+// 支持的 Character 字符串字段名列表（用于安全校验和赋值）
 static const std::set<std::string> kUpdatableStringFields = {
     "name", "role", "age", "appearance", "personality", "background",
     "goal", "motivation", "internal_conflict", "external_conflict",
     "secret", "fear", "misbelief", "speaking_style", "arc", "notes"
 };
 
-/// 支持的字符串数组字段
+// 支持的字符串数组字段
 static const std::set<std::string> kUpdatableArrayFields = {
     "traits", "core_values", "taboos", "chapter_appearances"
 };

@@ -4,7 +4,7 @@
 
 namespace agent {
 
-/// 查询单个世界规则。
+// 查询单个世界规则。
 class GetWorldRuleTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -16,7 +16,7 @@ public:
     ToolCategory category() const override { return ToolCategory::WorldRule; }
 };
 
-/// 列出所有世界规则摘要。
+// 列出所有世界规则摘要。
 class ListWorldRulesTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -28,7 +28,7 @@ public:
     ToolCategory category() const override { return ToolCategory::WorldRule; }
 };
 
-/// 更新世界规则字段。
+// 更新世界规则字段。
 class UpdateWorldRuleTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -40,8 +40,8 @@ public:
     ToolCategory category() const override { return ToolCategory::WorldRule; }
 };
 
-/// 创建新的世界规则。
-/// 参数: name (string, required), summary/limitations/costs/... (string, optional)
+// 创建新的世界规则。
+// 参数: name (string, required), summary/limitations/costs/... (string, optional)
 class CreateWorldRuleTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -56,7 +56,7 @@ public:
     ToolCategory category() const override { return ToolCategory::WorldRule; }
 };
 
-/// 删除指定世界规则，并级联清理 Setting 中对该规则 ID 的引用。
+// 删除指定世界规则，并级联清理 Setting 中对该规则 ID 的引用。
 class DeleteWorldRuleTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:

@@ -13,7 +13,7 @@ namespace fu = utils::file;
 namespace su = utils::string;
 namespace fs = std::filesystem;
 
-/// 将路径解析为绝对路径（处理 MSYS2 /tmp→Windows Temp 等转换）。
+// 将路径解析为绝对路径（处理 MSYS2 /tmp→Windows Temp 等转换）。
 static std::string resolvePath(const std::string& raw) {
     try {
         return fs::absolute(fs::path(raw)).string();

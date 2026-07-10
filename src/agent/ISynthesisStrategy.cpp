@@ -1,4 +1,4 @@
-/// ISynthesisStrategy 实现。
+// ISynthesisStrategy 实现。
 
 #include "agent/ISynthesisStrategy.h"
 #include "llm/ILLMClient.h"

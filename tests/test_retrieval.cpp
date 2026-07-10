@@ -24,12 +24,12 @@ static int tests_passed = 0;
 // 辅助
 // =========================================================================
 
-/// 生成简单的测试向量（所有分量相同）
+// 生成简单的测试向量（所有分量相同）
 static std::vector<float> makeVec(int dim, float val) {
     return std::vector<float>(dim, val);
 }
 
-/// 清理临时文件
+// 清理临时文件
 static void cleanup(const std::string& path) {
     if (utils::file::exists(path)) {
         utils::file::removeFile(path);

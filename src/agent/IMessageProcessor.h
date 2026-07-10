@@ -1,9 +1,9 @@
 #pragma once
 
-/// 消息处理器抽象接口 — 解耦 Agent 的串行/并行/规划模式分发。
-///
-/// 架构改进（P1）：消除 Agent::processUserMessage() 中的硬编码 if-else 分支。
-/// 新增处理模式（如"先规划再执行"）只需实现此接口并注入，不需修改 Agent。
+// 消息处理器抽象接口 — 解耦 Agent 的串行/并行/规划模式分发。
+//
+// 架构改进（P1）：消除 Agent::processUserMessage() 中的硬编码 if-else 分支。
+// 新增处理模式（如"先规划再执行"）只需实现此接口并注入，不需修改 Agent。
 
 #include "llm/Conversation.h"
 #include "llm/ILLMClient.h"
@@ -22,30 +22,30 @@ class ToolCallLoop;
 class ToolRegistry;
 class AgentOrchestrator;
 
-/// 消息处理器抽象接口。
+// 消息处理器抽象接口。
 class IMessageProcessor {
 public:
     virtual ~IMessageProcessor() = default;
 
-    /// Fix #3: 运行时更新 system prompt（避免 Agent::setSystemPrompt 的 dynamic_cast）。
+    // Fix #3: 运行时更新 system prompt（避免 Agent::setSystemPrompt 的 dynamic_cast）。
     virtual void setSystemPrompt(const std::string& prompt) = 0;
 
-    /// 统一配置接口 — 消除 Agent 中的 dynamic_cast 向下转型。
-    /// 新增 Processor 类型只需 override 相关方法，不需修改 Agent 代码。
-    /// 默认实现为空操作，子类按需覆盖。
+    // 统一配置接口 — 消除 Agent 中的 dynamic_cast 向下转型。
+    // 新增 Processor 类型只需 override 相关方法，不需修改 Agent 代码。
+    // 默认实现为空操作，子类按需覆盖。
 
-    /// 设置上下文管理器（可选）。
+    // 设置上下文管理器（可选）。
     virtual void setContextManager(class ContextManager* /*cm*/) {}
-    /// 设置每次请求的最大上下文 token 数。
+    // 设置每次请求的最大上下文 token 数。
     virtual void setMaxContextTokens(int /*tokens*/) {}
-    /// 设置单次请求的最大工具调用轮数。
+    // 设置单次请求的最大工具调用轮数。
     virtual void setMaxToolRounds(int /*n*/) {}
-    /// 设置执行轨迹记录器。
+    // 设置执行轨迹记录器。
     virtual void setTracer(class ExecutionTracer* /*t*/) {}
-    /// 设置状态机。
+    // 设置状态机。
     virtual void setStateMachine(class StateMachine* /*s*/) {}
 
-    /// 处理用户消息，返回 LLM 的最终回复文本。
+    // 处理用户消息，返回 LLM 的最终回复文本。
     struct Result {
         std::string text;
         llm::LLMResponse raw_response;
@@ -56,11 +56,11 @@ public:
         llm::StreamCallbacks callbacks) = 0;
 };
 
-/// 串行处理器 — 标准 tool call 循环模式（默认）。
-/// 使用父 Agent 拥有的 LLMClient 引用，自身不持有所有权。
+// 串行处理器 — 标准 tool call 循环模式（默认）。
+// 使用父 Agent 拥有的 LLMClient 引用，自身不持有所有权。
 class SerialProcessor : public IMessageProcessor {
 public:
-    /// @param client  父 Agent 的 LLMClient 引用（SerialProcessor 不持有所有权）
+    // @param client  父 Agent 的 LLMClient 引用（SerialProcessor 不持有所有权）
     SerialProcessor(llm::ILLMClient& client, ToolRegistry& registry,
                     std::string system_prompt);
 
@@ -68,7 +68,7 @@ public:
                    llm::Conversation& conversation,
                    llm::StreamCallbacks callbacks) override;
 
-    /// 设置上下文管理器（可选）。
+    // 设置上下文管理器（可选）。
     void setContextManager(class ContextManager* cm) override { context_manager_ = cm; }
     void setMaxContextTokens(int tokens) override { max_context_tokens_ = tokens; }
     void setMaxToolRounds(int n) override { max_tool_rounds_ = n; }
@@ -79,48 +79,48 @@ public:
     void setSystemPrompt(const std::string& p) override { system_prompt_ = p; }
 
 private:
-    /// LLM 客户端引用（由父 Agent 创建，本对象不持有所有权）。
-    /// 负责所有与 LLM API 的通信（chat/completions 接口）。
+    // LLM 客户端引用（由父 Agent 创建，本对象不持有所有权）。
+    // 负责所有与 LLM API 的通信（chat/completions 接口）。
     llm::ILLMClient& client_;
 
-    /// 工具注册表引用（由父 Agent 注入）。
-    /// 包含所有已注册的工具定义及其实现；tool_call 循环从中查找并执行工具。
+    // 工具注册表引用（由父 Agent 注入）。
+    // 包含所有已注册的工具定义及其实现；tool_call 循环从中查找并执行工具。
     ToolRegistry& registry_;
 
-    /// 系统提示词 — 设定 LLM 的角色和行为准则。
-    /// 在 process() 中会和 ContextManager 提供的动态上下文拼接成最终版 system prompt。
+    // 系统提示词 — 设定 LLM 的角色和行为准则。
+    // 在 process() 中会和 ContextManager 提供的动态上下文拼接成最终版 system prompt。
     std::string system_prompt_;
 
-    /// 上下文管理器（可选指针，允许为 nullptr）。
-    /// 负责处理 RAG 检索、对话历史摘要、滑动窗口等动态上下文策略。
-    /// 为 buildEffectivePrompt() 提供额外的系统级上下文。
+    // 上下文管理器（可选指针，允许为 nullptr）。
+    // 负责处理 RAG 检索、对话历史摘要、滑动窗口等动态上下文策略。
+    // 为 buildEffectivePrompt() 提供额外的系统级上下文。
     class ContextManager* context_manager_ = nullptr;
 
-    /// 每次请求的最大上下文 token 数（应用层预算上限），默认 131072（128K）。
-    /// 用于 ContextManager 做消息裁剪，避免超出用户设定的成本上限。
+    // 每次请求的最大上下文 token 数（应用层预算上限），默认 131072（128K）。
+    // 用于 ContextManager 做消息裁剪，避免超出用户设定的成本上限。
     int max_context_tokens_ = 131072;
 
-    /// 单轮用户请求的最大 tool_call 轮数，默认 10 轮。
-    /// 防止 LLM 陷入无限 tool_call 循环；达到上限后强制返回已有结果。
+    // 单轮用户请求的最大 tool_call 轮数，默认 10 轮。
+    // 防止 LLM 陷入无限 tool_call 循环；达到上限后强制返回已有结果。
     int max_tool_rounds_ = 10;
 
-    /// 执行轨迹记录器（可选指针，允许为 nullptr）。
-    /// 记录每次 process() 的执行耗时、token 消耗等指标，用于性能监控和调试。
+    // 执行轨迹记录器（可选指针，允许为 nullptr）。
+    // 记录每次 process() 的执行耗时、token 消耗等指标，用于性能监控和调试。
     class ExecutionTracer* tracer_ = nullptr;  // Fix #3
     class StateMachine* state_ = nullptr;       // D1.1
 
-    /// 构建最终发给 LLM 的系统提示词。
-    /// 将固定 system_prompt_ 与 ContextManager 提供的动态上下文拼接，
-    /// 同时将辅助消息（如工具调用结果摘要）填充到 out_messages 中一并发送。
+    // 构建最终发给 LLM 的系统提示词。
+    // 将固定 system_prompt_ 与 ContextManager 提供的动态上下文拼接，
+    // 同时将辅助消息（如工具调用结果摘要）填充到 out_messages 中一并发送。
     std::string buildEffectivePrompt(
         const llm::Conversation& conversation,
         std::vector<llm::Message>& out_messages);
 };
 
-/// 并行处理器 — 委托 AgentOrchestrator 做并行编排。
+// 并行处理器 — 委托 AgentOrchestrator 做并行编排。
 class ParallelProcessor : public IMessageProcessor {
 public:
-    /// @param factory  LLM 客户端工厂（传递给 AgentOrchestrator 用于创建独立客户端）
+    // @param factory  LLM 客户端工厂（传递给 AgentOrchestrator 用于创建独立客户端）
     ParallelProcessor(llm::LLMClientFactory& factory, ToolRegistry& registry,
                       std::string system_prompt);
     ~ParallelProcessor() override;

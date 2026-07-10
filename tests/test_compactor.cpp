@@ -1,4 +1,4 @@
-/// Compactor 测试 — MED-1 修复验证 + 基本功能测试。
+// Compactor 测试 — MED-1 修复验证 + 基本功能测试。
 
 #include "agent/Compactor.h"
 #include "llm/ILLMClient.h"
@@ -24,7 +24,7 @@ static int tests_passed = 0;
 
 using json = nlohmann::json;
 
-/// Mock LLMClient — 返回固定摘要。
+// Mock LLMClient — 返回固定摘要。
 class MockCompactorClient : public llm::ILLMClient {
 public:
     explicit MockCompactorClient(std::string summary = "主角决定离开村庄，踏上冒险旅程。导师给了他一个神秘任务。")

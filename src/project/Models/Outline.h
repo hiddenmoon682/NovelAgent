@@ -1,6 +1,6 @@
 #pragma once
 
-/// Outline — 大纲。
+// Outline — 大纲。
 
 #include "project/Models/ModelDetail.h"
 #include "project/Models/Volume.h"

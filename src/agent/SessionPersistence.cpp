@@ -1,4 +1,4 @@
-/// SessionPersistence 实现。
+// SessionPersistence 实现。
 
 #include "agent/SessionPersistence.h"
 

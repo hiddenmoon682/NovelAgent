@@ -1,6 +1,6 @@
 #pragma once
 
-/// CharacterDevelopment — 角色发展记录（轻量）。
+// CharacterDevelopment — 角色发展记录（轻量）。
 
 #include "project/Models/ModelDetail.h"
 

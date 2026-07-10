@@ -1,15 +1,15 @@
 #pragma once
 
-/// 多 Agent 并行编排器。
-///
-/// P1 架构改进：
-/// - ISynthesisStrategy 接口解耦汇总逻辑（LLM/拼接/模板可替换）
-/// - SubTask 从 AgentOrchestratorTypes.h 导入（共享类型）
-/// - SubAgent 通过 IToolProvider 受限视图访问工具
-///
-/// Phase 4 线程安全改进：
-/// - AgentOrchestrator 持有独立的 LLMClient（通过工厂创建），与主 Agent 隔离
-/// - 每个并行 SubAgent 通过工厂获得独立的 LLMClient 实例
+// 多 Agent 并行编排器。
+//
+// P1 架构改进：
+// - ISynthesisStrategy 接口解耦汇总逻辑（LLM/拼接/模板可替换）
+// - SubTask 从 AgentOrchestratorTypes.h 导入（共享类型）
+// - SubAgent 通过 IToolProvider 受限视图访问工具
+//
+// Phase 4 线程安全改进：
+// - AgentOrchestrator 持有独立的 LLMClient（通过工厂创建），与主 Agent 隔离
+// - 每个并行 SubAgent 通过工厂获得独立的 LLMClient 实例
 
 #include "agent/AgentOrchestratorTypes.h"
 #include "agent/ISynthesisStrategy.h"
@@ -89,7 +89,7 @@ inline auto defaultSubAgentFactory() {
 
 class AgentOrchestrator {
 public:
-    /// @param factory  LLM 客户端工厂（用于创建编排器自身及子 Agent 的独立客户端）
+    // @param factory  LLM 客户端工厂（用于创建编排器自身及子 Agent 的独立客户端）
     AgentOrchestrator(llm::LLMClientFactory& factory, ToolRegistry& registry,
                       std::string mainPrompt = "");
     ~AgentOrchestrator();
@@ -102,33 +102,33 @@ public:
     void setMaxParallel(int n) { max_parallel_ = n; }
     int maxParallel() const { return max_parallel_; }
 
-    /// D6: 最近一次 processMessage 调用累计的 token 用量
-    /// （含串行回退/汇总 LLM 调用；子任务 token 单独统计在 sub_* 字段中）。
-    /// 供 ParallelProcessor 调 recordUsage 恢复并行模式的上下文预算管理。
+    // D6: 最近一次 processMessage 调用累计的 token 用量
+    // （含串行回退/汇总 LLM 调用；子任务 token 单独统计在 sub_* 字段中）。
+    // 供 ParallelProcessor 调 recordUsage 恢复并行模式的上下文预算管理。
     int lastInputTokens() const { return last_input_tokens_; }
     int lastOutputTokens() const { return last_output_tokens_; }
 
-    /// Issue 28: 最近一次 processMessage 中子任务累计的 token 用量。
-    /// 供 ParallelProcessor 汇总完整的上下文预算。
+    // Issue 28: 最近一次 processMessage 中子任务累计的 token 用量。
+    // 供 ParallelProcessor 汇总完整的上下文预算。
     int lastSubInputTokens() const { return last_sub_input_tokens_; }
     int lastSubOutputTokens() const { return last_sub_output_tokens_; }
 
-    /// CRIT-1: 最近一次 processMessage 中所有子任务的状态/结果详情。
-    /// 供 ParallelProcessor 注入对话历史，使后续 LLM 轮次能看到子任务工具调用链。
+    // CRIT-1: 最近一次 processMessage 中所有子任务的状态/结果详情。
+    // 供 ParallelProcessor 注入对话历史，使后续 LLM 轮次能看到子任务工具调用链。
     const std::vector<SubTask>& lastSubTasks() const { return last_sub_tasks_; }
 
     void setTemplateManager(TemplateManager* tm);
 
-    /// A18.3: 运行时更新主提示词（供 ParallelProcessor 注入动态上下文）。
+    // A18.3: 运行时更新主提示词（供 ParallelProcessor 注入动态上下文）。
     void setMainPrompt(const std::string& p) { main_prompt_ = p; }
 
-    /// 注入自定义策略
+    // 注入自定义策略
     void setParallelDetector(std::unique_ptr<IParallelDetector> detector);
     void setDecompositionStrategy(std::unique_ptr<IDecompositionStrategy> strategy);
     void setSynthesisStrategy(std::unique_ptr<ISynthesisStrategy> strategy);
     void setSubAgentFactory(SubAgentFactory factory);
 
-    /// Issue 4: 注入外部线程池（nullptr 时使用内置默认池）。
+    // Issue 4: 注入外部线程池（nullptr 时使用内置默认池）。
     void setThreadPool(ThreadPool* pool) { thread_pool_ = pool ? pool : &default_pool_; }
 
 private:

@@ -1,4 +1,4 @@
-/// ToolPipeline 实现 — Fix #1: 依赖 IToolProvider&。
+// ToolPipeline 实现 — Fix #1: 依赖 IToolProvider&。
 
 #include "agent/ToolPipeline.h"
 #include "agent/ParameterValidator.h"
@@ -44,8 +44,8 @@ void ToolPipeline::executeAndAppend(const std::vector<llm::ToolCall>& tool_calls
     }
 }
 
-/// 计算 UTF-8 字符串中的可见字符数（中文算 1 字，英文单词算 1 字）。
-/// 仅用于显示提示信息，无需精确 token 计数。
+// 计算 UTF-8 字符串中的可见字符数（中文算 1 字，英文单词算 1 字）。
+// 仅用于显示提示信息，无需精确 token 计数。
 static size_t utf8CharLen(const std::string& s) {
     size_t len = 0;
     for (size_t i = 0; i < s.size(); ++len) {

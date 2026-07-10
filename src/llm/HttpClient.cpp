@@ -1,4 +1,4 @@
-/// HttpClient 实现 — 共享的 HTTP 基础设施。
+// HttpClient 实现 — 共享的 HTTP 基础设施。
 
 #include "llm/HttpClient.h"
 

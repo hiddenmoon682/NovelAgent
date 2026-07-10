@@ -1,4 +1,4 @@
-/// IMessageProcessor 实现 — Phase 4 线程安全：ParallelProcessor 通过工厂创建独立 AgentOrchestrator。
+// IMessageProcessor 实现 — Phase 4 线程安全：ParallelProcessor 通过工厂创建独立 AgentOrchestrator。
 
 #include "agent/IMessageProcessor.h"
 #include "agent/AgentOrchestrator.h"

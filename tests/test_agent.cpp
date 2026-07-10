@@ -61,7 +61,7 @@ static ProviderConfig makeConfig(int port) {
     return cfg;
 }
 
-/// 解析请求体中的 "stream" 字段，判断是流式还是非流式请求。
+// 解析请求体中的 "stream" 字段，判断是流式还是非流式请求。
 static bool isStreamRequest(const httplib::Request& req) {
     try {
         auto j = json::parse(req.body);
@@ -71,7 +71,7 @@ static bool isStreamRequest(const httplib::Request& req) {
     }
 }
 
-/// 构造非流式 JSON 响应（纯文本）。
+// 构造非流式 JSON 响应（纯文本）。
 static std::string nonStreamJson(const std::string& content,
                                   const std::string& finish_reason = "stop") {
     json j;

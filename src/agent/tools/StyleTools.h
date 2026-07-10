@@ -1,21 +1,21 @@
 #pragma once
 
-/// 写作风格查询工具 — 允许 LLM 主动读取完整的 Style 配置。
-///
-/// 当前 Style 信息在 system prompt 中被动注入，
-/// 此工具让 LLM 可以随时查看完整风格指南，用于：
-/// - 在写作前确认具体的风格约束（语调、节奏、视角等）
-/// - 检查禁用短语和禁用套路清单
-/// - 确认章节长度目标、开头/结尾风格偏好
+// 写作风格查询工具 — 允许 LLM 主动读取完整的 Style 配置。
+//
+// 当前 Style 信息在 system prompt 中被动注入，
+// 此工具让 LLM 可以随时查看完整风格指南，用于：
+// - 在写作前确认具体的风格约束（语调、节奏、视角等）
+// - 检查禁用短语和禁用套路清单
+// - 确认章节长度目标、开头/结尾风格偏好
 
 #include "agent/tools/BuiltInTool.h"
 #include <nlohmann/json_fwd.hpp>
 
 namespace agent {
 
-/// 写作风格查询工具。
-/// 参数: 无
-/// 返回: 完整 Style 对象 JSON（24 个风格字段 + 辅助摘要字段）
+// 写作风格查询工具。
+// 参数: 无
+// 返回: 完整 Style 对象 JSON（24 个风格字段 + 辅助摘要字段）
 class ReadStyleTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -31,9 +31,9 @@ public:
     ToolCategory category() const override { return ToolCategory::Setting; }
 };
 
-/// 更新写作风格配置。
-/// 通过 fields 白名单机制安全写入，Style 是单例无需 id。
-/// 参数: fields (object, required)
+// 更新写作风格配置。
+// 通过 fields 白名单机制安全写入，Style 是单例无需 id。
+// 参数: fields (object, required)
 class UpdateStyleTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:

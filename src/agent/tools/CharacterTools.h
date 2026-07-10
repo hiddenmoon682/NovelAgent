@@ -5,9 +5,9 @@
 
 namespace agent {
 
-/// 查询单个角色完整档案。
-/// 参数: character_id (string)
-/// 返回: { id, name, role, ...全字段 }
+// 查询单个角色完整档案。
+// 参数: character_id (string)
+// 返回: { id, name, role, ...全字段 }
 class GetCharacterTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -21,9 +21,9 @@ public:
     ToolCategory category() const override { return ToolCategory::Character; }
 };
 
-/// 列出所有角色摘要。
-/// 参数: 无
-/// 返回: { characters: [{ id, name, role, goal }] }
+// 列出所有角色摘要。
+// 参数: 无
+// 返回: { characters: [{ id, name, role, goal }] }
 class ListCharactersTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -37,10 +37,10 @@ public:
     ToolCategory category() const override { return ToolCategory::Character; }
 };
 
-/// 创建新角色。
-/// 支持在创建时填充性格/背景/目标等叙事字段，减少后续手动编辑。
-/// 参数: name (string, required), role/personality/background/goal/... (string, optional)
-/// 返回: { success, character: { id, name, role } }
+// 创建新角色。
+// 支持在创建时填充性格/背景/目标等叙事字段，减少后续手动编辑。
+// 参数: name (string, required), role/personality/background/goal/... (string, optional)
+// 返回: { success, character: { id, name, role } }
 class CreateCharacterTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -55,9 +55,9 @@ public:
     ToolCategory category() const override { return ToolCategory::Character; }
 };
 
-/// 更新角色字段。
-/// 参数: character_id (string), fields (object — 任意字段名→值)
-/// 返回: { success, character: { id, name, ...已更新字段 } }
+// 更新角色字段。
+// 参数: character_id (string), fields (object — 任意字段名→值)
+// 返回: { success, character: { id, name, ...已更新字段 } }
 class UpdateCharacterTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -71,9 +71,9 @@ public:
     ToolCategory category() const override { return ToolCategory::Character; }
 };
 
-/// 删除指定角色，并级联清理其他角色 Relationships / Setting / PlotThread / Volume / Chapter / Scene 中对该角色的引用。
-/// 参数: character_id (string, required)
-/// 返回: { success, deleted_id, cascade: { ... } }
+// 删除指定角色，并级联清理其他角色 Relationships / Setting / PlotThread / Volume / Chapter / Scene 中对该角色的引用。
+// 参数: character_id (string, required)
+// 返回: { success, deleted_id, cascade: { ... } }
 class DeleteCharacterTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -87,9 +87,9 @@ public:
     ToolCategory category() const override { return ToolCategory::Character; }
 };
 
-/// 完整替换指定角色的人际关系列表。
-/// 参数: character_id (string, required), relationships (array of relationship objects, required)
-/// 返回: { success, character_id, relationship_count }
+// 完整替换指定角色的人际关系列表。
+// 参数: character_id (string, required), relationships (array of relationship objects, required)
+// 返回: { success, character_id, relationship_count }
 class UpdateCharacterRelationshipsTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -103,7 +103,7 @@ public:
     ToolCategory category() const override { return ToolCategory::Character; }
 };
 
-/// 为角色添加发展记录（弧光追踪）。
+// 为角色添加发展记录（弧光追踪）。
 class AddCharacterDevelopmentTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:

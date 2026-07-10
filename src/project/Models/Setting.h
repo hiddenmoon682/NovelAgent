@@ -1,6 +1,6 @@
 #pragma once
 
-/// Setting — 世界观中的地点、组织或物品。
+// Setting — 世界观中的地点、组织或物品。
 
 #include "project/Models/ModelDetail.h"
 

@@ -1,4 +1,4 @@
-/// FileStorageBackend 实现 — 适配 ProjectIO 到 IStorageBackend。
+// FileStorageBackend 实现 — 适配 ProjectIO 到 IStorageBackend。
 
 #include "project/FileStorageBackend.h"
 #include "project/ProjectIO.h"

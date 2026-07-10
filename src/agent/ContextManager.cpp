@@ -1,4 +1,4 @@
-/// ContextManager 实现 — 增强版（会话追踪 + pin + compaction + 降级可见性）。
+// ContextManager 实现 — 增强版（会话追踪 + pin + compaction + 降级可见性）。
 
 #include "agent/ContextManager.h"
 
@@ -22,22 +22,22 @@
 namespace agent {
 
 namespace {
-/// 默认存储占位符（不使用持久化功能时的回退）。
+// 默认存储占位符（不使用持久化功能时的回退）。
 FileStorageBackend& defaultStorage() {
     static FileStorageBackend s("");
     return s;
 }
 
-/// 取项目设定文件的最后修改时间戳（取多个文件中的最新值）。
-/// 用于会话恢复时检测"项目在保存后被外部修改"→ 清空旧摘要。
-/// 返回 0 表示取不到（项目路径为空或所有文件均不存在）。
-///
-/// A12 修复：此前只盯 project.json（后改为 novel.json，A5 已修），颗粒度不足——
-///   修改角色/设定/规则时，characters.json/settings.json/world_rules.json 等文件才会变，
-///   novel.json 可能不变。现改为取 novel.json + outline.json + characters.json +
-///   settings.json + world_rules.json 的最新 mtime，覆盖全部主要 JSON 设定文件。
-///   局限：章节正文（.md 文件）不在检测范围内（A12 根治需工具层标记向量失效，
-///   见 ContextManager::clearVectorStore / DesignReview_A12）。
+// 取项目设定文件的最后修改时间戳（取多个文件中的最新值）。
+// 用于会话恢复时检测"项目在保存后被外部修改"→ 清空旧摘要。
+// 返回 0 表示取不到（项目路径为空或所有文件均不存在）。
+//
+// A12 修复：此前只盯 project.json（后改为 novel.json，A5 已修），颗粒度不足——
+//   修改角色/设定/规则时，characters.json/settings.json/world_rules.json 等文件才会变，
+//   novel.json 可能不变。现改为取 novel.json + outline.json + characters.json +
+//   settings.json + world_rules.json 的最新 mtime，覆盖全部主要 JSON 设定文件。
+//   局限：章节正文（.md 文件）不在检测范围内（A12 根治需工具层标记向量失效，
+//   见 ContextManager::clearVectorStore / DesignReview_A12）。
 int64_t projectSettingsMtime(const std::string& project_path) {
     if (project_path.empty()) return 0;
 
@@ -66,10 +66,10 @@ int64_t projectSettingsMtime(const std::string& project_path) {
     return any_found ? latest : 0;
 }
 
-/// Compaction 时保留的最近消息对数。
+// Compaction 时保留的最近消息对数。
 constexpr int kCompactKeepExchanges = 10;   // 保留最近 10 对 = ~20 条消息
 
-/// Compaction 用的 system prompt — 双层摘要：情节事实 + 风格样本。
+// Compaction 用的 system prompt — 双层摘要：情节事实 + 风格样本。
 constexpr const char* kCompactSystemPrompt =
     "你是一个小说创作助手的上下文压缩器。用中文对以下对话历史进行双层摘要：\n"
     "\n"
@@ -81,7 +81,7 @@ constexpr const char* kCompactSystemPrompt =
     "\n"
     "总长度控制在 2000 字以内，事实与风格的比例由你判断。";
 
-/// Token 用量告警阈值。
+// Token 用量告警阈值。
 constexpr int kWarnPercent = 60;
 constexpr int kCriticalPercent = 85;
 } // namespace

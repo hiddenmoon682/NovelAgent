@@ -1,9 +1,9 @@
 #pragma once
 
-/// Models.h 内部辅助函数 — 供各子头文件共享。
-///
-/// 包含：
-///   - getMetadataWithUnknownKeys() — 读取 metadata 并吸收未知字段
+// Models.h 内部辅助函数 — 供各子头文件共享。
+//
+// 包含：
+//   - getMetadataWithUnknownKeys() — 读取 metadata 并吸收未知字段
 
 #include "utils/JsonUtils.h"
 

@@ -1,6 +1,6 @@
 #pragma once
 
-/// PlotThread — 剧情线。
+// PlotThread — 剧情线。
 
 #include "project/Models/ModelDetail.h"
 

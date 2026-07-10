@@ -20,10 +20,10 @@ json RunPowerShellTool::parameters() const {
 
 namespace {
 
-/// C1/C2 修复：白名单替代黑名单，仅允许只读查询 cmdlet。
-/// 安全声明：此白名单不提供绝对安全（LLM 仍可能通过管道组合绕过），
-/// 它只是纵深防御的一层。Shell 工具存在的主要价值是为高级用户提供
-/// 文件列表/文本搜索等便捷查询能力。
+// C1/C2 修复：白名单替代黑名单，仅允许只读查询 cmdlet。
+// 安全声明：此白名单不提供绝对安全（LLM 仍可能通过管道组合绕过），
+// 它只是纵深防御的一层。Shell 工具存在的主要价值是为高级用户提供
+// 文件列表/文本搜索等便捷查询能力。
 static bool isAllowedCommand(const std::string& cmd) {
     // 拦截脚本注入字符（在任何 token 提取之前检测）
     // $( / ` : 子命令替换；{ } : 脚本块（可放任意表达式）；; & : 命令分隔/后台执行
@@ -84,11 +84,11 @@ static bool isAllowedCommand(const std::string& cmd) {
     return any_token;  // 至少有一个合法 cmdlet 才放行（拒绝纯空白输入）
 }
 
-/// 使用 CreateProcess 执行命令，支持超时（Windows）。
-/// @param cmd     PowerShell 命令（已通过白名单校验的安全查询命令）
-/// @param output  出参：stdout 输出
-/// @param timeoutMs 超时毫秒数
-/// @return        进程退出码（超时时返回 -1）
+// 使用 CreateProcess 执行命令，支持超时（Windows）。
+// @param cmd     PowerShell 命令（已通过白名单校验的安全查询命令）
+// @param output  出参：stdout 输出
+// @param timeoutMs 超时毫秒数
+// @return        进程退出码（超时时返回 -1）
 int execWithTimeout(const std::string& cmd, std::string& output, DWORD timeoutMs = 30000) {
 #ifdef _WIN32
     // PowerShell 命令用双引号包裹，确保含空格的文件路径等参数正确传递

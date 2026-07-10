@@ -11,7 +11,7 @@
 
 namespace llm {
 
-/// 消息发送者角色（OpenAI Chat Completions 标准四角色）
+// 消息发送者角色（OpenAI Chat Completions 标准四角色）
 enum class MessageRole {
     System,     // 系统提示词（设定 AI 行为边界）
     User,       // 用户输入
@@ -89,7 +89,7 @@ struct Message {
 
     // ── 便捷工厂方法 ──
 
-    /// 创建用户消息（最常用）
+    // 创建用户消息（最常用）
     static Message user(std::string content) {
         Message m;
         m.role = MessageRole::User;
@@ -97,7 +97,7 @@ struct Message {
         return m;
     }
 
-    /// 创建系统提示词消息
+    // 创建系统提示词消息
     static Message system(std::string content) {
         Message m;
         m.role = MessageRole::System;
@@ -105,7 +105,7 @@ struct Message {
         return m;
     }
 
-    /// 创建 AI 助手消息
+    // 创建 AI 助手消息
     static Message assistant(std::string content) {
         Message m;
         m.role = MessageRole::Assistant;
@@ -113,7 +113,7 @@ struct Message {
         return m;
     }
 
-    /// 创建工具调用结果消息（回传给 LLM）
+    // 创建工具调用结果消息（回传给 LLM）
     static Message toolResult(std::string call_id, std::string content) {
         Message m;
         m.role = MessageRole::Tool;

@@ -1,4 +1,4 @@
-/// EmbeddingGenerator 实现 — 委托 HttpClient 发送 HTTP 请求。
+// EmbeddingGenerator 实现 — 委托 HttpClient 发送 HTTP 请求。
 
 #include "retrieval/EmbeddingGenerator.h"
 

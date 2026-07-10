@@ -1,6 +1,6 @@
 #pragma once
 
-/// Volume — 卷纲，写给 AI 的"卷级创作简报"。
+// Volume — 卷纲，写给 AI 的"卷级创作简报"。
 
 #include "project/Models/ModelDetail.h"
 

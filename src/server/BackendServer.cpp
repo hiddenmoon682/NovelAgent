@@ -1,4 +1,4 @@
-/// BackendServer 实现 — 网络审查修复版（#1~#7全部修复）+ Phase 4 线程安全（工厂模式会话隔离）。
+// BackendServer 实现 — 网络审查修复版（#1~#7全部修复）+ Phase 4 线程安全（工厂模式会话隔离）。
 
 #include "server/BackendServer.h"
 #include "server/SSEQueue.h"

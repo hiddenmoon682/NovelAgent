@@ -4,9 +4,9 @@
 
 namespace agent {
 
-/// 执行 PowerShell 命令（Windows）。
-/// 参数: command (string) — PowerShell 命令
-/// 返回: { stdout, stderr, exit_code }
+// 执行 PowerShell 命令（Windows）。
+// 参数: command (string) — PowerShell 命令
+// 返回: { stdout, stderr, exit_code }
 class RunPowerShellTool : public BuiltInTool {
 public:
     std::string name() const override { return "run_powershell"; }

@@ -1,6 +1,6 @@
 #pragma once
 
-/// WorldRule — 世界规则（适合奇幻、科幻、悬疑等需要"规则一致性"的小说）。
+// WorldRule — 世界规则（适合奇幻、科幻、悬疑等需要"规则一致性"的小说）。
 
 #include "project/Models/ModelDetail.h"
 

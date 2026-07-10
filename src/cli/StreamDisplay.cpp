@@ -1,4 +1,4 @@
-/// StreamDisplay 实现 — Phase 5 增强版。
+// StreamDisplay 实现 — Phase 5 增强版。
 
 #include "cli/StreamDisplay.h"
 

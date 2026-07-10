@@ -1,4 +1,4 @@
-/// ParameterValidator 实现。
+// ParameterValidator 实现。
 
 #include "agent/ParameterValidator.h"
 

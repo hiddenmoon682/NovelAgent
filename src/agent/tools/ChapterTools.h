@@ -5,9 +5,9 @@
 
 namespace agent {
 
-/// 读取章节全文。
-/// 参数: chapter_id (string) — 章节 ID
-/// 返回: { chapter_id, title, content }
+// 读取章节全文。
+// 参数: chapter_id (string) — 章节 ID
+// 返回: { chapter_id, title, content }
 class ReadChapterTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -21,9 +21,9 @@ public:
     ToolCategory category() const override { return ToolCategory::Content; }
 };
 
-/// 覆写章节内容。
-/// 参数: chapter_id (string), content (string)
-/// 返回: { success, chapter_id }
+// 覆写章节内容。
+// 参数: chapter_id (string), content (string)
+// 返回: { success, chapter_id }
 class WriteChapterTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -37,9 +37,9 @@ public:
     ToolCategory category() const override { return ToolCategory::Content; }
 };
 
-/// 在末尾追加内容到章节。
-/// 参数: chapter_id (string), content (string)
-/// 返回: { success, chapter_id }
+// 在末尾追加内容到章节。
+// 参数: chapter_id (string), content (string)
+// 返回: { success, chapter_id }
 class AppendChapterTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -53,9 +53,9 @@ public:
     ToolCategory category() const override { return ToolCategory::Content; }
 };
 
-/// 列出所有章节。
-/// 参数: 无
-/// 返回: { chapters: [{ id, title, order, file_path, synopsis }] }
+// 列出所有章节。
+// 参数: 无
+// 返回: { chapters: [{ id, title, order, file_path, synopsis }] }
 class ListChaptersTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -69,10 +69,10 @@ public:
     ToolCategory category() const override { return ToolCategory::Content; }
 };
 
-/// 创建新章节。
-/// 支持在创建时填充叙事字段（goal/conflict/hook 等），减少后续手动编辑。
-/// 参数: title (string, required), synopsis/goal/conflict/outcome/... (string, optional)
-/// 返回: { success, chapter: { id, title, order, file_path } }
+// 创建新章节。
+// 支持在创建时填充叙事字段（goal/conflict/hook 等），减少后续手动编辑。
+// 参数: title (string, required), synopsis/goal/conflict/outcome/... (string, optional)
+// 返回: { success, chapter: { id, title, order, file_path } }
 class CreateChapterTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -87,10 +87,10 @@ public:
     ToolCategory category() const override { return ToolCategory::Content; }
 };
 
-/// 更新章节的创作简报字段。
-/// 通过 fields 白名单机制安全写入，不在白名单中的字段会被静默忽略。
-/// 参数: chapter_id (string, required), fields (object, required)
-/// 返回: { success, chapter: { id, title, updated_fields } }
+// 更新章节的创作简报字段。
+// 通过 fields 白名单机制安全写入，不在白名单中的字段会被静默忽略。
+// 参数: chapter_id (string, required), fields (object, required)
+// 返回: { success, chapter: { id, title, updated_fields } }
 class UpdateChapterTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -106,9 +106,9 @@ public:
     ToolCategory category() const override { return ToolCategory::Content; }
 };
 
-/// 删除指定章节，并级联清理引用（PlotThread/Volume/Character/CharacterDevelopment 中对该章节 ID 的引用）。
-/// 参数: chapter_id (string, required)
-/// 返回: { success, deleted_id, cascade: { ... } }
+// 删除指定章节，并级联清理引用（PlotThread/Volume/Character/CharacterDevelopment 中对该章节 ID 的引用）。
+// 参数: chapter_id (string, required)
+// 返回: { success, deleted_id, cascade: { ... } }
 class DeleteChapterTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -122,9 +122,9 @@ public:
     ToolCategory category() const override { return ToolCategory::Content; }
 };
 
-/// 更新章节的场景列表（完整替换）。
-/// 参数: chapter_id (string, required), scenes (array of scene objects, required)
-/// 返回: { success, chapter_id, scene_count }
+// 更新章节的场景列表（完整替换）。
+// 参数: chapter_id (string, required), scenes (array of scene objects, required)
+// 返回: { success, chapter_id, scene_count }
 class UpdateChapterScenesTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:

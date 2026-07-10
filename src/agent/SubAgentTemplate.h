@@ -6,7 +6,7 @@
 
 namespace agent {
 
-/// 子 Agent 模板 — 预定义的子 Agent 配置。
+// 子 Agent 模板 — 预定义的子 Agent 配置。
 struct SubAgentTemplate {
     std::string name;                    // 模板名
     std::string description;             // 用途说明
@@ -17,7 +17,7 @@ struct SubAgentTemplate {
     bool built_in = false;               // 内置模板不可删除
 };
 
-/// 内置模板工厂 — 返回 5 个预设模板。
+// 内置模板工厂 — 返回 5 个预设模板。
 inline std::vector<SubAgentTemplate> builtInTemplates() {
     return {
         {

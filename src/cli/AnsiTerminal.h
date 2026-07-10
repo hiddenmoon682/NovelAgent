@@ -1,12 +1,12 @@
 #pragma once
 
-/// ANSI 终端工具 — 颜色、样式、光标控制。
-///
-/// Phase 5 架构改进：集中管理所有 ANSI 转义码，避免散落在各组件中。
-/// Windows 上自动启用 ENABLE_VIRTUAL_TERMINAL_PROCESSING。
-///
-/// 使用示例:
-///   out.write(Ansi::fgGreen() + "助手回复" + Ansi::reset());
+// ANSI 终端工具 — 颜色、样式、光标控制。
+//
+// Phase 5 架构改进：集中管理所有 ANSI 转义码，避免散落在各组件中。
+// Windows 上自动启用 ENABLE_VIRTUAL_TERMINAL_PROCESSING。
+//
+// 使用示例:
+//   out.write(Ansi::fgGreen() + "助手回复" + Ansi::reset());
 
 #include <string>
 
@@ -20,8 +20,8 @@ namespace Ansi {
 // 初始化
 // ============================================================================
 
-/// 在 Windows 上启用 ANSI 转义码支持 + UTF-8 编码。Linux/macOS 无需调用。
-/// 应在程序启动时调用一次。
+// 在 Windows 上启用 ANSI 转义码支持 + UTF-8 编码。Linux/macOS 无需调用。
+// 应在程序启动时调用一次。
 inline void enableWindowsAnsi() {
 #ifdef _WIN32
     // 设置 C 运行时为 UTF-8（解决 MinGW 中文输出乱码）
@@ -101,51 +101,51 @@ inline std::string showCursor()           { return "\033[?25h"; }
 // 语义化颜色（Phase 5 统一主题）
 // ============================================================================
 
-/// 助手回复 — 绿色
+// 助手回复 — 绿色
 inline std::string assistant()  { return fgGreen(); }
 
-/// 用户输入 — 蓝色加粗
+// 用户输入 — 蓝色加粗
 inline std::string userInput()  { return bold() + fgBlue(); }
 
-/// 工具调用 — 灰色/暗色
+// 工具调用 — 灰色/暗色
 inline std::string toolCall()   { return fgBrightBlack(); }
 
-/// 思考链 — 暗灰色
+// 思考链 — 暗灰色
 inline std::string thinking()   { return dim() + fgBrightBlack(); }
 
-/// 错误 — 红色
+// 错误 — 红色
 inline std::string error()      { return fgRed(); }
 
-/// 警告 — 黄色
+// 警告 — 黄色
 inline std::string warning()    { return fgYellow(); }
 
-/// 成功/完成 — 亮绿色
+// 成功/完成 — 亮绿色
 inline std::string success()    { return fgBrightGreen(); }
 
-/// 信息 — 青色
+// 信息 — 青色
 inline std::string info()       { return fgCyan(); }
 
-/// 标题 — 亮白色加粗
+// 标题 — 亮白色加粗
 inline std::string title()      { return bold() + fgBrightWhite(); }
 
-/// 状态栏 — 白色文字 + 蓝色背景
+// 状态栏 — 白色文字 + 蓝色背景
 inline std::string statusBar()  { return bgBlue() + fgWhite(); }
 
 // ============================================================================
 // 终端 GUI 组件
 // ============================================================================
 
-/// 渲染水平分隔线。
+// 渲染水平分隔线。
 inline std::string hLine(int width = 60) {
     return dim() + std::string(width, '-') + reset() + "\n";
 }
 
-/// 渲染带颜色的标签 [标签]。
+// 渲染带颜色的标签 [标签]。
 inline std::string label(const std::string& text, const std::string& color) {
     return color + "[" + text + "]" + reset();
 }
 
-/// 渲染状态指示器（如 "Thinking..." 右侧的旋转动画文本）。
+// 渲染状态指示器（如 "Thinking..." 右侧的旋转动画文本）。
 inline std::string spinner(int frame) {
     static const char* frames[] = {"|", "/", "-", "\\"};
     return std::string(frames[frame % 4]);

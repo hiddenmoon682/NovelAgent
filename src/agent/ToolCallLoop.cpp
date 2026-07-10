@@ -1,5 +1,5 @@
-/// ToolCallLoop 实现 — Fix #1: 接受 IToolProvider&。
-/// CRIT-2: 自修正反射机制（AutoGPT/LangGraph 反思模式）。
+// ToolCallLoop 实现 — Fix #1: 接受 IToolProvider&。
+// CRIT-2: 自修正反射机制（AutoGPT/LangGraph 反思模式）。
 
 #include "agent/ToolCallLoop.h"
 #include "agent/AgentState.h"

@@ -1,6 +1,6 @@
 #pragma once
 
-/// Character — 角色完整档案。
+// Character — 角色完整档案。
 
 #include "project/Models/Relationship.h"
 #include "project/Models/CharacterDevelopment.h"

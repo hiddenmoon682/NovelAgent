@@ -17,8 +17,8 @@
 #ifdef _WIN32
 #include <windows.h>
 
-/// 将命令行参数从系统代码页转换为 UTF-8（修复 MinGW 中文乱码）。
-/// 仅在字符串不是有效 UTF-8 时才进行转换。
+// 将命令行参数从系统代码页转换为 UTF-8（修复 MinGW 中文乱码）。
+// 仅在字符串不是有效 UTF-8 时才进行转换。
 static std::string argToUtf8(const std::string& input) {
     if (input.empty()) return input;
 

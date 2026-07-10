@@ -1,11 +1,11 @@
 #pragma once
 
-/// 后端 HTTP+SSE 服务器（网络配置增强版）。
-/// Fix #1: httplib Server 超时/keepalive/idle/payload 配置。
-/// Fix #4: 并发连接上限。
-/// Fix #5: 请求体大小检查。
-///
-/// Phase 4 线程安全：通过 LLMClientFactory 为每个会话/临时 Agent 创建独立 LLMClient。
+// 后端 HTTP+SSE 服务器（网络配置增强版）。
+// Fix #1: httplib Server 超时/keepalive/idle/payload 配置。
+// Fix #4: 并发连接上限。
+// Fix #5: 请求体大小检查。
+//
+// Phase 4 线程安全：通过 LLMClientFactory 为每个会话/临时 Agent 创建独立 LLMClient。
 
 #include "server/SessionManager.h"
 #include <httplib.h>
@@ -41,7 +41,7 @@ struct ServerConfig {
 
 class BackendServer {
 public:
-    /// @param factory  LLM 客户端工厂（用于创建临时 Agent 和会话的独立客户端）
+    // @param factory  LLM 客户端工厂（用于创建临时 Agent 和会话的独立客户端）
     BackendServer(llm::LLMClientFactory& factory, agent::ToolRegistry& registry,
                   std::shared_ptr<Project> project, const ServerConfig& config);
     ~BackendServer();
@@ -68,10 +68,10 @@ private:
     void removePortFile() const;
     std::string portFilePath() const;
 
-    /// Fix #5: 请求体大小检查。
+    // Fix #5: 请求体大小检查。
     bool checkBodySize(const std::string& body, httplib::Response& res) const;
 
-    /// Fix #4: 连接上限检查。
+    // Fix #4: 连接上限检查。
     bool checkClientLimit(httplib::Response& res);
 };
 

@@ -1,4 +1,4 @@
-/// test_context_manager — 增强版测试（会话追踪 + pin + compaction + 降级可见性）。
+// test_context_manager — 增强版测试（会话追踪 + pin + compaction + 降级可见性）。
 
 #include "agent/ContextManager.h"
 #include "llm/Conversation.h"

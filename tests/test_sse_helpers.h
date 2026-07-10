@@ -1,19 +1,19 @@
 #pragma once
 
-/// SSE 测试数据构造辅助 — 将 test_llm_client 中手工拼接 JSON 字符串的逻辑
-/// 抽取为可复用的辅助函数，让测试代码更简洁、可读。
-///
-/// 这些函数仅供测试使用，不应出现在生产代码中。
+// SSE 测试数据构造辅助 — 将 test_llm_client 中手工拼接 JSON 字符串的逻辑
+// 抽取为可复用的辅助函数，让测试代码更简洁、可读。
+//
+// 这些函数仅供测试使用，不应出现在生产代码中。
 
 #include <nlohmann/json.hpp>
 #include <string>
 
 namespace llm::test {
 
-/// 构造文本增量 SSE chunk（OpenAI 流式 delta 格式）。
-/// @param content  文本增量内容
-/// @param id       响应 ID（首个 chunk 携带）
-/// @param model    模型名
+// 构造文本增量 SSE chunk（OpenAI 流式 delta 格式）。
+// @param content  文本增量内容
+// @param id       响应 ID（首个 chunk 携带）
+// @param model    模型名
 inline std::string sseContentChunk(const std::string& content,
                                    const std::string& id = "test-id",
                                    const std::string& model = "test") {
@@ -29,8 +29,8 @@ inline std::string sseContentChunk(const std::string& content,
     return "data: " + j.dump() + "\n\n";
 }
 
-/// 构造流结束 SSE chunk（携带 finish_reason + usage）。
-/// @param reason  结束原因，如 "stop" / "length" / "tool_calls"
+// 构造流结束 SSE chunk（携带 finish_reason + usage）。
+// @param reason  结束原因，如 "stop" / "length" / "tool_calls"
 inline std::string sseFinishChunk(const std::string& reason = "stop") {
     using json = nlohmann::json;
     json j;
@@ -47,19 +47,19 @@ inline std::string sseFinishChunk(const std::string& reason = "stop") {
     return "data: " + j.dump() + "\n\n";
 }
 
-/// SSE 流终止信号
+// SSE 流终止信号
 constexpr const char* sseDone = "data: [DONE]\n\n";
 
-/// 构造 tool_call 增量 SSE chunk。
-///
-/// 每个 chunk 可携带一个 tool_call 的增量字段：
-/// - chunk 0（首次）：携带 index + id + type + function.name，arguments 为空
-/// - chunk 1+：仅携带 index + arguments 增量片段
-///
-/// @param index       tool_call 在数组中的索引
-/// @param call_id     工具调用唯一 ID
-/// @param func_name   函数名
-/// @param arguments   JSON 参数的增量片段
+// 构造 tool_call 增量 SSE chunk。
+//
+// 每个 chunk 可携带一个 tool_call 的增量字段：
+// - chunk 0（首次）：携带 index + id + type + function.name，arguments 为空
+// - chunk 1+：仅携带 index + arguments 增量片段
+//
+// @param index       tool_call 在数组中的索引
+// @param call_id     工具调用唯一 ID
+// @param func_name   函数名
+// @param arguments   JSON 参数的增量片段
 inline std::string sseToolCallChunk(int index,
                                     const std::string& call_id,
                                     const std::string& func_name,

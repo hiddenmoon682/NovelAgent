@@ -1,4 +1,4 @@
-/// ReplHandler 实现 — UX审查修复版（自动保存/友好错误/配置安全/去术语化）。
+// ReplHandler 实现 — UX审查修复版（自动保存/友好错误/配置安全/去术语化）。
 
 #include "cli/ReplHandler.h"
 #include "cli/StreamDisplay.h"

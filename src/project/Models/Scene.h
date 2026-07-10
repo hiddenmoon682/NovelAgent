@@ -1,6 +1,6 @@
 #pragma once
 
-/// Scene — 章节内部的最小戏剧单元。
+// Scene — 章节内部的最小戏剧单元。
 
 #include "project/Models/ModelDetail.h"
 

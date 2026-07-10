@@ -1,4 +1,4 @@
-/// SubAgent 实现 — Fix #1: 完全委托 ToolCallLoop + Phase 4 线程安全（独立 LLMClient 实例）。
+// SubAgent 实现 — Fix #1: 完全委托 ToolCallLoop + Phase 4 线程安全（独立 LLMClient 实例）。
 
 #include "agent/SubAgent.h"
 #include "agent/ToolCallLoop.h"

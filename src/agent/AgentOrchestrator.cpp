@@ -1,4 +1,4 @@
-/// AgentOrchestrator 实现 — P1 重构版（ISynthesisStrategy + RestrictedToolProvider）+ Phase 4 线程安全（工厂模式 SubAgent 隔离）。
+// AgentOrchestrator 实现 — P1 重构版（ISynthesisStrategy + RestrictedToolProvider）+ Phase 4 线程安全（工厂模式 SubAgent 隔离）。
 
 #include "agent/AgentOrchestrator.h"
 #include "agent/IToolProvider.h"

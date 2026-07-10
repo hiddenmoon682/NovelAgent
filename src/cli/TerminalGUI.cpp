@@ -1,4 +1,4 @@
-/// TerminalGUI 实现。
+// TerminalGUI 实现。
 
 #include "cli/TerminalGUI.h"
 

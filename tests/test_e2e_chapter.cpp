@@ -1,13 +1,13 @@
-/// 端到端集成测试 — Agent + Chapter 工具 + DeepSeek API。
-///
-/// 验证完整闭环：
-///   用户输入 → Agent.processUserMessage()
-///            → ContextManager.assemble()
-///            → LLMClient.chat() [DeepSeek API]
-///            → ToolRegistry.executeTool() [Chapter 工具]
-///            → 循环...
-///
-/// 手动执行：./build/tests/test_e2e_chapter.exe（需 config.json 或环境变量）
+// 端到端集成测试 — Agent + Chapter 工具 + DeepSeek API。
+//
+// 验证完整闭环：
+//   用户输入 → Agent.processUserMessage()
+//            → ContextManager.assemble()
+//            → LLMClient.chat() [DeepSeek API]
+//            → ToolRegistry.executeTool() [Chapter 工具]
+//            → 循环...
+//
+// 手动执行：./build/tests/test_e2e_chapter.exe（需 config.json 或环境变量）
 
 #include "agent/Agent.h"
 #include "agent/ContextManager.h"

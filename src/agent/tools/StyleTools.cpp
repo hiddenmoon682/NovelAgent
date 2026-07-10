@@ -1,4 +1,4 @@
-/// ReadStyleTool 实现 — 允许 LLM 主动查询完整写作风格配置。
+// ReadStyleTool 实现 — 允许 LLM 主动查询完整写作风格配置。
 
 #include "agent/tools/StyleTools.h"
 

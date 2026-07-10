@@ -1,9 +1,9 @@
 #pragma once
 
-/// Chapter — 章节（写给 AI 的"章级创作简报"）。
-///
-/// 包含章节的全部元信息与创作指引，供 AI 根据此结构生成正文内容。
-/// 同时也支持 JSON 序列化（to_json / from_json）。
+// Chapter — 章节（写给 AI 的"章级创作简报"）。
+//
+// 包含章节的全部元信息与创作指引，供 AI 根据此结构生成正文内容。
+// 同时也支持 JSON 序列化（to_json / from_json）。
 
 #include "project/Models/ModelDetail.h"
 #include "project/Models/Scene.h"
@@ -15,47 +15,47 @@
 
 struct Chapter {
     // ---- 标识 ----
-    std::string id;                    ///< 章节唯一标识符（UUID 或自定义）
-    std::string title;                 ///< 章节标题
-    int order = 0;                     ///< 章节序号（在卷内的顺序）
+    std::string id;                    //< 章节唯一标识符（UUID 或自定义）
+    std::string title;                 //< 章节标题
+    int order = 0;                     //< 章节序号（在卷内的顺序）
 
     // ---- 叙事核心要素 ----
-    std::string synopsis;              ///< 章节概要：本章发生的核心剧情简述
-    std::string goal;                  ///< 本章目标：主角/叙事在本章要达成的目的
-    std::string conflict;              ///< 核心冲突：阻碍目标实现的主要矛盾
-    std::string outcome;               ///< 本章结局：剧情走向的结果或 cliffhanger
+    std::string synopsis;              //< 章节概要：本章发生的核心剧情简述
+    std::string goal;                  //< 本章目标：主角/叙事在本章要达成的目的
+    std::string conflict;              //< 核心冲突：阻碍目标实现的主要矛盾
+    std::string outcome;               //< 本章结局：剧情走向的结果或 cliffhanger
 
     // ---- 节奏与技巧 ----
-    std::string turning_point;         ///< 转折点：本章中剧情发生转折的事件
-    std::string hook;                  ///< 钩子：开篇吸引读者继续阅读的悬念/爆点
-    std::string reveal;                ///< 揭示：本章揭露的秘密或新信息
-    std::string foreshadowing;         ///< 伏笔：为后续章节埋下的线索
-    std::string payoff;                ///< 回报：对前文伏笔的呼应/回收
-    std::string emotional_beat;        ///< 情感节奏：本章应有的情感基调/弧线描写
+    std::string turning_point;         //< 转折点：本章中剧情发生转折的事件
+    std::string hook;                  //< 钩子：开篇吸引读者继续阅读的悬念/爆点
+    std::string reveal;                //< 揭示：本章揭露的秘密或新信息
+    std::string foreshadowing;         //< 伏笔：为后续章节埋下的线索
+    std::string payoff;                //< 回报：对前文伏笔的呼应/回收
+    std::string emotional_beat;        //< 情感节奏：本章应有的情感基调/弧线描写
 
     // ---- 时空定位 ----
-    std::string location_id;           ///< 主要场景地点 ID（关联 Settings）
-    std::string time_marker;           ///< 时间标记（如 "三天后"、"夜晚"）
-    std::string volume_id;             ///< 所属卷 ID（关联 Volume）
+    std::string location_id;           //< 主要场景地点 ID（关联 Settings）
+    std::string time_marker;           //< 时间标记（如 "三天后"、"夜晚"）
+    std::string volume_id;             //< 所属卷 ID（关联 Volume）
 
     // ---- 子结构 ----
-    std::vector<Scene> scenes;         ///< 场景列表：本章拆解为多个场景的详细编排
+    std::vector<Scene> scenes;         //< 场景列表：本章拆解为多个场景的详细编排
 
     // ---- 角色与事件 ----
-    std::vector<std::string> pov_characters;       ///< POV 角色列表（视角跟随谁）
-    std::vector<std::string> key_events;           ///< 关键事件列表（本章必须发生的事件）
-    std::vector<std::string> themes;               ///< 本章涉及的主题标签
-    std::vector<std::string> active_plot_threads;  ///< 活跃故事线 ID 列表
-    std::vector<std::string> focus_characters;     ///< 重点刻画角色列表
-    std::vector<std::string> focus_settings;       ///< 重点描写的场景/环境列表
+    std::vector<std::string> pov_characters;       //< POV 角色列表（视角跟随谁）
+    std::vector<std::string> key_events;           //< 关键事件列表（本章必须发生的事件）
+    std::vector<std::string> themes;               //< 本章涉及的主题标签
+    std::vector<std::string> active_plot_threads;  //< 活跃故事线 ID 列表
+    std::vector<std::string> focus_characters;     //< 重点刻画角色列表
+    std::vector<std::string> focus_settings;       //< 重点描写的场景/环境列表
 
     // ---- 项目管理 ----
-    std::string status = "outlined";   ///< 写作状态：outlined / drafting / revised / final
-    std::string file_path;             ///< 章节正文的存储文件路径
-    int word_count = 0;                ///< 字数统计
+    std::string status = "outlined";   //< 写作状态：outlined / drafting / revised / final
+    std::string file_path;             //< 章节正文的存储文件路径
+    int word_count = 0;                //< 字数统计
 
     // ---- 扩展 ----
-    std::map<std::string, nlohmann::json> metadata;    ///< 扩展元数据（兼容未来字段）
+    std::map<std::string, nlohmann::json> metadata;    //< 扩展元数据（兼容未来字段）
 };
 
 inline void to_json(nlohmann::json& j, const Chapter& c) {

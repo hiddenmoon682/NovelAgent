@@ -1,9 +1,9 @@
 #pragma once
 
-/// TokenTracker — 会话级 Token 追踪器（Issue 3 拆分自 ContextManager）。
-///
-/// 纯计算类，无外部依赖。负责累计 LLM 调用的 token 消耗并提供用量查询。
-/// 可独立单元测试，无需构造 ContextManager / Project / FileStorageBackend。
+// TokenTracker — 会话级 Token 追踪器（Issue 3 拆分自 ContextManager）。
+//
+// 纯计算类，无外部依赖。负责累计 LLM 调用的 token 消耗并提供用量查询。
+// 可独立单元测试，无需构造 ContextManager / Project / FileStorageBackend。
 
 #include "agent/ContextManagerTypes.h"
 
@@ -11,12 +11,12 @@ namespace agent {
 
 class TokenTracker {
 public:
-    /// 设置模型上下文窗口上限（从 ProviderConfig 获取）。
+    // 设置模型上下文窗口上限（从 ProviderConfig 获取）。
     void setModelLimit(int limit) {
         if (limit > 0) state_.model_context_limit = limit;
     }
 
-    /// 累计一次 LLM 请求的 token 消耗。
+    // 累计一次 LLM 请求的 token 消耗。
     void record(int input_tokens, int output_tokens) {
         state_.total_input_tokens += input_tokens;
         state_.total_output_tokens += output_tokens;
@@ -24,7 +24,7 @@ public:
         current_context_size_ = input_tokens;
     }
 
-    /// 请求前检查上下文用量状态。
+    // 请求前检查上下文用量状态。
     PreRequestResult check() const {
         PreRequestResult r;
         r.model_limit = state_.model_context_limit;
@@ -40,31 +40,31 @@ public:
         return r;
     }
 
-    /// 返回累计统计快照。
+    // 返回累计统计快照。
     const SessionTokenState& snapshot() const { return state_; }
     int sessionInputTokens() const { return state_.total_input_tokens; }
     int sessionOutputTokens() const { return state_.total_output_tokens; }
     int requestCount() const { return state_.request_count; }
     int modelLimit() const { return state_.model_context_limit; }
 
-    /// 返回当前用量百分比 [0, 100]。
+    // 返回当前用量百分比 [0, 100]。
     int usagePercent() const {
         if (state_.model_context_limit <= 0) return 0;
         return (current_context_size_ * 100) / state_.model_context_limit;
     }
 
-    /// 返回最近一次请求的上下文大小（供外部使用）。
+    // 返回最近一次请求的上下文大小（供外部使用）。
     int currentContextSize() const { return current_context_size_; }
-    /// 手动设置当前上下文大小（供 assemble() 在 LLM 调用前写入启发式估算值）。
+    // 手动设置当前上下文大小（供 assemble() 在 LLM 调用前写入启发式估算值）。
     void setCurrentContextSize(int size) { current_context_size_ = size; }
 
-    /// 重置全部会话统计。
+    // 重置全部会话统计。
     void reset() {
         state_ = SessionTokenState{};
         current_context_size_ = 0;
     }
 
-    /// Issue 3: 从持久化恢复 Token 统计（供 ContextManager::loadSessionState 使用）。
+    // Issue 3: 从持久化恢复 Token 统计（供 ContextManager::loadSessionState 使用）。
     void restore(const SessionTokenState& snapshot, int context_size = 0) {
         state_ = snapshot;
         current_context_size_ = context_size;
@@ -72,7 +72,7 @@ public:
 
 private:
     SessionTokenState state_;
-    int current_context_size_ = 0;  ///< 最后一次请求的实际上下文 token 数
+    int current_context_size_ = 0;  //< 最后一次请求的实际上下文 token 数
 };
 
 } // namespace agent

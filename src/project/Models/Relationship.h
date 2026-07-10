@@ -1,6 +1,6 @@
 #pragma once
 
-/// Relationship — 角色之间的关系。
+// Relationship — 角色之间的关系。
 
 #include "project/Models/ModelDetail.h"
 

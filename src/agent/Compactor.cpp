@@ -1,4 +1,4 @@
-/// Compactor 实现 — LLM 驱动的对话压缩。
+// Compactor 实现 — LLM 驱动的对话压缩。
 
 #include "agent/Compactor.h"
 
@@ -14,10 +14,10 @@ namespace agent {
 
 namespace {
 
-/// Compaction 时保留的最近消息对数。
+// Compaction 时保留的最近消息对数。
 constexpr int kCompactKeepExchanges = 10;   // 保留最近 10 对 = ~20 条消息
 
-/// Compaction 用的 system prompt — 双层摘要：情节事实 + 风格样本。
+// Compaction 用的 system prompt — 双层摘要：情节事实 + 风格样本。
 constexpr const char* kCompactSystemPrompt =
     "你是一个小说创作助手的上下文压缩器。用中文对以下对话历史进行双层摘要：\n"
     "\n"
@@ -29,7 +29,7 @@ constexpr const char* kCompactSystemPrompt =
     "\n"
     "总长度控制在 2000 字以内，事实与风格的比例由你判断。";
 
-/// 构建项目设定参考文本（截断到 1200 字节）。
+// 构建项目设定参考文本（截断到 1200 字节）。
 std::string buildProjectRef(const Project* project, const std::string& chapter_id) {
     if (!project) return {};
     prompt::PromptContextOptions options;

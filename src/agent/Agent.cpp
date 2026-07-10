@@ -1,4 +1,4 @@
-/// Agent 实现 — Agent 最佳实践增强版 (Fix #3,#6) + Phase 4 线程安全 (LLMClientFactory)。
+// Agent 实现 — Agent 最佳实践增强版 (Fix #3,#6) + Phase 4 线程安全 (LLMClientFactory)。
 
 #include "agent/Agent.h"
 #include "agent/AgentOrchestrator.h"
@@ -15,10 +15,10 @@
 namespace agent {
 
 namespace {
-/// 输入长度上限（64K 字符）。
+// 输入长度上限（64K 字符）。
 constexpr size_t kMaxInputLength = 65536;
 
-/// 危险模式列表 — LLM prompt injection / 特殊 token 注入。
+// 危险模式列表 — LLM prompt injection / 特殊 token 注入。
 const std::vector<std::string> kDangerousPatterns = {
     "<|im_start|>", "<|im_end|>",         // LLM 特殊 token 注入
     "忽略以上指令", "ignore all previous", // prompt injection
@@ -26,14 +26,14 @@ const std::vector<std::string> kDangerousPatterns = {
     "<|endoftext|>",                       // GPT 系列 EOS token
 };
 
-/// 上下文中毒防御 — 校验用户输入。
-///
-/// 两层防护：
-///   1. 长度上限 64K（防止内存耗尽型 DoS）
-///   2. 危险模式匹配（LLM 特殊 token 注入 / prompt injection / 伪 system 消息）
-///
-/// 注意：这是尽力而为的防御，不提供绝对安全保证。
-/// @return false 表示输入不合法，reason 说明具体原因。
+// 上下文中毒防御 — 校验用户输入。
+//
+// 两层防护：
+//   1. 长度上限 64K（防止内存耗尽型 DoS）
+//   2. 危险模式匹配（LLM 特殊 token 注入 / prompt injection / 伪 system 消息）
+//
+// 注意：这是尽力而为的防御，不提供绝对安全保证。
+// @return false 表示输入不合法，reason 说明具体原因。
 bool validateInput(const std::string& input, std::string& reason) {
     if (input.size() > kMaxInputLength) {
         reason = "输入过长（最大 64K 字符）";

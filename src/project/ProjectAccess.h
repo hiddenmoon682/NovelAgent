@@ -1,14 +1,14 @@
 #pragma once
 
-/// Project → IProjectReader/IProjectWriter 适配器。
-/// Project 是已有数据模型（plain struct），通过此适配器实现接口。
+// Project → IProjectReader/IProjectWriter 适配器。
+// Project 是已有数据模型（plain struct），通过此适配器实现接口。
 
 #include "project/IProjectAccess.h"
 #include "project/ProjectIO.h"
 #include <stdexcept>
 
-/// 将 Project 适配为 IProjectReader/IProjectWriter。
-/// 轻量包装器，不拥有 Project，仅持有引用。
+// 将 Project 适配为 IProjectReader/IProjectWriter。
+// 轻量包装器，不拥有 Project，仅持有引用。
 class ProjectAccess : public IProjectReader, public IProjectWriter {
     Project& project_;
 public:

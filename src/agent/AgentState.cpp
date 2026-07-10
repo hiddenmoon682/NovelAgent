@@ -1,4 +1,4 @@
-/// StateMachine 实现。
+// StateMachine 实现。
 
 #include "agent/AgentState.h"
 
@@ -8,20 +8,20 @@ namespace agent {
 
 namespace {
 
-/// 判断状态转换是否合法。
-///
-/// 状态转换图：
-///   Idle ──────────→ Thinking ──────────→ AwaitingTool
-///    │   ←──────────    │    ←──────────    │
-///    │                  │                   │
-///    ├──→ WaitingUser ←─┘                   │
-///    │   ←──                               │
-///    │                                      │
-///    ├──→ Fatal ←── Thinking / AwaitingTool / Error
-///    │   ←── (reset)
-///    │
-///    └──→ Error ←── Thinking / AwaitingTool
-///         ←── (recover)
+// 判断状态转换是否合法。
+//
+// 状态转换图：
+//   Idle ──────────→ Thinking ──────────→ AwaitingTool
+//    │   ←──────────    │    ←──────────    │
+//    │                  │                   │
+//    ├──→ WaitingUser ←─┘                   │
+//    │   ←──                               │
+//    │                                      │
+//    ├──→ Fatal ←── Thinking / AwaitingTool / Error
+//    │   ←── (reset)
+//    │
+//    └──→ Error ←── Thinking / AwaitingTool
+//         ←── (recover)
 bool isValidTransition(AgentState from, AgentState to) {
     // 同状态转换——无害，允许
     if (from == to) return true;

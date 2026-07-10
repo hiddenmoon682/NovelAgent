@@ -1,4 +1,4 @@
-/// SessionManager 实现 — Phase 4 线程安全：每个会话通过工厂创建独立的 Agent/LLMClient。
+// SessionManager 实现 — Phase 4 线程安全：每个会话通过工厂创建独立的 Agent/LLMClient。
 
 #include "server/SessionManager.h"
 #include "llm/LLMClientFactory.h"

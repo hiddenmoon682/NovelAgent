@@ -1,4 +1,4 @@
-/// IToolProvider 实现。
+// IToolProvider 实现。
 
 #include "agent/IToolProvider.h"
 #include "agent/ToolRegistry.h"

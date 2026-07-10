@@ -1,4 +1,4 @@
-/// NovelChunker 实现 — 小说文本智能切分。
+// NovelChunker 实现 — 小说文本智能切分。
 
 #include "retrieval/NovelChunker.h"
 

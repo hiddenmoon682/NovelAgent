@@ -1,14 +1,14 @@
-/// VectorStore 实现 — JSON 文件后端 + 暴力余弦相似度搜索。
-///
-/// 向量文件格式（JSON 数组）:
-/// [
-///   {
-///     "id": "ch-001-seg-0",
-///     "embedding": [0.123, -0.456, ...],
-///     "metadata": {"type": "chapter", "chapter_id": "ch-001", "chunk_index": 0}
-///   },
-///   ...
-/// ]
+// VectorStore 实现 — JSON 文件后端 + 暴力余弦相似度搜索。
+//
+// 向量文件格式（JSON 数组）:
+// [
+//   {
+//     "id": "ch-001-seg-0",
+//     "embedding": [0.123, -0.456, ...],
+//     "metadata": {"type": "chapter", "chapter_id": "ch-001", "chunk_index": 0}
+//   },
+//   ...
+// ]
 
 #include "retrieval/VectorStore.h"
 

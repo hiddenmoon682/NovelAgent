@@ -1,16 +1,16 @@
 #pragma once
 
-/// 固定大小线程池 — Issue 4：替代 std::async 的 SubAgent 并发执行。
-///
-/// 特性：
-/// - 固定 N 个 std::jthread 工作线程，任务队列无界
-/// - submit() 返回 std::future<T>，接口与 std::async 对齐
-/// - 析构时自动等待所有任务完成 + 关闭线程
-///
-/// 使用示例:
-///   ThreadPool pool(4);
-///   auto future = pool.submit([](int x) { return x * 2; }, 21);
-///   int result = future.get();  // 42
+// 固定大小线程池 — Issue 4：替代 std::async 的 SubAgent 并发执行。
+//
+// 特性：
+// - 固定 N 个 std::jthread 工作线程，任务队列无界
+// - submit() 返回 std::future<T>，接口与 std::async 对齐
+// - 析构时自动等待所有任务完成 + 关闭线程
+//
+// 使用示例:
+//   ThreadPool pool(4);
+//   auto future = pool.submit([](int x) { return x * 2; }, 21);
+//   int result = future.get();  // 42
 
 #include <condition_variable>
 #include <functional>
@@ -26,7 +26,7 @@ namespace agent {
 
 class ThreadPool {
 public:
-    /// @param num_threads  工作线程数（默认 12，上限 32）
+    // @param num_threads  工作线程数（默认 12，上限 32）
     explicit ThreadPool(size_t num_threads = 12)
         : stop_(false)
     {
@@ -50,8 +50,8 @@ public:
         // std::jthread 析构自动 join
     }
 
-    /// 提交任务，返回 future。
-    /// 接口与 std::async 对齐：submit(fn, args...)
+    // 提交任务，返回 future。
+    // 接口与 std::async 对齐：submit(fn, args...)
     template <typename F, typename... Args>
     auto submit(F&& f, Args&&... args)
         -> std::future<std::invoke_result_t<F, Args...>>
@@ -78,13 +78,13 @@ public:
         return future;
     }
 
-    /// 当前排队任务数。
+    // 当前排队任务数。
     size_t pending() const {
         std::lock_guard<std::mutex> lock(mutex_);
         return tasks_.size();
     }
 
-    /// 当前工作线程数。
+    // 当前工作线程数。
     size_t workers() const { return workers_.size(); }
 
 private:

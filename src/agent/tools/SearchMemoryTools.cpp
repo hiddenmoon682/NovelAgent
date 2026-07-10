@@ -1,4 +1,4 @@
-/// SearchMemoryTool 实现 — 显式语义搜索，允许 LLM 主动查询向量存储。
+// SearchMemoryTool 实现 — 显式语义搜索，允许 LLM 主动查询向量存储。
 
 #include "agent/tools/SearchMemoryTools.h"
 

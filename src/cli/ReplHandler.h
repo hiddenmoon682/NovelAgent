@@ -1,12 +1,12 @@
 #pragma once
 
-/// REPL 处理器 — Phase 5 增强版。
-///
-/// 支持 Claude Code 风格体验：
-/// - 直接输入 novelagent.exe 进入交互 GUI（无需 -p）
-/// - /new <name> 创建新项目
-/// - /load <path> 打开已有项目
-/// - 彩色状态栏 + ANSI 主题
+// REPL 处理器 — Phase 5 增强版。
+//
+// 支持 Claude Code 风格体验：
+// - 直接输入 novelagent.exe 进入交互 GUI（无需 -p）
+// - /new <name> 创建新项目
+// - /load <path> 打开已有项目
+// - 彩色状态栏 + ANSI 主题
 
 #include "agent/Agent.h"
 #include "cli/CommandParser.h"
@@ -28,10 +28,10 @@ public:
     void run();
     void setWelcomeMessage(std::string msg);
 
-    /// 切换当前项目（供 /load /new 使用）。
+    // 切换当前项目（供 /load /new 使用）。
     void setProject(std::shared_ptr<Project> p);
 
-    /// Issue 6: 设置索引服务（通过抽象接口，消除 NovelAgentApp* 反向依赖）
+    // Issue 6: 设置索引服务（通过抽象接口，消除 NovelAgentApp* 反向依赖）
     void setIndexService(agent::IIndexService* svc) { index_service_ = svc; }
 
 private:
@@ -46,7 +46,7 @@ private:
     void setupCommands();
     void setupPhase5Commands();
 
-    /// 打开或创建项目并刷新 Agent 工具注册。
+    // 打开或创建项目并刷新 Agent 工具注册。
     bool openProject(const std::string& path);
 
     std::vector<std::string> getCompletions(const std::string& prefix) const;

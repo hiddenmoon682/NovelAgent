@@ -1,4 +1,4 @@
-/// ToolCallLoop 测试 — CRIT-2 反思机制验证 + 核心功能测试。
+// ToolCallLoop 测试 — CRIT-2 反思机制验证 + 核心功能测试。
 
 #include "agent/ToolCallLoop.h"
 #include "agent/IToolProvider.h"

@@ -59,21 +59,21 @@ class ILLMClient {
 public:
     virtual ~ILLMClient() = default;
 
-    /// 流式调用：实时通过 callbacks 输出增量内容 / 推理过程。
+    // 流式调用：实时通过 callbacks 输出增量内容 / 推理过程。
     virtual LLMResponse chat(
         const std::vector<Message>& messages,
         const std::vector<ToolDefinition>& tools = {},
         const std::string& system_prompt = "",
         StreamCallbacks callbacks = {}) = 0;
 
-    /// 非流式调用：等待完整响应后返回 LLMResponse。
-    /// 适用于不需要实时显示的场景（如工具返回结果处理）。
+    // 非流式调用：等待完整响应后返回 LLMResponse。
+    // 适用于不需要实时显示的场景（如工具返回结果处理）。
     virtual LLMResponse chatNonStreaming(
         const std::vector<Message>& messages,
         const std::vector<ToolDefinition>& tools = {},
         const std::string& system_prompt = "") = 0;
 
-    /// 返回当前使用的 ProviderConfig（只读引用）。
+    // 返回当前使用的 ProviderConfig（只读引用）。
     virtual const ProviderConfig& config() const = 0;
 };
 

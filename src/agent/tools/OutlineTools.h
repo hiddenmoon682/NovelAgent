@@ -4,8 +4,8 @@
 
 namespace agent {
 
-/// 获取大纲信息。
-/// 参数: 无 → 返回: { outline: { premise, story_structure, ... } }
+// 获取大纲信息。
+// 参数: 无 → 返回: { outline: { premise, story_structure, ... } }
 class GetOutlineTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -17,7 +17,7 @@ public:
     ToolCategory category() const override { return ToolCategory::Outline; }
 };
 
-/// 查看项目信息。
+// 查看项目信息。
 class GetProjectStatusTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -29,7 +29,7 @@ public:
     ToolCategory category() const override { return ToolCategory::Project; }
 };
 
-/// 创建新卷。
+// 创建新卷。
 class CreateVolumeTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -43,7 +43,7 @@ public:
     ToolCategory category() const override { return ToolCategory::Outline; }
 };
 
-/// 更新卷字段。
+// 更新卷字段。
 class UpdateVolumeTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -57,7 +57,7 @@ public:
     ToolCategory category() const override { return ToolCategory::Outline; }
 };
 
-/// 创建新剧情线。
+// 创建新剧情线。
 class CreatePlotThreadTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:
@@ -71,7 +71,7 @@ public:
     ToolCategory category() const override { return ToolCategory::Outline; }
 };
 
-/// 更新剧情线字段。
+// 更新剧情线字段。
 class UpdatePlotThreadTool : public BuiltInTool {
     std::shared_ptr<Project> project_;
 public:

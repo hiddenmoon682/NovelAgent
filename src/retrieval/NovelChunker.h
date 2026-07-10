@@ -1,19 +1,19 @@
 #pragma once
 
-/// 小说文本智能切分器。
-///
-/// 职责：将长篇小说内容切分为适合嵌入的文本块（chunk）。
-/// 切分策略：
-///   - 章节正文：优先按 Scene 边界切分，无 Scene 时按段落/空行边界
-///   - 每个 chunk 500-2000 字
-///   - 相邻 chunk 保留 10-20% 重叠（维持语义连贯性）
-///   - 角色/设定/世界规则：拼接核心信息为单条可嵌入文本
-///
-/// 使用示例:
-///   NovelChunker chunker;
-///   auto chunks = chunker.chunkChapter(chapter, markdown_content);
-///   auto char_text = chunker.chunkCharacter(character);
-///   auto setting_text = chunker.chunkSetting(setting);
+// 小说文本智能切分器。
+//
+// 职责：将长篇小说内容切分为适合嵌入的文本块（chunk）。
+// 切分策略：
+//   - 章节正文：优先按 Scene 边界切分，无 Scene 时按段落/空行边界
+//   - 每个 chunk 500-2000 字
+//   - 相邻 chunk 保留 10-20% 重叠（维持语义连贯性）
+//   - 角色/设定/世界规则：拼接核心信息为单条可嵌入文本
+//
+// 使用示例:
+//   NovelChunker chunker;
+//   auto chunks = chunker.chunkChapter(chapter, markdown_content);
+//   auto char_text = chunker.chunkCharacter(character);
+//   auto setting_text = chunker.chunkSetting(setting);
 
 #include <string>
 #include <vector>
@@ -25,74 +25,74 @@ struct WorldRule;
 
 namespace retrieval {
 
-/// 文本块结构。
+// 文本块结构。
 struct TextChunk {
     std::string id;               // 唯一标识，如 "ch-001-0"
     std::string text;             // 切分后的文本
     nlohmann::json metadata;      // 元数据: {type, source_id, chapter_id, chunk_index, ...}
 
-    /// 便捷工厂：创建章节文本块。
+    // 便捷工厂：创建章节文本块。
     static TextChunk chapterChunk(
         const std::string& chapter_id,
         int chunk_index,
         const std::string& text);
 
-    /// 便捷工厂：创建角色嵌入文本块。
+    // 便捷工厂：创建角色嵌入文本块。
     static TextChunk characterChunk(
         const std::string& character_id,
         const std::string& text);
 
-    /// 便捷工厂：创建设定嵌入文本块。
+    // 便捷工厂：创建设定嵌入文本块。
     static TextChunk settingChunk(
         const std::string& setting_id,
         const std::string& text);
 
-    /// 便捷工厂：创建世界规则嵌入文本块。
+    // 便捷工厂：创建世界规则嵌入文本块。
     static TextChunk worldRuleChunk(
         const std::string& rule_id,
         const std::string& text);
 };
 
-/// 小说切分器 — 将小说内容切分为适合嵌入的文本块。
+// 小说切分器 — 将小说内容切分为适合嵌入的文本块。
 class NovelChunker {
 public:
     NovelChunker() = default;
 
-    /// 配置切分参数。
-    /// @param min_chunk_size 最小 chunk 大小（字符数），默认 500
-    /// @param max_chunk_size 最大 chunk 大小（字符数），默认 2000
-    /// @param overlap_ratio  相邻 chunk 重叠比例，默认 0.15 (15%)
+    // 配置切分参数。
+    // @param min_chunk_size 最小 chunk 大小（字符数），默认 500
+    // @param max_chunk_size 最大 chunk 大小（字符数），默认 2000
+    // @param overlap_ratio  相邻 chunk 重叠比例，默认 0.15 (15%)
     void configure(int min_chunk_size = 500,
                    int max_chunk_size = 2000,
                    double overlap_ratio = 0.15);
 
     // ── 章节切分 ──
 
-    /// 将章节 Markdown 正文切分为文本块列表。
-    ///
-    /// 优先按 chapter.scenes 的边界切分；
-    /// 若无 Scene 信息，退化为按段落/空行边界切分。
-    ///
-    /// @param chapter          章节元数据（含 scenes[]）
-    /// @param markdown_content 章节 Markdown 全文
-    /// @return                 文本块列表（按章节顺序排列）
+    // 将章节 Markdown 正文切分为文本块列表。
+    //
+    // 优先按 chapter.scenes 的边界切分；
+    // 若无 Scene 信息，退化为按段落/空行边界切分。
+    //
+    // @param chapter          章节元数据（含 scenes[]）
+    // @param markdown_content 章节 Markdown 全文
+    // @return                 文本块列表（按章节顺序排列）
     std::vector<TextChunk> chunkChapter(
         const Chapter& chapter,
         const std::string& markdown_content) const;
 
     // ── 实体嵌入文本生成 ──
 
-    /// 拼接角色核心信息为单条可嵌入文本。
-    /// 包含：name, role, goal, motivation, personality, traits,
-    ///       internal_conflict, external_conflict, speaking_style, arc
+    // 拼接角色核心信息为单条可嵌入文本。
+    // 包含：name, role, goal, motivation, personality, traits,
+    //       internal_conflict, external_conflict, speaking_style, arc
     static std::string chunkCharacter(const Character& character);
 
-    /// 拼接设定核心信息为单条可嵌入文本。
-    /// 包含：name, category, description, story_function, sensory_profile
+    // 拼接设定核心信息为单条可嵌入文本。
+    // 包含：name, category, description, story_function, sensory_profile
     static std::string chunkSetting(const Setting& setting);
 
-    /// 拼接世界规则核心信息为单条可嵌入文本。
-    /// 包含：name, summary, limitations, costs, exceptions
+    // 拼接世界规则核心信息为单条可嵌入文本。
+    // 包含：name, summary, limitations, costs, exceptions
     static std::string chunkWorldRule(const WorldRule& rule);
 
 private:
@@ -100,24 +100,24 @@ private:
     int max_chunk_size_ = 2000;
     double overlap_ratio_ = 0.15;
 
-    /// 将长文本按段落边界切分为 chunk 列表。
-    /// @param text      输入文本
-    /// @param source_id 来源 ID（用于生成 chunk id）
-    /// @return          文本块列表
+    // 将长文本按段落边界切分为 chunk 列表。
+    // @param text      输入文本
+    // @param source_id 来源 ID（用于生成 chunk id）
+    // @return          文本块列表
     std::vector<TextChunk> chunkByParagraphs(
         const std::string& text,
         const std::string& source_id) const;
 
-    /// 按 Scene 标记切分章节正文。
-    /// Scene 标记格式: "## Scene N" 或 "### 场景 N" 等。
+    // 按 Scene 标记切分章节正文。
+    // Scene 标记格式: "## Scene N" 或 "### 场景 N" 等。
     std::vector<TextChunk> chunkByScenes(
         const std::string& markdown_content,
         const Chapter& chapter) const;
 
-    /// 将文本切分为段落列表（按空行或单换行）。
+    // 将文本切分为段落列表（按空行或单换行）。
     static std::vector<std::string> splitParagraphs(const std::string& text);
 
-    /// 生成 chunk 重叠文本（从上一块的末尾取 overlap_ratio 比例的内容）。
+    // 生成 chunk 重叠文本（从上一块的末尾取 overlap_ratio 比例的内容）。
     std::string overlapFromPrevious(const std::string& prev_chunk_text) const;
 };
 
