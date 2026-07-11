@@ -87,6 +87,8 @@ Compaction 的核心职责是"压缩对话"，它不应该自己决定要取什�
 
 如果确实需要压缩时带上项目参考，应该由 `CompactRequest` 或类似结构体携带预处理好的上下文文本，`compact()` 只负责拼接和调用 LLM，不负责调用 `PromptContextBuilder`。
 
+> 执行记录：2026-07-11 — 随问题一修复，`buildProjectRef` 整体删除，Compactor 不再自己获取 project 上下文。调用方可通过 `focus` 参数传入需要的上下文信息。
+
 ---
 
 ## 延伸问题：章节切换时自动触发 compact 不合理（✅ 已修复）
@@ -122,7 +124,7 @@ Compaction 的核心职责是"压缩对话"，它不应该自己决定要取什�
 1. 删除 `maybeAutoCompact()` 中的章节切换触发逻辑，只保留基于 `shouldAutoCompact()` 的自动压缩
 2. 如果需要保留章节切换时的压缩提示，改为输出一条建议消息（"切换了章节，可考虑 /compact"），由用户决定是否执行
 
----
+> 执行记录：2026-07-11 — `maybeAutoCompact()` 整个函数删除（含声明和调用点）。不再有章节切换触发的自动 compact。`shouldAutoCompact()` 基于 token 用量的自动压缩保留不动。
 
 ## 延伸问题：assemble() 中的自动向量检索不可控（⚠️ 部分修复）
 
