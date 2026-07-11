@@ -14,7 +14,7 @@
 - 命名空间：`utils::file`, `utils::string`, `agent::`, `llm::`。
 
 ### 工作流
-- 每 Phase 结束后：更新 CHANGELOG → git commit → git push。
+- 每 Phase 结束后：更新 CHANGELOG → git commit。（不自动 push，需要时手动执行）
 - 变更记录以增量添加方式写入根目录 `CHANGELOG.md`（按日期倒序，最新在最上），不创建额外的 changelog 文件。
 - 完成阶段性工作后更新 `docs/DEV_GUIDE.md` 中的相关章节。
 
@@ -117,7 +117,6 @@
 
 ### 已有的优化（不要退化）
 - `TokenCounter::countSingleMessage()` — 单条消息统计，避免临时 vector
-- `ContextManager::truncateMessages()` — O(n) 反向遍历
 - `TokenCounter::countTokens()` — 中英文单次遍历
 - `ListChaptersTool` — 只返回元数据，不读文件
 

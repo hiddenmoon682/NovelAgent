@@ -2,6 +2,7 @@
 #include "llm/Message.h"
 
 #include <cassert>
+#include <cmath>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -35,6 +36,11 @@ static int tests_passed = 0;
             FAIL(#cond); \
         } \
     } while (0)
+
+#define CHECK_NEAR(a, b, eps) \
+    do { if (std::abs((a) - (b)) > (eps)) { \
+        std::cout << "FAILED: " << #a << "=" << (a) << " vs " << #b << "=" << (b) << " (eps=" << (eps) << ")\n"; \
+        return; } } while(0)
 
 // ---------------------------------------------------------------------------
 // estimateChineseChars
@@ -229,6 +235,158 @@ void test_utf8_invalid_continuation() {
 }
 
 // ===========================================================================
+// 校准测试（从 TokenCalibrator 合并）
+// ===========================================================================
+
+void test_cal_no_data_returns_one() {
+    TEST("calibrate — 无校准数据时返回 1.0");
+    llm::TokenCounter cal;
+    CHECK(cal.getCorrection("unknown-model") == 1.0);
+    CHECK(cal.apply("unknown-model", 100) == 100);
+    PASS();
+}
+
+void test_cal_first_calibration() {
+    TEST("calibrate — 首次校准直接使用 ratio");
+    llm::TokenCounter cal;
+    cal.calibrate("test-model", 100, 80);
+    CHECK_NEAR(cal.getCorrection("test-model"), 0.8, 0.001);
+    CHECK(cal.apply("test-model", 100) == 80);
+    PASS();
+}
+
+void test_cal_ema_smoothing() {
+    TEST("calibrate — EMA 平滑：多次校准");
+    llm::TokenCounter cal;
+
+    cal.calibrate("m", 100, 80);
+    auto c1 = cal.getCorrection("m");
+
+    cal.calibrate("m", 100, 70);
+    auto c2 = cal.getCorrection("m");
+
+    CHECK(c2 < c1);
+    CHECK_NEAR(c2, 0.77, 0.001);
+
+    cal.calibrate("m", 100, 90);
+    CHECK_NEAR(cal.getCorrection("m"), 0.809, 0.001);
+
+    PASS();
+}
+
+void test_cal_multi_model_isolation() {
+    TEST("calibrate — 多模型独立校准");
+    llm::TokenCounter cal;
+
+    cal.calibrate("model-a", 100, 80);
+    cal.calibrate("model-b", 100, 120);
+
+    CHECK_NEAR(cal.getCorrection("model-a"), 0.8, 0.001);
+    CHECK_NEAR(cal.getCorrection("model-b"), 1.2, 0.001);
+
+    cal.calibrate("model-a", 100, 90);
+    CHECK_NEAR(cal.getCorrection("model-a"), 0.83, 0.001);
+    CHECK_NEAR(cal.getCorrection("model-b"), 1.2, 0.001);
+
+    PASS();
+}
+
+void test_cal_zero_defense() {
+    TEST("calibrate — estimated=0/负数 或 actual=0 时无影响");
+    llm::TokenCounter cal;
+
+    cal.calibrate("m", 0, 100);
+    CHECK(cal.getCorrection("m") == 1.0);
+
+    cal.calibrate("m", 100, 0);
+    CHECK(cal.getCorrection("m") == 1.0);
+
+    cal.calibrate("m", -1, 100);
+    CHECK(cal.getCorrection("m") == 1.0);
+
+    PASS();
+}
+
+void test_cal_extreme_ratio_clamp() {
+    TEST("calibrate — ratio < 0.1 或 > 3.0 被截断");
+    llm::TokenCounter cal;
+
+    cal.calibrate("m", 1000, 50);
+    CHECK_NEAR(cal.getCorrection("m"), 0.1, 0.001);
+
+    cal.calibrate("m2", 100, 500);
+    CHECK_NEAR(cal.getCorrection("m2"), 3.0, 0.001);
+
+    PASS();
+}
+
+void test_cal_reset() {
+    TEST("calibrate — reset 后恢复默认 1.0");
+    llm::TokenCounter cal;
+
+    cal.calibrate("m", 100, 80);
+    CHECK(cal.getCorrection("m") != 1.0);
+
+    cal.reset("m");
+    CHECK(cal.getCorrection("m") == 1.0);
+
+    cal.calibrate("a", 100, 80);
+    cal.calibrate("b", 100, 120);
+    cal.resetAll();
+    CHECK(cal.getCorrection("a") == 1.0);
+    CHECK(cal.getCorrection("b") == 1.0);
+
+    PASS();
+}
+
+void test_cal_apply() {
+    TEST("calibrate — apply 返回 estimated * correction");
+    llm::TokenCounter cal;
+
+    cal.calibrate("m", 100, 75);
+    CHECK(cal.apply("m", 200) == 150);
+
+    PASS();
+}
+
+void test_cal_calibrated_models_list() {
+    TEST("calibrate — calibratedModels 返回已校准模型列表");
+    llm::TokenCounter cal;
+    CHECK(cal.calibratedModels().empty());
+
+    cal.calibrate("a", 100, 80);
+    cal.calibrate("b", 100, 120);
+
+    auto models = cal.calibratedModels();
+    CHECK(models.size() == 2);
+
+    PASS();
+}
+
+void test_cal_stats() {
+    TEST("calibrate — stats 返回校准统计");
+    llm::TokenCounter cal;
+
+    cal.calibrate("m", 100, 80);
+    cal.calibrate("m", 200, 160);
+
+    auto s = cal.stats("m");
+    CHECK(s.observations == 2);
+    CHECK(s.total_estimated == 300);
+    CHECK(s.total_actual == 240);
+    CHECK_NEAR(s.correction, 0.8, 0.01);
+
+    PASS();
+}
+
+void test_cal_empty_model_apply() {
+    TEST("calibrate — 空模型名 apply 返回原值");
+    llm::TokenCounter cal;
+    CHECK(cal.apply("", 100) == 100);
+    PASS();
+}
+
+// ===========================================================================
 // main
 // ===========================================================================
 
@@ -259,6 +417,19 @@ int main() {
 
     test_utf8_truncated_sequence();
     test_utf8_invalid_continuation();
+
+    // 校准
+    test_cal_no_data_returns_one();
+    test_cal_first_calibration();
+    test_cal_ema_smoothing();
+    test_cal_multi_model_isolation();
+    test_cal_zero_defense();
+    test_cal_extreme_ratio_clamp();
+    test_cal_reset();
+    test_cal_apply();
+    test_cal_calibrated_models_list();
+    test_cal_stats();
+    test_cal_empty_model_apply();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;

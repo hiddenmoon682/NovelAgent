@@ -185,7 +185,7 @@ CompactResult ContextManager::compact(
 
     // 估算压缩前后的 token 数
     std::vector<llm::Message> to_compact(all_msgs.begin(), all_msgs.begin() + compact_count);
-    result.tokens_before = llm::TokenCounter::countMessages(to_compact);
+    result.tokens_before = llm::TokenCounter::countMessagesCalibrated(to_compact, model_name_, calibrator_);
 
     // 拼接待压缩消息为文本
     std::ostringstream oss;
@@ -225,9 +225,6 @@ CompactResult ContextManager::compact(
                           model_name_, estimated_input, response.prompt_tokens);
         }
 
-        summary_ = result.summary;
-        marker_ = compact_count;
-
         // 从 conversation 头部删除已压缩的旧消息
         conversation.removeOldest(compact_count);
 
@@ -236,6 +233,10 @@ CompactResult ContextManager::compact(
         // 注意先 prepend assistant 再 prepend user，最终顺序为 user→assistant。
         conversation.prepend(llm::Message::assistant("[被压缩的历史摘要]\n" + result.summary));
         conversation.prepend(llm::Message::user("【系统】以下是被压缩的旧对话摘要："));
+
+        // 在对话修改成功后统一更新内部状态，避免异常路径下 summary_/marker_ 不一致
+        summary_ = result.summary;
+        marker_ = compact_count;
 
         spdlog::info("[ContextManager] compact 完成: {} 条 → 摘要 ({} → {} tokens, {:.0f}%)",
                      compact_count, result.tokens_before, result.tokens_after,
@@ -246,6 +247,8 @@ CompactResult ContextManager::compact(
         spdlog::error("[ContextManager] compact LLM 调用失败: {}", e.what());
         result.summary = "(压缩失败: " + std::string(e.what()) + ")";
         result.messages_compacted = 0;
+        summary_.clear();
+        marker_ = 0;
     }
 
     return result;
@@ -398,25 +401,6 @@ std::string ContextManager::buildCompactPrompt(
     const std::optional<std::string>& focus) const
 {
     std::string compact_prompt = kCompactSystemPrompt;
-
-    // 检查是否超出模型窗口，超出则截断对话文本
-    int convo_tokens = estimateTokens(conversation_text);
-    int prompt_tokens = estimateTokens(compact_prompt);
-    int total_estimated = convo_tokens + prompt_tokens + 50;
-    int model_limit = tracker_.modelLimit();
-
-    std::string text = conversation_text;  // 可修改的副本
-
-    if (model_limit > 0 && total_estimated > model_limit) {
-        spdlog::warn("[ContextManager] 待压缩对话 {} tokens 超过模型窗口 {}，"
-                     "截断后再提交", total_estimated, model_limit);
-        size_t max_convo_chars = text.size()
-            * model_limit / total_estimated * 7 / 10;
-        if (max_convo_chars < text.size()) {
-            max_convo_chars = (std::max)(max_convo_chars, size_t{500});
-            text = text.substr(0, max_convo_chars) + "\n...(已截断)";
-        }
-    }
 
     if (focus && !focus->empty()) {
         compact_prompt += std::string("\n特别注意：") + *focus;

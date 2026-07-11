@@ -24,7 +24,7 @@ public:
         current_context_size_ = input_tokens;
     }
 
-    // 请求前检查上下文用量状态。
+    // 请求前检查上下文用量状态（基于最近一次请求的实际大小）。
     PreRequestResult check() const {
         PreRequestResult r;
         r.model_limit = state_.model_context_limit;
@@ -33,6 +33,24 @@ public:
             r.usage_percent = (r.estimated_tokens * 100) / r.model_limit;
         }
         if (r.usage_percent >= 85) {
+            r.status = ContextStatus::Critical;
+        } else if (r.usage_percent >= 60) {
+            r.status = ContextStatus::Warning;
+        }
+        return r;
+    }
+
+    // 基于传入的实时 token 数做用量检查（替代 check()，用于调用方刚算好的数据）。
+    PreRequestResult check(int realtime_total_tokens) const {
+        PreRequestResult r;
+        r.model_limit = state_.model_context_limit;
+        r.estimated_tokens = realtime_total_tokens;
+        if (r.model_limit > 0) {
+            r.usage_percent = (realtime_total_tokens * 100) / r.model_limit;
+        }
+        if (r.model_limit > 0 && realtime_total_tokens > r.model_limit) {
+            r.status = ContextStatus::Critical;
+        } else if (r.usage_percent >= 85) {
             r.status = ContextStatus::Critical;
         } else if (r.usage_percent >= 60) {
             r.status = ContextStatus::Warning;

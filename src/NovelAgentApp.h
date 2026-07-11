@@ -7,7 +7,7 @@
 #include "agent/ToolRegistry.h"
 #include "config/AppConfig.h"
 #include "llm/LLMClientFactory.h"
-#include "llm/TokenCalibrator.h"
+#include "llm/TokenCounter.h"
 #include "project/FileStorageBackend.h"
 #include "retrieval/VectorStore.h"
 #include "retrieval/EmbeddingGenerator.h"
@@ -51,7 +51,7 @@ private:
     agent::ToolRegistry registry_;
     agent::Agent agent_;
     std::shared_ptr<Project> project_;
-    llm::TokenCalibrator calibrator_;  // Token 自校准器（必须在 cm_ 之前初始化）
+    llm::TokenCounter calibrator_;  // Token 自校准器（必须在 cm_ 之前初始化）
     FileStorageBackend storage_;   // 必须在 cm_ 之前初始化
     agent::ContextManager cm_;
     retrieval::VectorStore vector_store_;               // 向量存储（语义检索）

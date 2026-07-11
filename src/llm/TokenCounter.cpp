@@ -1,6 +1,8 @@
 #include "llm/TokenCounter.h"
+#include <algorithm>
 #include <cstdint>
 #include <cctype>
+#include <cmath>
 
 namespace llm {
 
@@ -172,6 +174,92 @@ int TokenCounter::countMessages(const std::vector<Message>& messages)
     }
 
     return total;
+}
+
+// ===========================================================================
+// 静态校准辅助（一步完成 count + apply）
+// ===========================================================================
+
+int TokenCounter::countTokensCalibrated(
+    const std::string& text, const std::string& model,
+    const TokenCounter* calibrator)
+{
+    int raw = countTokens(text);
+    if (calibrator && !model.empty())
+        return calibrator->apply(model, raw);
+    return raw;
+}
+
+int TokenCounter::countMessagesCalibrated(
+    const std::vector<Message>& messages, const std::string& model,
+    const TokenCounter* calibrator)
+{
+    int raw = countMessages(messages);
+    if (calibrator && !model.empty())
+        return calibrator->apply(model, raw);
+    return raw;
+}
+
+// ===========================================================================
+// 校准实现（从 TokenCalibrator 合并）
+// ===========================================================================
+
+void TokenCounter::calibrate(const std::string& model, int estimated, int actual) {
+    if (estimated <= 0 || actual <= 0) return;
+
+    auto& mc = models_[model];
+    double ratio = static_cast<double>(actual) / estimated;
+    ratio = std::clamp(ratio, kMinCorrection, kMaxCorrection);
+
+    if (mc.observations == 0) {
+        mc.correction = ratio;
+    } else {
+        mc.correction = kAlpha * ratio + (1.0 - kAlpha) * mc.correction;
+    }
+
+    mc.observations++;
+    mc.total_estimated += estimated;
+    mc.total_actual += actual;
+}
+
+double TokenCounter::getCorrection(const std::string& model) const {
+    auto it = models_.find(model);
+    if (it == models_.end()) return 1.0;
+    return std::clamp(it->second.correction, kMinCorrection, kMaxCorrection);
+}
+
+int TokenCounter::apply(const std::string& model, int estimated) const {
+    if (model.empty()) return estimated;
+    return static_cast<int>(estimated * getCorrection(model));
+}
+
+void TokenCounter::reset(const std::string& model) {
+    models_.erase(model);
+}
+
+void TokenCounter::resetAll() {
+    models_.clear();
+}
+
+std::vector<std::string> TokenCounter::calibratedModels() const {
+    std::vector<std::string> result;
+    result.reserve(models_.size());
+    for (const auto& pair : models_) {
+        result.push_back(pair.first);
+    }
+    return result;
+}
+
+TokenCounter::CalibrationStats TokenCounter::stats(const std::string& model) const {
+    CalibrationStats s;
+    auto it = models_.find(model);
+    if (it != models_.end()) {
+        s.correction = it->second.correction;
+        s.observations = it->second.observations;
+        s.total_estimated = it->second.total_estimated;
+        s.total_actual = it->second.total_actual;
+    }
+    return s;
 }
 
 } // namespace llm
