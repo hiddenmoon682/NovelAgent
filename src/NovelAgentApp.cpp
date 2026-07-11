@@ -68,7 +68,6 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
     if (project_ && !project_->path.empty()) {
         std::string vec_path = project_->path + "/.novelagent/vectors.json";
         vector_store_.init(vec_path);
-        cm_.setRetrievalBackend(&vector_store_, &embedding_gen_);
     }
     // 默认使用串行处理器（支持完整 ToolCallLoop + 工具集）。
     // Agent 构造函数已调用 useSerialProcessor()，无需再次设置。

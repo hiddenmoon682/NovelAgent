@@ -4,9 +4,8 @@
 //
 // Issue 3 拆分后：TokenTracker（③ Token 追踪）+ Compactor（②⑤ 对话压缩）
 // 已抽为独立类。ContextManager 保留核心职责作为门面：
-//   1. 构建动态 system prompt（项目/章节上下文 + 压缩摘要）
+//   1. 构建动态 system prompt（项目上下文 + 压缩摘要）
 //   3. (委托 TokenTracker)  会话级 token 追踪（累计输入/输出，阈值检查）
-//   4. 向量检索协调（IVectorStore + IEmbeddingGenerator）
 //   5. (委托 Compactor)    手动/自动 compaction（LLM 对话压缩）
 //   6. 会话持久化委托给 SessionPersistence
 //
@@ -31,11 +30,6 @@ namespace llm {
 class ILLMClient;
 }
 
-namespace retrieval {
-class IVectorStore;
-class IEmbeddingGenerator;
-}
-
 namespace agent {
 
 // 上下文管理器。
@@ -56,12 +50,11 @@ public:
     //
     // 使用内部存储的 project_（由 setProject 设置）。
     //
-    // 7 步流水线：
+    // 6 步流水线：
     //   1. 构建系统提示词（项目上下文 + 当前章节的角色/大纲/世界观）
-    //   1.5. 向量检索（取最后一条 user 消息做语义召回，注入"仅作事实参考"标签）
     //   2. 注入压缩摘要（如果 compact() 已执行，"当前风格参照"标签）
     //   3. 计算消息预算 = max_context_tokens - system_prompt_tokens
-    //   4. 生成告警（用量临界 / 预算耗尽 / 向量过期 / 超出窗口）
+    //   4. 生成告警（用量临界 / 预算耗尽 / 超出窗口）
     //   5. 截断消息（preserved 优先保留，最新消息贪心保留）
     //   6. 统计总 token + 最终预检（超出模型窗口则追加警告）
     //   7. 缓存警告/截断数/当前大小（供 Agent/REPL 在下一次请求前读取）
@@ -154,24 +147,6 @@ public:
     int lastTruncatedCount() const { return last_truncated_count_; }
 
     // ================================================================
-    // 向量检索（长期记忆层）
-    // ================================================================
-
-    // 设置向量检索后端（非拥有指针，生命周期由 NovelAgentApp 管理）。
-    void setRetrievalBackend(retrieval::IVectorStore* store,
-                             retrieval::IEmbeddingGenerator* gen,
-                             int top_k = 3);
-
-    // 是否有可用的检索后端。
-    bool hasRetrievalBackend() const { return vector_store_ && embedding_gen_; }
-
-    // 在检索前检查 Project 是否比向量库更新（在 assemble 内部调用）。
-    bool isVectorStoreStale() const;
-
-    // /rewind 后标记向量库为脏，下次检索前提示 /index 重建。
-    void clearVectorStore() { vector_store_dirty_ = true; }
-
-    // ================================================================
     // 会话持久化（委托 SessionPersistence）
     // ================================================================
 
@@ -208,12 +183,6 @@ private:
     // ── 会话级状态（精简后）──
     std::vector<std::string> last_warnings_;  //  最后一次 assemble() 的警告缓存
     int last_truncated_count_ = 0;            //  最后一次 assemble() 的截断数
-
-    // ── 向量检索后端（非拥有）──
-    retrieval::IVectorStore* vector_store_ = nullptr;
-    retrieval::IEmbeddingGenerator* embedding_gen_ = nullptr;
-    int retrieval_top_k_ = 3;
-    bool vector_store_dirty_ = false;  // /rewind 后标记，跳过检索并提示 /index
 
     // 按 token 预算从新到旧截断消息（preserved 消息优先保留）。
     // 使用 calibrator_ 修正 token 估算（若已注入）。

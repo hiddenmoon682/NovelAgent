@@ -27,7 +27,6 @@ struct SessionMeta {
     SessionTokenState token_state;          //  累计 token 消耗统计（输入/输出/请求数）
     std::vector<size_t> preserved_indices;  //  /pin 保留的消息在 conversation 中的索引
     int64_t project_mtime = 0;              //  novel.json 最后修改时间戳（检测设定变更）
-    bool vector_store_dirty = false;        //  向量索引是否已被 /rewind 标记为脏
 };
 
 // 会话持久化管理器。

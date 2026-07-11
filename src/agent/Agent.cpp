@@ -145,8 +145,6 @@ bool Agent::rewindTo(size_t index) {
             spdlog::info("[Agent] 回滚到压缩点(#{} ≤ marker#{})之前，已清空失效摘要",
                          index + 1, marker);
         }
-        // 回滚后标记向量索引为脏，防止检索到"未来"章节片段
-        context_manager_->clearVectorStore();
     }
 
     spdlog::info("[Agent] 回滚到消息 #{} (保留 {} 条)", index, conversation_.size());

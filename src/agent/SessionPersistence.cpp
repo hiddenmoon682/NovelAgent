@@ -112,7 +112,6 @@ void SessionPersistence::saveMeta(const SessionMeta& meta)
     j["token_state"]["model_context_limit"] = meta.token_state.model_context_limit;
     j["preserved_indices"] = meta.preserved_indices;
     j["project_mtime"] = meta.project_mtime;
-    j["vector_store_dirty"] = meta.vector_store_dirty;
 
     std::string path = utils::file::joinPath(storage_.agentDir(), kSessionMetaFile);
     storage_.saveJson(path, j);
@@ -143,7 +142,6 @@ SessionMeta SessionPersistence::loadMeta() const
         meta.preserved_indices = j["preserved_indices"].get<std::vector<size_t>>();
     }
     meta.project_mtime = utils::json::getOrDefault(j, "project_mtime", static_cast<int64_t>(0));
-    meta.vector_store_dirty = utils::json::getOrDefault(j, "vector_store_dirty", false);
 
     spdlog::info("[SessionPersistence] 会话元数据已加载 ({} preserved, compact={} chars, requests={})",
                  meta.preserved_indices.size(), meta.compacted_summary.size(), meta.token_state.request_count);

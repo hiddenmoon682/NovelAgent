@@ -3,16 +3,16 @@
 > 记录日期：2026-07-10
 > 最后更新：2026-07-11
 >
-> 已解决的问题（6/12）：
+> 已解决的问题（7/12）：
 > - ✅ 问题一：buildProjectRef 截断多余 → 整体删除
 > - ✅ 延伸问题：buildProjectRef 放在 Compactor 内部不合理 → 随函数删除
 > - ✅ 延伸问题：章节切换自动 compact → maybeAutoCompact 删除
 > - ✅ 延伸问题：current_chapter_id_ 追踪断裂 → 全套机制移除，全索引模式
 > - ✅ 重构方案：工具替代自动注入 → 已实施（get_chapter_context + get_latest_chapter）
 > - ✅ 去重逻辑半成品（问题四第 4 点）→ covered_ids 随 current_chapter_id_ 移除
+> - ✅ 延伸问题：assemble() 自动向量检索不可控 → 删除步骤 1 自动检索，search_memory 工具替代
 >
-> 未解决的问题（6/12）：
-> - ⚠️ 延伸问题：assemble() 自动向量检索不可控（去重已修，自动检索仍在）
+> 未解决的问题（5/12）：
 > - ❌ 问题：压缩摘要注入到 system prompt 而非对话中
 > - ❌ 问题：assemble() 步骤 4 告警依赖过时数据
 > - ❌ 问题：truncateMessages 安全网几乎不触发
@@ -126,11 +126,11 @@ Compaction 的核心职责是"压缩对话"，它不应该自己决定要取什�
 
 > 执行记录：2026-07-11 — `maybeAutoCompact()` 整个函数删除（含声明和调用点）。不再有章节切换触发的自动 compact。`shouldAutoCompact()` 基于 token 用量的自动压缩保留不动。
 
-## 延伸问题：assemble() 中的自动向量检索不可控（⚠️ 部分修复）
+## 延伸问题：assemble() 中的自动向量检索不可控（✅ 已修复）
 
 ### 问题
 
-`ContextManager::assemble()` 第 329-404 行在每次 LLM 请求前自动执行向量检索，用最近 3 条用户消息做查询语义搜索，结果硬塞入 system prompt。这种方式存在多个隐患。
+`ContextManager::assemble()` 在每次 LLM 请求前自动执行向量检索，用最近 3 条用户消息做查询语义搜索，结果硬塞入 system prompt。这种方式存在多个隐患。
 
 ### 分析
 
@@ -168,7 +168,7 @@ for (const auto& ch : project_->outline.chapters) {
 2. 如果保留自动注入，至少加一个相似度阈值（如低于 0.6 不注入），避免噪声进入 system prompt
 3. 修复第 370-373 行的空循环去重，或者直接删除这段无效代码（✅ 已执行）
 
-> 执行记录：2026-07-11 — 去重逻辑随 `current_chapter_id_` 移除而清理（第 3 点已修）。建议 1、2 未实施。
+> 执行记录：2026-07-11 — 去重逻辑随 `current_chapter_id_` 移除而清理（第 3 点已修）。2026-07-11 Phase 3.7：删除 `assemble()` 中整个步骤 1 向量检索块（建议 1 已实施）。自动检索不再存在，LLM 完全通过 `search_memory` 工具按需搜索。相关死代码（`setRetrievalBackend`、`isVectorStoreStale`、`vector_store_dirty_`、`SessionMeta::vector_store_dirty`）一并清理。
 
 ---
 

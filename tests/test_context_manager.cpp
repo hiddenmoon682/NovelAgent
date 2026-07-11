@@ -90,52 +90,6 @@ void test_session_save_load() {
     PASS();
 }
 
-// =========================================================================
-// A5 修复验证：novel.json 文件名路径
-// 此前 ContextManager 写死 "project.json"，而实际元数据文件是 "novel.json"，
-// 导致 isVectorStoreStale 永远返回 false、mtime 一致性保障整条失效。
-// 本测试验证修复后 isVectorStoreStale 能正确读取 novel.json 的 mtime。
-// =========================================================================
-
-void test_isVectorStoreStale_reads_novel_json() {
-    TEST("A5 — isVectorStoreStale 正确读取 novel.json mtime");
-
-    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_stale_novel";
-    ProjectIO::createProjectDir(tmp, "stale 测试");
-    FileStorageBackend storage(tmp);
-
-    // 构造一个 Project 并绑定到 ContextManager
-    Project proj = ProjectIO::load(tmp);
-    // load() 会设置 proj.path = tmp，但显式确认以防万一
-    proj.path = tmp;
-    agent::ContextManager cm(storage);
-    cm.setProject(&proj);
-
-    // 阶段 1：没有 vectors.json → isVectorStoreStale 返回 false（无索引可比）
-    CHECK(cm.isVectorStoreStale() == false);
-
-    // 先建一个 vectors.json（时间戳 T1），它比 novel.json 旧或相同
-    const std::string vecPath = tmp + "/.novelagent/vectors.json";
-    // 确保 .novelagent 目录存在
-    std::filesystem::create_directories(std::filesystem::path(vecPath).parent_path());
-    utils::file::writeText(vecPath, "[]");
-
-    // 确保后续文件的 mtime 严格晚于 vectors.json（Windows 文件系统 mtime 精度有限）
-    // A12: projectSettingsMtime 现在取 5 个文件的最新 mtime，
-    // sleep 需足够长以跨越所有文件系统的 mtime 颗粒度。
-    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-
-    // 阶段 2：更新项目文件（时间戳 T2 > T1）→ 此时向量索引应判定为 stale
-    ProjectIO::save(proj);
-
-    // A12: projectSettingsMtime 取多文件的 max mtime。ProjectIO::save 重写
-    // novel+outline+characters+settings+world_rules 五个 JSON，均晚于 vectors.json。
-    CHECK(cm.isVectorStoreStale() == true);
-
-    utils::file::removeDir(tmp);
-    PASS();
-}
-
 void test_session_mtime_restored_from_novel_json() {
     TEST("A5 — saveSessionState 记录 novel.json 的非零 mtime");
 
@@ -502,7 +456,6 @@ int main() {
 
     // 基础
     test_session_save_load();
-    test_isVectorStoreStale_reads_novel_json();
     test_session_mtime_restored_from_novel_json();
     test_no_truncation();
     test_truncation();
