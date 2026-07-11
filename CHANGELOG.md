@@ -1,5 +1,22 @@
 # Changelog
 
+## [2026-07-11] Phase 3.7 补充：删除 assemble() 自动向量检索
+
+> 删除 `ContextManager::assemble()` 中每轮自动执行向量检索并注入 system prompt 的逻辑。
+> 理由与该阶段已删除的 `buildProjectRef` / `maybeAutoCompact` 相同：代码替 LLM 做决定——不可控、
+> 质量不高、导致 system prompt 膨胀。LLM 通过 `search_memory` 工具按需搜索，结果在对话消息中而非 system prompt。
+
+### 代码清理
+- `ContextManager::assemble()` 删除步骤 1 自动向量检索块（~60 行）
+- 删除 `setRetrievalBackend` / `isVectorStoreStale` / `clearVectorStore` / `hasRetrievalBackend` 接口
+- 删除 `vector_store_` / `embedding_gen_` / `retrieval_top_k_` / `vector_store_dirty_` 成员变量
+- 删除 `SessionMeta::vector_store_dirty` / `ContextAssembly::has_semantic_context` 字段
+- 删除 `Agent::rewindTo` 中对 `clearVectorStore` 的调用
+- 删除 `test_isVectorStoreStale_reads_novel_json` 测试（`test_context_manager` 23→22 测试）
+
+### 文档
+- `COMPACTOR_PROJECT_REF_TRUNCATION.md` 状态更新：7/12 已解决（原 6/12）
+
 ## [2026-07-10] 注释清理：移除 Doxygen 标记
 
 > 移除所有 `@param`、`@return`、`@note`、`@warning`、`@brief`、`@throws` 等 Doxygen 标记，
