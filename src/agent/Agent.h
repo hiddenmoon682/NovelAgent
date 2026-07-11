@@ -76,8 +76,6 @@ public:
     agent::SessionTokenState contextStats() const;
     // 获取最后一次上下文组装的警告列表（截断/用量临界/向量过期/预算溢出等）。
     std::vector<std::string> contextWarnings() const;
-    // 设置当前活跃章节（供章节边界检测使用）。
-    void setCurrentChapter(const std::string& chapter_id);
 
     // ── 对话回滚 ──
     // 回滚到指定消息索引（保留 [0, index]），丢弃之后的所有消息。
@@ -141,18 +139,6 @@ private:
 
     // Fix #6: 显式状态机 — 管理 Agent 生命周期状态（Idle/Processing/WaitingTool 等）
     StateMachine state_;
-
-    // ── 章节边界检测 ──
-    std::string last_chapter_id_;               //  上一轮检测到的活跃章节 ID
-    // 章节边界自动 compact。
-    //
-    // 在 LLM 响应返回后检查 tool_calls 中是否包含 create_chapter 或 read_chapter，
-    // 提取 chapter_id 并与 last_chapter_id_ 对比。若检测到章节切换：
-    //   1. 对旧章节对话执行 compact（保留关键情节决策 + 写作风格）
-    //   2. 更新 last_chapter_id_ 和 ContextManager::current_chapter_id_
-    //
-    // 首次进入章节时（last_chapter_id_ 为空）不触发 compact。
-    void maybeAutoCompact(const llm::LLMResponse& response);
 };
 
 } // namespace agent

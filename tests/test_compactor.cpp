@@ -65,7 +65,7 @@ void test_compact_basic() {
     }
     CHECK(conv.size() == 60);
 
-    auto result = compactor.compact(conv, client, "");
+    auto result = compactor.compact(conv, client);
     CHECK(result.messages_compacted > 0);
     CHECK(!result.summary.empty());
     CHECK(conv.size() < 60);  // 头部消息被删除
@@ -81,7 +81,7 @@ void test_compact_skip_too_few() {
     conv.addUser("你好");
     CHECK(conv.size() == 1);
 
-    auto result = compactor.compact(conv, client, "");
+    auto result = compactor.compact(conv, client);
     CHECK(result.messages_compacted == 0);
     CHECK(conv.size() == 1);  // 未压缩
     PASS();
@@ -97,7 +97,7 @@ void test_compact_few_messages() {
     conv.addAssistant("长文本消息2: " + std::string(2000, 'y'));
     CHECK(conv.size() == 2);
 
-    auto result = compactor.compact(conv, client, "");
+    auto result = compactor.compact(conv, client);
     // 总消息 2 条，保留 1 条，压缩 1 条
     CHECK(result.messages_compacted == 1);
     CHECK(!result.summary.empty());
@@ -116,7 +116,7 @@ void test_compact_summary_saved() {
         conv.addAssistant("reply" + std::to_string(i));
     }
 
-    compactor.compact(conv, client, "");
+    compactor.compact(conv, client);
     CHECK(compactor.hasSummary());
     CHECK(!compactor.summary().empty());
     CHECK(compactor.marker() > 0);
@@ -134,7 +134,7 @@ void test_compact_clear() {
         conv.addAssistant("reply" + std::to_string(i));
     }
 
-    compactor.compact(conv, client, "");
+    compactor.compact(conv, client);
     CHECK(compactor.hasSummary());
 
     compactor.clear();
@@ -178,7 +178,7 @@ void test_compact_with_focus() {
         conv.addAssistant("回答" + std::to_string(i));
     }
 
-    auto result = compactor.compact(conv, client, "", nullptr,
+    auto result = compactor.compact(conv, client,
                                      std::optional<std::string>("关注角色动机"));
     CHECK(result.messages_compacted > 0);
     PASS();

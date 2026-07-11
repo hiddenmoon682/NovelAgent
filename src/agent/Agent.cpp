@@ -115,10 +115,6 @@ std::vector<std::string> Agent::contextWarnings() const {
     return {};
 }
 
-void Agent::setCurrentChapter(const std::string& chapter_id) {
-    last_chapter_id_ = chapter_id;
-}
-
 bool Agent::rewindTo(size_t index) {
     if (index >= conversation_.size()) return false;
 
@@ -174,8 +170,8 @@ void Agent::saveSessionState() {
     auto pinned = conversation_.pinnedIndices();
     // ContextManager::saveSessionState 负责：
     //   1. 保存 conversation.json（完整对话）
-    //   2. 构建 SessionMeta（摘要/token/chapter/preserved/mtime/dirty）并调 saveMeta
-    context_manager_->saveSessionState(conversation_, last_chapter_id_, pinned);
+    //   2. 构建 SessionMeta（摘要/token/preserved/mtime/dirty）并调 saveMeta
+    context_manager_->saveSessionState(conversation_, pinned);
 }
 
 void Agent::loadSessionState() {
@@ -185,53 +181,7 @@ void Agent::loadSessionState() {
     //   1. 加载 conversation.json → 写入 conversation_
     //   2. 加载 session_meta.json → 恢复内部状态（摘要/token/脏标记等）
     //   3. 恢复 preserved 标记到对应 Message 对象
-    context_manager_->loadSessionState(conversation_, last_chapter_id_);
-    // last_chapter_id_ 由 loadSessionState 通过 out_chapter_id 传回
-    if (!last_chapter_id_.empty()) {
-        context_manager_->setCurrentChapter(last_chapter_id_);
-    }
-}
-
-void Agent::maybeAutoCompact(const llm::LLMResponse& response) {
-    if (!context_manager_) return;
-
-    // 检测章节切换：tool_calls 中包含 create_chapter 或 read_chapter
-    std::string new_chapter_id;
-    for (const auto& tc : response.tool_calls) {
-        if (tc.function_name == "create_chapter") {
-            // create_chapter 创建了新章节 → 提取 chapter_id，由下方章节切换检测统一处理 compact
-            spdlog::info("[Agent] 检测到 create_chapter");
-            try {
-                auto args = nlohmann::json::parse(tc.arguments);
-                if (args.contains("chapter_id")) {
-                    new_chapter_id = args["chapter_id"].get<std::string>();
-                }
-            } catch (...) {}
-            break;
-        }
-        if (tc.function_name == "read_chapter") {
-            // 尝试提取 chapter_id
-            try {
-                auto args = nlohmann::json::parse(tc.arguments);
-                if (args.contains("chapter_id")) {
-                    new_chapter_id = args["chapter_id"].get<std::string>();
-                }
-            } catch (...) {}
-        }
-    }
-
-    // 章节切换检测（读取了不同章节）
-    if (!new_chapter_id.empty() && new_chapter_id != last_chapter_id_) {
-        if (!last_chapter_id_.empty()) {
-            spdlog::info("[Agent] 章节切换: {} → {}，触发旧章节 compact",
-                         last_chapter_id_, new_chapter_id);
-            // 切换章节 → 压缩旧章节对话，避免新旧设定冲突
-            compactConversation("切换到新章节 " + new_chapter_id
-                                + "：总结上一章的创作决策和关键情节");
-        }
-        last_chapter_id_ = new_chapter_id;
-        context_manager_->setCurrentChapter(new_chapter_id);
-    }
+    context_manager_->loadSessionState(conversation_);
 }
 
 void Agent::useSerialProcessor() {
@@ -370,9 +320,6 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
         // ── 步骤 7: 轨迹记录（Fix #3）──
         // 记录最终响应的 token 消耗，用于统计和使用量监控。
         tracer_.record("done", result.raw_response.total_tokens, total_ms);
-
-        // ── 章节边界检测 ──
-        maybeAutoCompact(result.raw_response);
 
         // ── 步骤 7.5: 会话增量保存（B2 修复）──
         // 每轮对话结束后立即持久化 conversation.json + session_meta.json，

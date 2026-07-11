@@ -149,13 +149,11 @@ void test_session_mtime_restored_from_novel_json() {
 
     llm::Conversation conv;
     conv.addUser("hi");
-    std::string chapter_id;
-    cm.saveSessionState(conv, chapter_id, {});
+    cm.saveSessionState(conv, {});
 
     // 加载回来：未修改 novel.json，mtime 应一致，不触发清空（无摘要可清，仅验证不崩溃）
     llm::Conversation loaded;
-    std::string loaded_chapter;
-    cm.loadSessionState(loaded, loaded_chapter);
+    cm.loadSessionState(loaded);
     CHECK(loaded.size() == 1);
 
     utils::file::removeDir(tmp);
@@ -210,7 +208,7 @@ void test_build_system_prompt() {
     project.outline.chapters.push_back(ch);
 
     agent::ContextManager cm;
-    auto prompt = cm.buildSystemPrompt(project, "ch-001");
+    auto prompt = cm.buildSystemPrompt(project);
     CHECK(!prompt.empty());
     CHECK(prompt.find("测试小说") != std::string::npos);
     PASS();

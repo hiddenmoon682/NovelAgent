@@ -110,7 +110,6 @@ void SessionPersistence::saveMeta(const SessionMeta& meta)
     j["token_state"]["total_output_tokens"] = meta.token_state.total_output_tokens;
     j["token_state"]["request_count"] = meta.token_state.request_count;
     j["token_state"]["model_context_limit"] = meta.token_state.model_context_limit;
-    j["last_chapter_id"] = meta.last_chapter_id;
     j["preserved_indices"] = meta.preserved_indices;
     j["project_mtime"] = meta.project_mtime;
     j["vector_store_dirty"] = meta.vector_store_dirty;
@@ -140,7 +139,6 @@ SessionMeta SessionPersistence::loadMeta() const
         meta.token_state.request_count = utils::json::getOrDefault(j["token_state"], "request_count", 0);
         meta.token_state.model_context_limit = utils::json::getOrDefault(j["token_state"], "model_context_limit", 131072);
     }
-    meta.last_chapter_id = utils::json::getOrDefault(j, "last_chapter_id", std::string{});
     if (j.contains("preserved_indices") && j["preserved_indices"].is_array()) {
         meta.preserved_indices = j["preserved_indices"].get<std::vector<size_t>>();
     }

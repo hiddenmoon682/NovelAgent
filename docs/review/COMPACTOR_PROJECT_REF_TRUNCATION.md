@@ -1,6 +1,8 @@
 # Compaction/上下文管理 相关设计问题记录
 
 > 记录日期：2026-07-10
+>
+> 已解决：`buildProjectRef` 整体已删除（2026-07-11）。详见下方问题一的"执行记录"。
 
 ## 问题一：buildProjectRef 的 1200 字节截断多余
 
@@ -35,6 +37,10 @@
 
 1. 删除第 53-58 行的截断逻辑，`model_context_limit_` 检查才是真正的安全网。
 2. 如果保留 project ref，应该让 `buildProjectRef` 显式传入适合 compaction 场景的 limits（而非走 `write_chapter` 的默认配置），比如 `max_characters = 4`、`max_plot_threads = 3`。
+
+### 执行记录
+
+> 2026-07-11：`buildProjectRef` 整体删除。该函数在 compaction 场景下注入当前章节的上下文帮助有限（被压缩的对话正文已包含角色信息），且 1200 字节截断破坏设计目的。Compactor 不再依赖 `PromptContextBuilder`。删除范围：`Compactor.cpp` 中整个 `buildProjectRef` 函数及其调用点，`Compactor.h` 中 `chapter_id`/`project` 参数，`ContextManager.cpp` 中相关传参，`test_compactor.cpp` 中 6 处调用参数清理。
 
 ---
 

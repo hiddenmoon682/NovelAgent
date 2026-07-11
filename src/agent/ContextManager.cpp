@@ -106,7 +106,6 @@ ContextManager::ContextManager(FileStorageBackend& storage)
 
 void ContextManager::saveSessionState(
     const llm::Conversation& conv,
-    const std::string& chapter_id,
     const std::vector<size_t>& preserved_indices)
 {
     persistence_.save(conv);
@@ -117,7 +116,6 @@ void ContextManager::saveSessionState(
     meta.compacted_summary = compactor_.summary();
     meta.compaction_marker = compactor_.marker();
     meta.token_state = tracker_.snapshot();
-    meta.last_chapter_id = chapter_id;
     meta.preserved_indices = preserved_indices;
     meta.project_mtime = mtime;
     meta.vector_store_dirty = vector_store_dirty_;
@@ -127,8 +125,7 @@ void ContextManager::saveSessionState(
 }
 
 void ContextManager::loadSessionState(
-    llm::Conversation& conv,
-    std::string& out_chapter_id)
+    llm::Conversation& conv)
 {
     conv = persistence_.load();
     auto meta = persistence_.loadMeta();
@@ -147,7 +144,6 @@ void ContextManager::loadSessionState(
     compactor_.restore(meta.compacted_summary, meta.compaction_marker);
     tracker_.restore(meta.token_state);
     vector_store_dirty_ = meta.vector_store_dirty;
-    out_chapter_id = meta.last_chapter_id;
 
     // 恢复 preserved 标记
     for (auto idx : meta.preserved_indices) {
@@ -177,7 +173,6 @@ CompactResult ContextManager::compact(
     std::optional<std::string> focus)
 {
     auto result = compactor_.compact(conversation, llm_client,
-                                     current_chapter_id_, project_,
                                      std::move(focus));
     // 压缩后向量索引位置失效，恢复向量检索
     if (result.messages_compacted > 0) {
@@ -320,10 +315,9 @@ ContextAssembly ContextManager::assemble(
     ContextAssembly result;
 
     // ── 步骤 0: System Prompt 构建 ──────────────────────────────────────
-    // 通过 PromptContextBuilder::buildForChapter() 从项目文件渲染静态上下文。
-    // chapter_id 为空时回退到项目级概要（标题 + Logline + 主题）。
+    // 输出项目概要 + 工具使用指南，LLM 通过工具按需获取章节/角色/设定等上下文。
     if (project_) {
-        result.system_prompt = buildSystemPrompt(*project_, current_chapter_id_);
+        result.system_prompt = buildSystemPrompt(*project_);
     }
 
     // ── 步骤 1: 向量检索（语义召回）─────────────────────────────────────
@@ -363,16 +357,6 @@ ContextAssembly ContextManager::assemble(
                 auto query_emb = embedding_gen_->generateEmbedding(last_user_text);
                 auto results = vector_store_->search(query_emb, retrieval_top_k_);
 
-                // A3: 收集确定性上下文中已覆盖的 chapter_id，跳过重复片段
-                std::set<std::string> covered_ids;
-                if (project_) {
-                    covered_ids.insert(current_chapter_id_);
-                    for (const auto& ch : project_->outline.chapters) {
-                        if (ch.id == current_chapter_id_) continue;
-                        // 相邻章节也标记为已覆盖（缩减范围而非全包含）
-                    }
-                }
-
                 if (!results.empty()) {
                     std::string retrieval_section =
                         "\n\n=== 补充记忆（向量相似度检索，"
@@ -381,8 +365,6 @@ ContextAssembly ContextManager::assemble(
                     for (size_t i = 0; i < results.size(); ++i) {
                         if (results[i].metadata.contains("text")) {
                             std::string src = results[i].metadata.value("chapter_id", "?");
-                            // 跳过已在确定性上下文中的章节片段
-                            if (covered_ids.count(src)) continue;
                             ++added;
                             retrieval_section += "片段" + std::to_string(i + 1)
                                 + " (ch-" + src + ", 相关度"
@@ -491,112 +473,29 @@ ContextAssembly ContextManager::assemble(
 }
 
 // ===========================================================================
-// buildSystemPrompt — 构建项目/章节的静态上下文
+// buildSystemPrompt — 构建项目级静态上下文
 //
 // 职责：
-//   为 LLM 请求提供"静态上下文层"—— 即不随对话变化的那部分信息，
-//   来源于 Project 文件（characters.json / outline.json / settings.json 等）。
+//   为 LLM 请求提供静态项目信息（标题、Logline、主题），
+//   并附加按需获取上下文的工具使用指南。
+//   LLM 通过 get_latest_chapter / get_chapter_context / get_relevant_characters
+//   等工具按需获取章节、角色、设定等详情，不再自动注入章节级上下文。
 //
-// 设计模式：双层分派 + 静默回退
-//
-//   ┌─────────────────────────────────────────────────────────────┐
-//   │ 入口: buildSystemPrompt(project, chapter_id)                │
-//   │                                                             │
-//   │  ┌─ chapter_id 为空 ──────────────────────────────────────┐ │
-//   │  │  模式 1: 项目级概要                                      │ │
-//   │  │  输出: # 项目: {title}                                  │ │
-//   │  │        Logline: {logline}                               │ │
-//   │  │        主题: {theme}                                    │ │
-//   │  │  用途: 无章节上下文时的降级方案                          │ │
-//   │  │  (新会话 / 全局命令 / 回退路径)                          │ │
-//   │  └────────────────────────────────────────────────────────┘ │
-//   │                           ↓                                  │
-//   │  ┌─ chapter_id 有效 ──────────────────────────────────────┐ │
-//   │  │  模式 2: 章节级完整上下文                                │ │
-//   │  │  委托 PromptContextBuilder::buildForChapter() 渲染      │ │
-//   │  │  包含:                                                  │ │
-//   │  │  ├─ 角色列表（6级优先级排序，仅保留与本章节相关的角色）     │ │
-//   │  │  ├─ 大纲节点（当前章节 + 前后章节概述）                   │ │
-//   │  │  ├─ 前情提要（之前已写章节的情节摘要）                    │ │
-//   │  │  ├─ 世界观设定（关键设定/规则/魔法体系等）                │ │
-//   │  │  └─ 写作风格指南（由 style.json 定义）                   │ │
-//   │  │                                                        │ │
-//   │  │  ┌─ 构建成功 ────────────────────────────────────────┐  │ │
-//   │  │  │ 返回 ctx->rendered_prompt（完整渲染文本）          │  │ │
-//   │  │  └──────────────────────────────────────────────────┘  │ │
-//   │  │                                                        │ │
-//   │  │  ┌─ 构建失败 ────────────────────────────────────────┐  │ │
-//   │  │  │ 日志 WARNING + 递归回退到模式 1（项目级概要）       │  │ │
-//   │  │  │ 保证调用方始终能拿到非空字符串，不阻塞流程           │  │ │
-//   │  │  └──────────────────────────────────────────────────┘  │ │
-//   │  └────────────────────────────────────────────────────────┘ │
-//   └─────────────────────────────────────────────────────────────┘
-//
-// 调用者：
-//   ● assemble()  — 作为"步骤 0"，构建后还会叠加向量召回和压缩摘要
-//   ● compact()   — 用作项目设定参考（截断 ≤1200 字节），帮助 LLM
-//                    正确识别被压缩对话中的人物指代
-//
-// 关键约定：
-//   options.task = "write_chapter" 硬编码，控制 PromptContextBuilder
-//   内部的筛选逻辑（如角色按"与本章节写作任务的相关性"排序）。
-//   若将来增加其他任务类型（如 rewrite / outline_plan），
-//   需在此处根据上下文切换 task 值。
+// 设计：始终输出项目级概要，不注入章节特定信息。
 // ===========================================================================
 
 std::string ContextManager::buildSystemPrompt(
-    const Project& project,
-    const std::string& chapter_id)
+    const Project& project)
 {
-    // ── 模式 1: 项目级概要 ────────────────────────────────────────────────
-    // 当 chapter_id 为空时（例如全局命令、新会话尚未选择章节），
-    // 仅输出项目最基础的标识信息，不涉及任何章节级细节。
-    if (chapter_id.empty()) {
-        std::string prompt;
-        prompt += "# 项目: " + project.title + "\n";
-        if (!project.logline.empty()) prompt += "Logline: " + project.logline + "\n";
-        if (!project.theme.empty()) prompt += "主题: " + project.theme + "\n";
-        return prompt;
-    }
+    std::string prompt;
+    prompt += "# 项目: " + project.title + "\n";
+    if (!project.logline.empty()) prompt += "Logline: " + project.logline + "\n";
+    if (!project.theme.empty()) prompt += "主题: " + project.theme + "\n";
 
-    // ── 模式 2: 轻量提示词模式（NovelClaw 参考）─────────────────────────
-    // 只注入章节元数据 + 风格，不注入角色/设定/规则详情。
-    // LLM 通过 get_chapter_context() / get_relevant_characters() 等工具按需获取。
-    if (lightweight_mode_) {
-        prompt::PromptContextOptions options;
-        options.task = "write_chapter";
-        options.chapter_id = chapter_id;
-        // 关闭详情注入
-        options.include_outline_context = false;
-        options.max_plot_threads = 0;
-        options.max_characters = 0;
-        options.max_settings = 0;
-        options.max_world_rules = 0;
+    // 附加按需获取上下文的工具使用指南
+    prompt += "\n" + prompt::PromptContextBuilder::renderToolUseInstructions();
 
-        auto ctx = prompt::PromptContextBuilder::buildLightweight(project, options);
-        if (!ctx) {
-            spdlog::warn("[ContextManager] 轻量上下文构建失败，回退到项目级概要");
-            return buildSystemPrompt(project);
-        }
-        return ctx->rendered_prompt + "\n\n" + prompt::PromptContextBuilder::renderToolUseInstructions();
-    }
-
-    // ── 模式 3: 章节级完整上下文 ──────────────────────────────────────────
-    // 通过 PromptContextBuilder 渲染完整的章节写作上下文。
-    // task = "write_chapter" 指示构建器按"写作任务"的标准筛选和排序内容。
-    prompt::PromptContextOptions options;
-    options.task = "write_chapter";
-    options.chapter_id = chapter_id;
-
-    auto ctx = prompt::PromptContextBuilder::buildForChapter(project, options);
-    if (!ctx) {
-        // 构建失败（如章节文件损坏/不存在）→ 静默回退到模式 1
-        // 不做 hard fail，保证调用方（assemble/compact）始终获得有效字符串
-        spdlog::warn("[ContextManager] 章节 '{}' 上下文构建失败，回退", chapter_id);
-        return buildSystemPrompt(project);
-    }
-
-    return ctx->rendered_prompt;
+    return prompt;
 }
 // ===========================================================================
 // truncateMessages — 支持 preserved 标记（纯函数，Issue 3 候选迁移至 utils）

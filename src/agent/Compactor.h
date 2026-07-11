@@ -18,8 +18,6 @@ class ILLMClient;
 class TokenCalibrator;
 } // namespace llm
 
-struct Project;
-
 namespace agent {
 
 class Compactor {
@@ -29,15 +27,11 @@ public:
     // 执行 LLM 驱动的对话压缩。
     // conversation  当前对话历史（压缩成功后会从头部删除被压缩的消息）
     // llm_client    LLM 客户端（用于生成压缩摘要）
-    // chapter_id    当前活跃章节 ID（用于注入项目设定参考）
-    // project       项目指针（用于 buildSystemPrompt，可为 nullptr）
     // focus         可选压缩焦点
     // 压缩结果（摘要文本 + token 变化 + 压缩消息数）
     CompactResult compact(
         llm::Conversation& conversation,
         llm::ILLMClient& llm_client,
-        const std::string& chapter_id,
-        const Project* project = nullptr,
         std::optional<std::string> focus = std::nullopt);
 
     // 当前是否有压缩摘要。

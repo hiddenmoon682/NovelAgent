@@ -54,7 +54,7 @@ public:
 
     // 组装上下文 — 一站式入口。
     //
-    // 使用内部存储的 project_ 和 current_chapter_id_（由 setProject/setCurrentChapter 设置）。
+    // 使用内部存储的 project_（由 setProject 设置）。
     //
     // 7 步流水线：
     //   1. 构建系统提示词（项目上下文 + 当前章节的角色/大纲/世界观）
@@ -69,9 +69,9 @@ public:
         const llm::Conversation& conversation,
         int max_context_tokens);
 
-    // 构建系统提示词（委托 PromptContextBuilder）。
-    std::string buildSystemPrompt(const Project& project,
-                                   const std::string& chapter_id = "");
+    // 构建系统提示词（项目概要 + 工具使用指南）。
+    // LLM 通过 get_latest_chapter / get_chapter_context 等工具按需获取章节上下文。
+    std::string buildSystemPrompt(const Project& project);
 
     // ================================================================
     // Project 注入（供 assemble 使用）
@@ -79,14 +79,6 @@ public:
 
     // 设置当前项目（非拥有指针，生命周期由 NovelAgentApp 管理）。
     void setProject(const Project* p) { project_ = p; }
-
-    // 设置当前活跃章节 ID（供 assemble 构建章节上下文）。
-    void setCurrentChapter(const std::string& id) { current_chapter_id_ = id; }
-
-    // 设置轻量提示词模式（轻量 system prompt + LLM 通过工具按需获取上下文）。
-    void setLightweightMode(bool enabled) { lightweight_mode_ = enabled; }
-    // 查询当前是否为轻量提示词模式。
-    bool isLightweightMode() const { return lightweight_mode_; }
 
     // ================================================================
     // Token 校准（自校准 TokenCounter）
@@ -192,13 +184,11 @@ public:
     // 保存完整会话状态（对话 + 元数据），供灾难恢复。
     // project_mtime 自动从 project_ 获取。
     void saveSessionState(const llm::Conversation& conv,
-                          const std::string& chapter_id,
                           const std::vector<size_t>& preserved_indices);
 
     // 加载完整会话状态并恢复到 ContextManager 内部状态。
     // 自动对比 project_mtime，如果 Project 被修改过则清空压缩摘要。
-    void loadSessionState(llm::Conversation& conv,
-                          std::string& out_chapter_id);
+    void loadSessionState(llm::Conversation& conv);
 
     // 公开子组件（只读访问，供测试/诊断/Agent 直接使用）
     const TokenTracker& tracker() const { return tracker_; }
@@ -214,7 +204,6 @@ private:
 
     // ── Project 注入（非拥有）──
     const Project* project_ = nullptr;
-    std::string current_chapter_id_;
 
     // ── 会话级状态（精简后）──
     std::vector<std::string> last_warnings_;  //  最后一次 assemble() 的警告缓存
@@ -236,9 +225,6 @@ private:
     // ── Token 校准（自校准 TokenCounter）──
     llm::TokenCalibrator* calibrator_ = nullptr;  //  Token 校准器（非拥有，nullptr=降级）
     std::string model_name_;                      //  当前模型名（用于按模型区分校准）
-
-    // ── 提示词模式 ──
-    bool lightweight_mode_ = true;                //  轻量提示词模式（LLM 通过工具按需获取上下文）
 
     // 内联校准辅助：估算值 × 修正因子（calibrator_ 为空或 model_name_ 为空时降级为原值）。
     int calibrateToken(int raw) const {
