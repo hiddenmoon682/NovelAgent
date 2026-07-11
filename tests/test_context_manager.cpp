@@ -350,8 +350,8 @@ void test_compact_actually_removes_messages() {
 
     // 压缩了 30-20=10 条
     CHECK(result.messages_compacted == 10);
-    // 对话消息数下降到 20（保留最近 10 对 = 20 条）
-    CHECK(conv.size() == 20);
+    // 对话消息数下降到 20（保留最近 10 对 = 20 条）+ 2（摘要 user/assistant 对）
+    CHECK(conv.size() == 22);
     // 摘要被存储
     CHECK(cm.hasCompactedSummary());
     CHECK(result.summary.find("压缩摘要") != std::string::npos);
@@ -371,7 +371,8 @@ void test_compact_skip_when_messages_insufficient() {
     auto result = cm.compact(conv, llm, std::nullopt);
     // 10 条 > 1（硬拒绝阈值），动态保留 4 条，压缩 6 条
     CHECK(result.messages_compacted == 6);
-    CHECK(conv.size() == 4);
+    // 保留 4 条 + 2 条摘要 user/assistant 对
+    CHECK(conv.size() == 6);
     PASS();
 }
 

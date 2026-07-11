@@ -187,7 +187,7 @@ bool ContextManager::shouldAutoCompact() const {
 //   在 max_context_tokens 预算内执行消息截断，
 //   并输出 token 用量告警，最终产出完整的 ContextAssembly。
 //
-// 执行流程（共 7 步）：
+// 执行流程（共 6 步）：
 //
 //   ┌─────────────────────────────────────────────────────────────┐
 //   │  步骤 0: System Prompt 构建                                  │
@@ -196,21 +196,14 @@ bool ContextManager::shouldAutoCompact() const {
 //   └──────────────────┬──────────────────────────────────────────┘
 //                      ▼
 //   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 1: 压缩摘要注入（中期记忆层）                          │
-//   │  @条件: compacted_summary_ 非空（此前执行过 /compact）       │
-//   │  将双层摘要（情节事实 + 风格样本）追加到 system_prompt       │
-//   │  作为被压缩的旧对话的语义替代                               │
-//   └──────────────────┬──────────────────────────────────────────┘
-//                      ▼
-//   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 2: Token 预算分配                                      │
+//   │  步骤 1: Token 预算分配                                      │
 //   │  sys_tokens  = countTokens(system_prompt)                   │
 //   │  msg_budget = max(0, max_context_tokens - sys_tokens)      │
 //   │  → 剩余预算全部留给对话消息列表                              │
 //   └──────────────────┬──────────────────────────────────────────┘
 //                      ▼
 //   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 3: Token 阈值告警                                      │
+//   │  步骤 2: Token 阈值告警                                      │
 //   │  checkThresholds() → 分三级状态：                            │
 //   │  ● Normal  ( < 60% )  → 静默                                │
 //   │  ● Warning (60%-85%)  → 建议 /compact                       │
@@ -219,19 +212,19 @@ bool ContextManager::shouldAutoCompact() const {
 //   └──────────────────┬──────────────────────────────────────────┘
 //                      ▼
 //   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 4: 对话消息截断                                        │
+//   │  步骤 3: 对话消息截断                                        │
 //   │  truncateMessages(all_msgs, msg_budget, truncated_count)    │
 //   │  → 从最新消息反向贪心保留，preserved 消息优先但不免预算       │
 //   │  → 安全兜底：至少保留最后一条消息（当前用户输入）             │
 //   └──────────────────┬──────────────────────────────────────────┘
 //                      ▼
 //   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 5: 最终 Token 统计                                     │
+//   │  步骤 4: 最终 Token 统计                                     │
 //   │  total_tokens = sys_tokens + countMessages(result.messages) │
 //   └──────────────────┬──────────────────────────────────────────┘
 //                      ▼
 //   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 5.5: 模型窗口超限预检（API 400 防护）                  │
+//   │  步骤 5: 模型窗口超限预检（API 400 防护）                    │
 //   │  total_tokens > model_context_limit → 致命告警               │
 //   │  提示用户减少 /pin 数量或执行 /compact                       │
 //   └──────────────────┬──────────────────────────────────────────┘
@@ -249,7 +242,6 @@ bool ContextManager::shouldAutoCompact() const {
 //   warnings              — 所有告警的文本数组
 //   total_tokens          — 最终发送的 token 总量
 //   truncated_count       — 被丢弃的消息数量
-//   has_compacted_context — 是否注入了压缩摘要
 // ===========================================================================
 
 ContextAssembly ContextManager::assemble(
@@ -264,17 +256,7 @@ ContextAssembly ContextManager::assemble(
         result.system_prompt = buildSystemPrompt(*project_);
     }
 
-    // ── 步骤 1: 注入压缩摘要（中期记忆层）───────────────────────────────
-    // 如果之前执行过 /compact，将被压缩的旧对话摘要注入 system_prompt，
-    // 作为"情节事实 + 风格样本"的语义替代，让 LLM 仍能感知被裁掉的早期对话。
-    const auto& summary = compactor_.summary();
-    if (!summary.empty()) {
-        result.has_compacted_context = true;
-        if (!result.system_prompt.empty()) result.system_prompt += "\n\n";
-        result.system_prompt += "[会话历史摘要 — 当前风格参照]\n" + summary;
-    }
-
-    // ── 步骤 2: Token 预算分配 ────────────────────────────────────────────
+    // ── 步骤 1: Token 预算分配 ────────────────────────────────────────────
     // 总预算 = max_context_tokens；system_prompt 优先占用，剩余归消息列表。
     int sys_tokens = result.system_prompt.empty()
         ? 0 : llm::TokenCounter::countTokens(result.system_prompt);
@@ -282,7 +264,7 @@ ContextAssembly ContextManager::assemble(
     sys_tokens = calibrateToken(sys_tokens);
     int msg_budget = std::max(0, max_context_tokens - sys_tokens);
 
-    // ── 步骤 3: 生成 Token 用量告警 ──────────────────────────────────────
+    // ── 步骤 2: 生成 Token 用量告警 ──────────────────────────────────────
     // 基于最后一次请求的实际上下文大小（非累计值）分三级预警。
     auto pre_check = checkThresholds();
     if (pre_check.status == ContextStatus::Critical) {
@@ -305,7 +287,7 @@ ContextAssembly ContextManager::assemble(
                       sys_tokens, max_context_tokens);
     }
 
-    // ── 步骤 4: 截断消息（支持 preserved 标记）───────────────────────────
+    // ── 步骤 3: 截断消息（支持 preserved 标记）───────────────────────────
     // truncateMessages 内部按 "preserved 优先 → 从最新反向贪心" 的策略
     // 在 msg_budget 内尽可能保留更多消息。
     const auto& all_msgs = conversation.messages();
@@ -319,13 +301,13 @@ ContextAssembly ContextManager::assemble(
                      result.truncated_count, max_context_tokens, sys_tokens, msg_budget);
     }
 
-    // ── 步骤 5: 统计总 token ────────────────────────────────────────────
+    // ── 步骤 4: 统计总 token ────────────────────────────────────────────
     int msg_tokens = llm::TokenCounter::countMessages(result.messages);
     // 应用 Token 校准修正因子
     msg_tokens = calibrateToken(msg_tokens);
     result.total_tokens = sys_tokens + msg_tokens;
 
-    // ── 步骤 5.5: 最终预检 ──────────────────────────────────────────────
+    // ── 步骤 5: 最终预检 ──────────────────────────────────────────────
     // 在即将发送前再检查一次：总 token 是否超出模型上下文窗口上限。
     // 这是防止 LLM API 返回 400 Bad Request 的最后一道防线。
     int model_limit = tracker_.modelLimit();

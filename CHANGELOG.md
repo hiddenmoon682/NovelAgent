@@ -1,5 +1,22 @@
 # Changelog
 
+## [2026-07-11] 重构：压缩摘要从 system prompt 迁移到对话消息
+
+> 将压缩摘要从 `assemble()` 步骤 1 中注入 system prompt 改为在 `compact()` 时
+> 以 user/assistant 消息对直接插入对话列表头部。解决三个问题：
+> 1. 语义错位 — 摘要是"事实"而非"指令"，不应放在 system prompt 中
+> 2. API 缓存 — system prompt 不再因摘要变化而失效
+> 3. 永久累积 — 旧摘要现在在消息列表中，下次 compact() 能被重新压缩
+
+### 核心改动
+- `Compactor::compact()`：删除旧消息后插入 `addUser("【系统】以下是被压缩的旧对话摘要：")` + `addAssistant("[被压缩的历史摘要]\n" + 摘要)`
+- `ContextManager::assemble()`：删除步骤 1 摘要注入代码（不再读 `compactor_.summary()`），重编号步骤 1-6
+- `ContextManagerTypes.h`：删除 `ContextAssembly::has_compacted_context`（无消费者）
+- `kCompactSystemPrompt`：增加旧摘要提示，防止多次压缩信息衰减
+
+### 文档
+- `COMPACTOR_PROJECT_REF_TRUNCATION.md` 状态更新：8/12 已解决（原 7/12）
+
 ## [2026-07-11] Phase 3.7 补充：删除 assemble() 自动向量检索
 
 > 删除 `ContextManager::assemble()` 中每轮自动执行向量检索并注入 system prompt 的逻辑。

@@ -3,7 +3,7 @@
 > 记录日期：2026-07-10
 > 最后更新：2026-07-11
 >
-> 已解决的问题（7/12）：
+> 已解决的问题（8/12）：
 > - ✅ 问题一：buildProjectRef 截断多余 → 整体删除
 > - ✅ 延伸问题：buildProjectRef 放在 Compactor 内部不合理 → 随函数删除
 > - ✅ 延伸问题：章节切换自动 compact → maybeAutoCompact 删除
@@ -11,9 +11,10 @@
 > - ✅ 重构方案：工具替代自动注入 → 已实施（get_chapter_context + get_latest_chapter）
 > - ✅ 去重逻辑半成品（问题四第 4 点）→ covered_ids 随 current_chapter_id_ 移除
 > - ✅ 延伸问题：assemble() 自动向量检索不可控 → 删除步骤 1 自动检索，search_memory 工具替代
+> - ✅ 问题：压缩摘要注入到 system prompt 而非对话中 → compact() 时插入 user/assistant 消息对
 >
-> 未解决的问题（5/12）：
-> - ❌ 问题：压缩摘要注入到 system prompt 而非对话中
+> 未解决的问题（4/12）：
+> 未解决的问题（4/12）：
 > - ❌ 问题：assemble() 步骤 4 告警依赖过时数据
 > - ❌ 问题：truncateMessages 安全网几乎不触发
 > - ❌ 问题十：用强迫压缩替代截断作为安全网
@@ -305,7 +306,7 @@ LLM 按需调用：
 
 ---
 
-## 问题：压缩摘要注入到 system prompt 而非对话中（❌ 未修复）
+## 问题：压缩摘要注入到 system prompt 而非对话中（✅ 已修复）
 
 ### 问题
 
@@ -356,7 +357,7 @@ LLM 按需调用：
 - 多次压缩时旧的摘要可以被再次压缩，不会在 system prompt 里永久累积
 - 后续的强迫压缩（问题十）产生的摘要同样按此处理
 
-> 执行记录：2026-07-11 — 未实施。当前仍将压缩摘要追加到 system prompt 末尾。
+> 执行记录：2026-07-11 — 方案已实施。`Compactor::compact()` 在删除旧消息后，以 `addUser("【系统】以下是被压缩的旧对话摘要：")` + `addAssistant("[被压缩的历史摘要]\n" + 摘要)` 的形式将摘要插入对话头部。`ContextManager::assemble()` 不再将摘要注入 system prompt，删除步骤 1。`has_compacted_context` 字段一并清理。压缩 prompt 增加旧摘要提示，防止信息衰减。
 
 ---
 

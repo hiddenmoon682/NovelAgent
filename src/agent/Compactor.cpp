@@ -28,7 +28,11 @@ constexpr const char* kCompactSystemPrompt =
     "2. 风格参考：摘录 2-3 句最能代表当前写作风格的原句——\n"
     "   保留其修辞手法、句式节奏、情绪氛围和对话语气\n"
     "\n"
-    "总长度控制在 2000 字以内，事实与风格的比例由你判断。";
+    "总长度控制在 2000 字以内，事实与风格的比例由你判断。\n"
+    "\n"
+    "注意：对话历史中可能包含之前生成的压缩摘要，\n"
+    "请以已有摘要中的情节事实为基础，补充新增对话中的关键进展，\n"
+    "避免过度概括或丢失已有摘要中的细节。";
 
 } // namespace
 
@@ -141,6 +145,16 @@ CompactResult Compactor::compact(
 
         // 从 conversation 头部删除已压缩的旧消息
         conversation.removeOldest(compact_count);
+
+        // 将被压缩的对话摘要以 user/assistant 消息对插入对话头部，
+        // 作为被删除的旧消息的语义替代。
+        // 摘要作为对话消息而非追加到 system prompt，使得：
+        //   1. 下次 compact() 能自然看到并重新压缩旧摘要
+        //   2. system prompt 保持稳定，API 缓存可命中
+        // 注意：不要使用 System 角色——放入 messages 中的 System 角色消息
+        // 会导致 API system prompt 缓存失效，与放在 system prompt 中无异。
+        conversation.addUser("【系统】以下是被压缩的旧对话摘要：");
+        conversation.addAssistant("[被压缩的历史摘要]\n" + result.summary);
 
         spdlog::info("[Compactor] compact 完成: {} 条 → 摘要 ({} → {} tokens, {:.0f}%)",
                      compact_count, result.tokens_before, result.tokens_after,

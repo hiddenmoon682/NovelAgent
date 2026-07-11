@@ -101,7 +101,7 @@ void test_compact_few_messages() {
     // 总消息 2 条，保留 1 条，压缩 1 条
     CHECK(result.messages_compacted == 1);
     CHECK(!result.summary.empty());
-    CHECK(conv.size() == 1);  // 头部 1 条被删除
+    CHECK(conv.size() == 3);  // 保留 1 条 + 2 条摘要 user/assistant 对
     PASS();
 }
 

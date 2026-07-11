@@ -4,7 +4,7 @@
 //
 // Issue 3 拆分后：TokenTracker（③ Token 追踪）+ Compactor（②⑤ 对话压缩）
 // 已抽为独立类。ContextManager 保留核心职责作为门面：
-//   1. 构建动态 system prompt（项目上下文 + 压缩摘要）
+//   1. 构建动态 system prompt（项目上下文）
 //   3. (委托 TokenTracker)  会话级 token 追踪（累计输入/输出，阈值检查）
 //   5. (委托 Compactor)    手动/自动 compaction（LLM 对话压缩）
 //   6. 会话持久化委托给 SessionPersistence
@@ -51,13 +51,12 @@ public:
     // 使用内部存储的 project_（由 setProject 设置）。
     //
     // 6 步流水线：
-    //   1. 构建系统提示词（项目上下文 + 当前章节的角色/大纲/世界观）
-    //   2. 注入压缩摘要（如果 compact() 已执行，"当前风格参照"标签）
-    //   3. 计算消息预算 = max_context_tokens - system_prompt_tokens
-    //   4. 生成告警（用量临界 / 预算耗尽 / 超出窗口）
-    //   5. 截断消息（preserved 优先保留，最新消息贪心保留）
-    //   6. 统计总 token + 最终预检（超出模型窗口则追加警告）
-    //   7. 缓存警告/截断数/当前大小（供 Agent/REPL 在下一次请求前读取）
+    //   1. 构建系统提示词（项目上下文 + 工具使用指南）
+    //   2. 计算消息预算 = max_context_tokens - system_prompt_tokens
+    //   3. 生成告警（用量临界 / 预算耗尽 / 超出窗口）
+    //   4. 截断消息（preserved 优先保留，最新消息贪心保留）
+    //   5. 统计总 token + 最终预检（超出模型窗口则追加警告）
+    //   6. 缓存警告/截断数/当前大小（供 Agent/REPL 在下一次请求前读取）
     ContextAssembly assemble(
         const llm::Conversation& conversation,
         int max_context_tokens);

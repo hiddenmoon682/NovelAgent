@@ -16,10 +16,9 @@ namespace agent {
 // 上下文组装结果。
 struct ContextAssembly {
     std::vector<llm::Message> messages;     //  截断后的消息列表
-    std::string system_prompt;              //  动态系统提示词（项目上下文 + 压缩摘要等）
+    std::string system_prompt;              //  动态系统提示词（项目上下文等）
     int total_tokens = 0;                   //  system_prompt + messages 的总 token 数
     int truncated_count = 0;                //  被截断的消息数（0 = 未截断）
-    bool has_compacted_context = false;     //  是否注入了压缩摘要
     std::vector<std::string> warnings;      //  降级/问题警告列表（供 CLI/TUI 展示）
 };
 
