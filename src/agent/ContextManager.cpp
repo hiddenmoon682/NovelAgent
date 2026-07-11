@@ -233,8 +233,9 @@ CompactResult ContextManager::compact(
 
         // 将被压缩的对话摘要以 user/assistant 消息对插入对话头部，
         // 替代刚被删除的旧消息的时序位置（必须在保留的最近消息之前）。
-        conversation.insert(0, llm::Message::assistant("[被压缩的历史摘要]\n" + result.summary));
-        conversation.insert(0, llm::Message::user("【系统】以下是被压缩的旧对话摘要："));
+        // 注意先 prepend assistant 再 prepend user，最终顺序为 user→assistant。
+        conversation.prepend(llm::Message::assistant("[被压缩的历史摘要]\n" + result.summary));
+        conversation.prepend(llm::Message::user("【系统】以下是被压缩的旧对话摘要："));
 
         spdlog::info("[ContextManager] compact 完成: {} 条 → 摘要 ({} → {} tokens, {:.0f}%)",
                      compact_count, result.tokens_before, result.tokens_after,

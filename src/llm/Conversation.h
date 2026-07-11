@@ -43,14 +43,9 @@ public:
         return *this;
     }
 
-    // 在指定位置插入一条消息（通用接口）
-    Conversation& insert(size_t index, Message msg) {
-        if (index >= messages_.size()) {
-            messages_.push_back(std::move(msg));
-        } else {
-            messages_.insert(messages_.begin() + static_cast<ptrdiff_t>(index),
-                             std::move(msg));
-        }
+    // 在对话头部插入一条消息（通用接口）
+    Conversation& prepend(Message msg) {
+        messages_.insert(messages_.begin(), std::move(msg));
         return *this;
     }
 
