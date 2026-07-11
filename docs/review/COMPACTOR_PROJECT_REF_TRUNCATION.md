@@ -3,7 +3,7 @@
 > 记录日期：2026-07-10
 > 最后更新：2026-07-11
 >
-> 已解决的问题（8/12）：
+> 已解决的问题（12/12）：
 > - ✅ 问题一：buildProjectRef 截断多余 → 整体删除
 > - ✅ 延伸问题：buildProjectRef 放在 Compactor 内部不合理 → 随函数删除
 > - ✅ 延伸问题：章节切换自动 compact → maybeAutoCompact 删除
@@ -12,13 +12,10 @@
 > - ✅ 去重逻辑半成品（问题四第 4 点）→ covered_ids 随 current_chapter_id_ 移除
 > - ✅ 延伸问题：assemble() 自动向量检索不可控 → 删除步骤 1 自动检索，search_memory 工具替代
 > - ✅ 问题：压缩摘要注入到 system prompt 而非对话中 → compact() 时插入 user/assistant 消息对
->
-> 未解决的问题（4/12）：
-> 未解决的问题（4/12）：
-> - ❌ 问题：assemble() 步骤 4 告警依赖过时数据
-> - ❌ 问题：truncateMessages 安全网几乎不触发
-> - ❌ 问题十：用强迫压缩替代截断作为安全网
-> - ❌ 问题十一：assemble() 步骤 7 状态缓存反馈循环
+> - ✅ 问题：truncateMessages 安全网几乎不触发 → 整体删除截断机制
+> - ✅ 问题：assemble() 步骤 4 告警依赖过时数据 → 改用本轮实时 total_tokens
+> - ✅ 问题十：用强迫压缩替代截断作为安全网 → assemble() 内部基于实时 total_tokens 自动压缩
+> - ✅ 问题十一：assemble() 步骤 7 状态缓存反馈循环 → shouldAutoCompact 改用实时数据，打破循环
 
 ## 问题一：buildProjectRef 的 1200 字节截断多余（✅ 已修复）
 
@@ -361,7 +358,7 @@ LLM 按需调用：
 
 ---
 
-## 问题：assemble() 步骤 4 的告警依赖的是过时数据（❌ 未修复）
+## 问题：assemble() 步骤 4 的告警依赖的是过时数据（✅ 已修复）
 
 ### 问题
 
@@ -372,9 +369,8 @@ LLM 按需调用：
 **1. 读的是旧数据**
 
 ```cpp
-// TokenTracker 的 current_context_size_ 在上轮 assemble 步骤 7 被更新，
-// 然后被 TokenTracker::record()（Agent 处理完这轮后调用）覆盖为实际 input。
-// 步骤 4 读到的永远是上一轮的 size，不是本轮刚拼好的值。
+// 修复前：checkThresholds() 依赖 current_context_size_（上一轮的 input），
+// 而非本轮刚拼好的 total_tokens。
 ```
 
 而本轮真正的大小 `result.total_tokens` 要到步骤 6 才算出来。
@@ -387,26 +383,28 @@ LLM 按需调用：
 
 告警在步骤 4，截断在步骤 5，截断用 `msg_budget`（步骤 3 已算出）做决策。即使步骤 4 被告知"要超了"，步骤 5 也不会因此改变行为。
 
-### 建议
+### 修复方案
 
-删除步骤 4 的 `checkThresholds()` 告警，合并到步骤 6 之后：
+将告警从依赖 `checkThresholds()`（读 `current_context_size_`）改为步骤 2 算出 `result.total_tokens` 后，用实时值调用 `checkThresholds(result.total_tokens)`：
 
 ```
-步骤 6: total_tokens = sys_tokens + msg_tokens
-
-替代步骤 4 和步骤 6.5：
-  本轮 total_tokens / model_limit ≥ 85% → "上下文已占用 85%"
-  本轮 total_tokens / model_limit ≥ 70% → "上下文已占用 70%"
-  本轮 total_tokens > model_limit       → "超出模型窗口！"
+步骤 2: total_tokens = sys_tokens + msg_tokens（实时计算）
+        checkThresholds(total_tokens)         ← 传入本轮刚算好的值
+        → total_tokens / model_limit ≥ 85% → "上下文已占用 85%"
+        → total_tokens / model_limit ≥ 60% → "上下文已占用 60%"
+        → total_tokens > model_limit       → "超出模型窗口！"
 ```
 
-`shouldAutoCompact()` 保持不动（process 步骤 4，用于请求前触发压缩），assemble 内部的告警改用实时数据，两件事彻底分离。
+配套变更：
+- `TokenCounter` 新增 `countTokensCalibrated()` / `countMessagesCalibrated()` 静态方法，count + 校准一步完成
+- `ContextManager.h` 移除冗余的 `calibratedCountTokens` / `calibratedCountMessages` helper
+- `Compactor.cpp` 中的两步模式（count → apply）统一替换为 `TokenCounter::countTokensCalibrated`
 
-> 执行记录：2026-07-11 — 未实施。步骤 4 的 `checkThresholds()` 告警仍使用 `TokenTracker` 的过时数据。
+> 执行记录：2026-07-11 — 已实施。`assemble()` 步骤 1 不再调用 `checkThresholds()`，改为步骤 2 算出 `total_tokens` 后传入实时值。`TokenTracker::check(int)` 新增重载直接使用参数值，不读 `current_context_size_`。
 
 ---
 
-## 问题：truncateMessages 是几乎不会实际执行的安全网（❌ 未修复）
+## 问题：truncateMessages 是几乎不会实际执行的安全网（✅ 已修复）
 
 ### 问题
 
@@ -443,9 +441,27 @@ if (llm::TokenCounter::countMessages(messages) <= budget) return messages;
 
 > 执行记录：2026-07-11 — 未实施。`truncateMessages` 仍作为唯一的安全网，强迫压缩机制未实现。
 
+### 执行记录（2026-07-11）
+
+`truncateMessages` 已整体删除。理由：
+- 截断丢弃旧消息永久丢失信息，与 compaction（摘要保留）的设计哲学相悖
+- `shouldAutoCompact()` 在 70% 阈值主动压缩，30% 的缓冲区使截断几乎不会触发
+- 删除后 `assemble()` 不再区分消息优先级，全部消息直接通过
+- `IMessageProcessor` 中依赖 `lastTruncatedCount()` 的同步压缩逃生阀一并删除
+
+**变更范围**：
+- `ContextManagerTypes.h`：移除 `ContextAssembly::truncated_count`
+- `ContextManager.h`：移除 `lastTruncatedCount()` / `last_truncated_count_` / `truncateMessages()`
+- `ContextManager.cpp`：`assemble()` 步骤 3 改为直接传全部消息，删除 `truncateMessages()` 函数体
+- `IMessageProcessor.cpp`：删除步骤 4.5 截断逃生阀
+- 测试：移除 6 个与截断相关的测试用例
+- 文档：本条目从 ❌ 未修复 → ✅ 已修复（9/12）
+
 ---
 
-## 问题十：用强迫压缩替代截断作为安全网（❌ 未修复）
+---
+
+## 问题十：用强迫压缩替代截断作为安全网（✅ 已修复）
 
 ### 问题
 
@@ -504,7 +520,13 @@ compact() 发起的 LLM 请求：
 2. 正常情况下 70% 的 `shouldAutoCompact()` 已经拦截了，95% 的强迫压缩应该很少触发，额外的 API 成本可忽略。
 3. `compact()` 的 focus 参数可以指定为"强迫压缩：窗口即将耗尽"，让 LLM 知道这是紧急压缩。
 
-> 执行记录：2026-07-11 — 未实施。
+> 执行记录：2026-07-11 — 已实施。Compactor 合并到 ContextManager 后，`assemble()` 新增步骤 2.5
+> 自动压缩检查：基于本轮实时 `total_tokens` 直接计算 `usage_pct`，超出 `auto_compact_threshold_`
+> （默认 70%）时自动调用 `compact()`。与方案的核心差异：
+> 1. 阈值可配置（非固定 95%）——默认 70% 做预防性压缩，用户可通过 `/config auto_compact on` 启用
+> 2. 不再依赖 `truncateMessages` 作为回退——截断已在之前的设计决策中整体删除
+> 3. 压缩失败时 `messages_compacted == 0`，不重算，步骤 3 告警机制兜底
+> 4. Compactor 展开合并到 ContextManager，消除了 compact() 的转发层
 
 ### 特别警告：反复压缩的信息衰减
 
@@ -523,7 +545,7 @@ compact() 发起的 LLM 请求：
 
 ---
 
-## 问题十一：assemble() 步骤 7 的状态缓存形成反馈循环
+## 问题十一：assemble() 步骤 7 的状态缓存形成反馈循环（✅ 已修复）
 
 ### 问题
 
@@ -575,5 +597,10 @@ compact() 发起的 LLM 请求：
 
 维持 `setCurrentContextSize` 不变（它是 `shouldAutoCompact` 的必要输入）。步骤 4 的告警移除，合并到步骤 6 之后用实时数据。步骤 6.5 从"告警但不阻断"升级为"阻断请求并通知用户"。
 
-> 执行记录：2026-07-11 — 未实施。步骤 4 告警、步骤 6.5 检查逻辑均未变更。
+> 执行记录：2026-07-11 — 已实施。随着 Compactor 合并和自动压缩逻辑移入 `assemble()`：
+> 1. `shouldAutoCompact()` 不再依赖 `tracker_.usagePercent()`（陈旧数据），改由 `assemble()` 步骤 2.5
+>    直接用实时 `total_tokens / model_limit` 计算百分比判断——反馈循环被打破
+> 2. 告警只在步骤 3 触发一次（基于实时 `total_tokens`），不再有"步骤 4 + 步骤 6.5"双重告警
+> 3. `setCurrentContextSize(total_tokens)` 仍保留在步骤 4，但仅用于 Token 校准和诊断目的，
+>    不再影响压缩决策
 
