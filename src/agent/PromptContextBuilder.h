@@ -89,10 +89,20 @@ struct PromptContext {
 
 class PromptContextBuilder {
 public:
-    // 为“按章节写作”类任务构建上下文。
+    // 为”按章节写作”类任务构建上下文。
     static std::optional<PromptContext> buildForChapter(
         const Project& project,
         const PromptContextOptions& options);
+
+    // 轻量级上下文构建 — 仅输出章节元数据 + 风格，不注入角色/设定/规则详情。
+    // 与 buildForChapter 共享参数校验逻辑，但跳过全部详情注入步骤。
+    // rendered_prompt 通常 < 500 tokens，配合 renderToolUseInstructions 使用。
+    static std::optional<PromptContext> buildLightweight(
+        const Project& project,
+        const PromptContextOptions& options);
+
+    // 渲染工具使用指引文本，指导 LLM 按需调用工具获取上下文。
+    static std::string renderToolUseInstructions();
 
     // 仅渲染文本；适合上层已经缓存了 payload 的情况。
     static std::string renderPrompt(const PromptContext& context);

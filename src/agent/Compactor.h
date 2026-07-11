@@ -15,6 +15,7 @@
 
 namespace llm {
 class ILLMClient;
+class TokenCalibrator;
 } // namespace llm
 
 struct Project;
@@ -55,7 +56,7 @@ public:
     }
 
     // 设置自动压缩参数。
-    void setAutoCompact(bool enabled, int threshold_pct = 70) {
+    void setAutoCompact(bool enabled, int threshold_pct = 90) {
         auto_compact_ = enabled;
         if (threshold_pct > 0 && threshold_pct <= 100)
             auto_compact_threshold_ = threshold_pct;
@@ -71,12 +72,19 @@ public:
     // MED-1: 设置模型上下文窗口上限，compact 前做 token 预算检查防 API 400。
     void setModelContextLimit(int limit) { model_context_limit_ = limit; }
 
+    // 设置 Token 校准器（非拥有指针，用于 MED-1 窗口检查时校准 token 估算）。
+    void setCalibrator(llm::TokenCalibrator* cal) { calibrator_ = cal; }
+    // 设置当前模型名（用于按模型区分校准数据）。
+    void setModelName(const std::string& name) { model_name_ = name; }
+
 private:
     std::string summary_;            //  LLM 生成的压缩摘要
     int marker_ = 0;                 //  被压缩的消息数标记，/rewind 检测用
     bool auto_compact_ = false;      //  是否启用自动压缩
-    int auto_compact_threshold_ = 70; //  自动压缩触发阈值（用量百分比）
+    int auto_compact_threshold_ = 90; //  自动压缩触发阈值（用量百分比）
     int model_context_limit_ = 0;    //  MED-1: 模型上下文窗口上限（0=不限制）
+    llm::TokenCalibrator* calibrator_ = nullptr;  //  Token 校准器（非拥有指针）
+    std::string model_name_;                      //  当前模型名
 };
 
 } // namespace agent

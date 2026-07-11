@@ -17,6 +17,7 @@
 #include "agent/SessionPersistence.h"
 #include "agent/TokenTracker.h"
 #include "llm/Conversation.h"
+#include "llm/TokenCalibrator.h"
 
 #include <optional>
 #include <string>
@@ -81,6 +82,30 @@ public:
 
     // 设置当前活跃章节 ID（供 assemble 构建章节上下文）。
     void setCurrentChapter(const std::string& id) { current_chapter_id_ = id; }
+
+    // 设置轻量提示词模式（轻量 system prompt + LLM 通过工具按需获取上下文）。
+    void setLightweightMode(bool enabled) { lightweight_mode_ = enabled; }
+    // 查询当前是否为轻量提示词模式。
+    bool isLightweightMode() const { return lightweight_mode_; }
+
+    // ================================================================
+    // Token 校准（自校准 TokenCounter）
+    // ================================================================
+
+    // 设置 Token 校准器（非拥有指针，生命周期由 NovelAgentApp 管理）。
+    void setCalibrator(llm::TokenCalibrator* cal) {
+        calibrator_ = cal;
+        compactor_.setCalibrator(cal);  // 同步到 compactor 做 MED-1 窗口检查校准
+    }
+    // 设置当前使用的模型名（用于按模型区分校准数据）。
+    void setModelName(const std::string& name) {
+        model_name_ = name;
+        compactor_.setModelName(name);  // 同步到 compactor 做 MED-1 窗口检查校准
+    }
+    // 获取 Token 校准器（可能为 nullptr）。
+    llm::TokenCalibrator* calibrator() { return calibrator_; }
+    // 是否有可用的 Token 校准器。
+    bool hasCalibrator() const { return calibrator_ != nullptr && !model_name_.empty(); }
 
     // ================================================================
     // 会话级 Token 追踪（委托 TokenTracker）
@@ -202,10 +227,25 @@ private:
     bool vector_store_dirty_ = false;  // /rewind 后标记，跳过检索并提示 /index
 
     // 按 token 预算从新到旧截断消息（preserved 消息优先保留）。
-    static std::vector<llm::Message> truncateMessages(
+    // 使用 calibrator_ 修正 token 估算（若已注入）。
+    std::vector<llm::Message> truncateMessages(
         const std::vector<llm::Message>& messages,
         int budget,
         int& truncated_count);
+
+    // ── Token 校准（自校准 TokenCounter）──
+    llm::TokenCalibrator* calibrator_ = nullptr;  //  Token 校准器（非拥有，nullptr=降级）
+    std::string model_name_;                      //  当前模型名（用于按模型区分校准）
+
+    // ── 提示词模式 ──
+    bool lightweight_mode_ = true;                //  轻量提示词模式（LLM 通过工具按需获取上下文）
+
+    // 内联校准辅助：估算值 × 修正因子（calibrator_ 为空或 model_name_ 为空时降级为原值）。
+    int calibrateToken(int raw) const {
+        if (calibrator_ && !model_name_.empty())
+            return calibrator_->apply(model_name_, raw);
+        return raw;
+    }
 };
 
 } // namespace agent

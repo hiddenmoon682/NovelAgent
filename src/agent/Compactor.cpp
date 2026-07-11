@@ -3,6 +3,7 @@
 #include "agent/Compactor.h"
 
 #include "llm/ILLMClient.h"
+#include "llm/TokenCalibrator.h"
 #include "llm/TokenCounter.h"
 #include "project/Models.h"
 #include "agent/PromptContextBuilder.h"
@@ -14,8 +15,10 @@ namespace agent {
 
 namespace {
 
-// Compaction 时保留的最近消息对数。
+// Compaction 时保留的最近消息对数（理想值）。
 constexpr int kCompactKeepExchanges = 10;   // 保留最近 10 对 = ~20 条消息
+// Compaction 的最小保留消息对数（防止压缩过度丢失全部上下文）。
+constexpr int kMinKeepExchanges = 2;        // 最少保留 2 对 = 4 条消息
 
 // Compaction 用的 system prompt — 双层摘要：情节事实 + 风格样本。
 constexpr const char* kCompactSystemPrompt =
@@ -73,14 +76,25 @@ CompactResult Compactor::compact(
     const auto& all_msgs = conversation.all();
     int total_msgs = static_cast<int>(all_msgs.size());
 
-    // 计算保留边界：保留最后 kCompactKeepExchanges * 2 条消息
-    int keep_count = kCompactKeepExchanges * 2;
-    if (total_msgs <= keep_count) {
-        spdlog::info("[Compactor] compact 跳过: 消息不足 ({} 条)", total_msgs);
-        result.summary = "(消息数量不足，无需压缩)";
+    // 计算保留边界：理想保留 kCompactKeepExchanges*2 条，但若消息不够则保留更少。
+    // 不设"消息太少不压缩"的守卫——compact 被调用说明调用方已判断上下文承压
+    //（token 用量高或截断已发生），此时即使只有少量消息也可能消耗大量 token
+    //（每条消息可能是完整章节正文），应照常压缩。唯一硬约束：至少 1 条可压缩。
+    const int ideal_keep = kCompactKeepExchanges * 2;   // 20
+    const int min_keep = kMinKeepExchanges * 2;          // 4
+
+    if (total_msgs <= 1) {
+        spdlog::info("[Compactor] compact 跳过: 没有可压缩的消息 ({} 条)", total_msgs);
+        result.summary = "(消息数量不足，无法压缩)";
         return result;
     }
 
+    int keep_count = ideal_keep;
+    if (total_msgs <= ideal_keep) {
+        // 消息不够理想保留数 → 尽量少保留，多压缩
+        keep_count = std::min(min_keep, total_msgs - 1);
+        if (keep_count == 0) keep_count = 1;  // 至少保留最后一条
+    }
     int compact_count = total_msgs - keep_count;
     result.messages_compacted = compact_count;
 
@@ -108,6 +122,11 @@ CompactResult Compactor::compact(
     // MED-1: 估算总 token，超出模型窗口则降级截断，防止 API 400
     int convo_tokens = llm::TokenCounter::countTokens(conversation_text);
     int prompt_tokens = llm::TokenCounter::countTokens(compact_prompt);
+    // 应用 Token 校准修正因子（若已注入）
+    if (calibrator_ && !model_name_.empty()) {
+        convo_tokens = calibrator_->apply(model_name_, convo_tokens);
+        prompt_tokens = calibrator_->apply(model_name_, prompt_tokens);
+    }
     int total_estimated = convo_tokens + prompt_tokens + 50; // 50 预留消息结构开销
     if (model_context_limit_ > 0 && total_estimated > model_context_limit_) {
         spdlog::warn("[Compactor] 待压缩对话 {} tokens 超过模型窗口 {}，"
@@ -134,9 +153,26 @@ CompactResult Compactor::compact(
     };
 
     try {
+        // 计算当前实际发送的估算值（供校准回传使用）
+        int send_convo = llm::TokenCounter::countTokens(conversation_text);
+        int send_prompt = llm::TokenCounter::countTokens(compact_prompt);
+        if (calibrator_ && !model_name_.empty()) {
+            send_convo = calibrator_->apply(model_name_, send_convo);
+            send_prompt = calibrator_->apply(model_name_, send_prompt);
+        }
+        int estimated_input = send_convo + send_prompt + 50;
+
         auto response = llm_client.chatNonStreaming(compact_msgs, {}, compact_prompt);
         result.summary = response.content;
-        result.tokens_after = llm::TokenCounter::countTokens(result.summary);
+        // 使用 API 返回的真实 token 数，不再用启发式估算
+        result.tokens_after = response.completion_tokens;
+
+        // 将 compaction LLM 调用的真实 token 数回传给校准器
+        if (calibrator_ && !model_name_.empty() && estimated_input > 0 && response.prompt_tokens > 0) {
+            calibrator_->calibrate(model_name_, estimated_input, response.prompt_tokens);
+            spdlog::debug("[Compactor] Token 校准: model={}, estimated={}, actual={}",
+                          model_name_, estimated_input, response.prompt_tokens);
+        }
 
         summary_ = result.summary;
         marker_ = compact_count;

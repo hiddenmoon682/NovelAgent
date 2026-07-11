@@ -48,10 +48,16 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
         "- 根据大纲和现有内容创作连贯的章节\n"
         "- 维护角色一致性、剧情连贯性和世界观设定\n\n"
         "工作原则：\n"
-        "- 写作前先读取相关章节和设定\n"
+        "- 【主动获取上下文】使用 get_chapter_context() / get_relevant_characters() 等工具\n"
+        "  按需获取本章相关的设定、角色和规则，不要在 system prompt 中等待被动注入\n"
+        "- 【按需查询】不要一次性获取所有信息。先了解核心上下文，\n"
+        "  写作中需要确认细节时再调用单个查询工具\n"
         "- 写完后确认内容已正确写入文件\n"
         "- 保持语言流畅、情节紧凑";
     agent_.setSystemPrompt(agent::PromptComposer::compose(pc));
+
+    // 注入 Token 自校准器到 ContextManager（利用 API 返回的真实 token 做 EMA 修正）
+    cm_.setCalibrator(&calibrator_);
 
     agent_.setContextManager(&cm_);
     agent_.setMaxContextTokens(client_.config().max_context_tokens);

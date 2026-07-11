@@ -406,21 +406,20 @@ void test_compact_actually_removes_messages() {
     PASS();
 }
 
-// A1: 消息不足时 compact 跳过，不删消息。
+// A1: 消息不足时不跳过（消息少但 token 可能高），只保留最少 4 条。
 void test_compact_skip_when_messages_insufficient() {
-    TEST("A1: compact() 消息不足时跳过");
+    TEST("A1: compact() 消息不足时压缩旧消息");
     agent::ContextManager cm;
     llm::Conversation conv;
     for (int i = 0; i < 5; ++i) {
         conv.addUser("短消息 " + std::to_string(i));
         conv.addAssistant("短回复 " + std::to_string(i));
     }
-    const size_t before = conv.size();
     CompactMockLLMClient llm;
     auto result = cm.compact(conv, llm, std::nullopt);
-    // 消息数 ≤ keep_count(20) → 跳过，不删
-    CHECK(result.messages_compacted == 0);
-    CHECK(conv.size() == before);
+    // 10 条 > 1（硬拒绝阈值），动态保留 4 条，压缩 6 条
+    CHECK(result.messages_compacted == 6);
+    CHECK(conv.size() == 4);
     PASS();
 }
 

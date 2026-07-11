@@ -70,6 +70,10 @@ void Agent::setMaxToolRounds(int n) {
 void Agent::setContextManager(ContextManager* cm) {
     context_manager_ = cm;
     if (processor_) processor_->setContextManager(cm);
+    // 同步模型名和校准器到 ContextManager（用于按模型区分 Token 校准）
+    if (cm) {
+        cm->setModelName(client_->config().model);
+    }
 }
 void Agent::setMaxContextTokens(int tokens) {
     max_context_tokens_ = tokens;

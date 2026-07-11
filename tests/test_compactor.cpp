@@ -73,18 +73,35 @@ void test_compact_basic() {
 }
 
 void test_compact_skip_too_few() {
-    TEST("Compactor — 消息不足跳过");
+    TEST("Compactor — 消息不足跳过 (≤1 条)");
     agent::Compactor compactor;
     MockCompactorClient client;
     llm::Conversation conv;
 
     conv.addUser("你好");
-    conv.addAssistant("你好");
-    CHECK(conv.size() == 2);
+    CHECK(conv.size() == 1);
 
     auto result = compactor.compact(conv, client, "");
     CHECK(result.messages_compacted == 0);
-    CHECK(conv.size() == 2);  // 未压缩
+    CHECK(conv.size() == 1);  // 未压缩
+    PASS();
+}
+
+void test_compact_few_messages() {
+    TEST("Compactor — 消息少但仍压缩 (2 条 → 保留 1 压缩 1)");
+    agent::Compactor compactor;
+    MockCompactorClient client("摘要");
+    llm::Conversation conv;
+
+    conv.addUser("长文本消息1: " + std::string(2000, 'x'));
+    conv.addAssistant("长文本消息2: " + std::string(2000, 'y'));
+    CHECK(conv.size() == 2);
+
+    auto result = compactor.compact(conv, client, "");
+    // 总消息 2 条，保留 1 条，压缩 1 条
+    CHECK(result.messages_compacted == 1);
+    CHECK(!result.summary.empty());
+    CHECK(conv.size() == 1);  // 头部 1 条被删除
     PASS();
 }
 
@@ -172,6 +189,7 @@ int main() {
 
     test_compact_basic();
     test_compact_skip_too_few();
+    test_compact_few_messages();
     test_compact_summary_saved();
     test_compact_clear();
     test_compact_restore();

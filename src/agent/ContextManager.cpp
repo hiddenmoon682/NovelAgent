@@ -419,6 +419,8 @@ ContextAssembly ContextManager::assemble(
     // 总预算 = max_context_tokens；system_prompt 优先占用，剩余归消息列表。
     int sys_tokens = result.system_prompt.empty()
         ? 0 : llm::TokenCounter::countTokens(result.system_prompt);
+    // 应用 Token 校准修正因子
+    sys_tokens = calibrateToken(sys_tokens);
     int msg_budget = std::max(0, max_context_tokens - sys_tokens);
 
     // ── 步骤 4: 生成 Token 用量告警 ──────────────────────────────────────
@@ -460,6 +462,8 @@ ContextAssembly ContextManager::assemble(
 
     // ── 步骤 6: 统计总 token ────────────────────────────────────────────
     int msg_tokens = llm::TokenCounter::countMessages(result.messages);
+    // 应用 Token 校准修正因子
+    msg_tokens = calibrateToken(msg_tokens);
     result.total_tokens = sys_tokens + msg_tokens;
 
     // ── 步骤 6.5: 最终预检 ──────────────────────────────────────────────
@@ -555,7 +559,29 @@ std::string ContextManager::buildSystemPrompt(
         return prompt;
     }
 
-    // ── 模式 2: 章节级完整上下文 ──────────────────────────────────────────
+    // ── 模式 2: 轻量提示词模式（NovelClaw 参考）─────────────────────────
+    // 只注入章节元数据 + 风格，不注入角色/设定/规则详情。
+    // LLM 通过 get_chapter_context() / get_relevant_characters() 等工具按需获取。
+    if (lightweight_mode_) {
+        prompt::PromptContextOptions options;
+        options.task = "write_chapter";
+        options.chapter_id = chapter_id;
+        // 关闭详情注入
+        options.include_outline_context = false;
+        options.max_plot_threads = 0;
+        options.max_characters = 0;
+        options.max_settings = 0;
+        options.max_world_rules = 0;
+
+        auto ctx = prompt::PromptContextBuilder::buildLightweight(project, options);
+        if (!ctx) {
+            spdlog::warn("[ContextManager] 轻量上下文构建失败，回退到项目级概要");
+            return buildSystemPrompt(project);
+        }
+        return ctx->rendered_prompt + "\n\n" + prompt::PromptContextBuilder::renderToolUseInstructions();
+    }
+
+    // ── 模式 3: 章节级完整上下文 ──────────────────────────────────────────
     // 通过 PromptContextBuilder 渲染完整的章节写作上下文。
     // task = "write_chapter" 指示构建器按"写作任务"的标准筛选和排序内容。
     prompt::PromptContextOptions options;
@@ -592,6 +618,8 @@ std::vector<llm::Message> ContextManager::truncateMessages(
     }
 
     int preserved_tokens = llm::TokenCounter::countMessages(preserved_msgs);
+    // 应用 Token 校准修正因子（preserved 消息的 token 估算可能被高估/低估）
+    preserved_tokens = calibrateToken(preserved_tokens);
     int remaining_budget = budget - preserved_tokens;
 
     if (remaining_budget < 0) {
@@ -605,12 +633,13 @@ std::vector<llm::Message> ContextManager::truncateMessages(
         return preserved_msgs;
     }
 
-    if (llm::TokenCounter::countMessages(messages) <= budget) return messages;
+    // 快速路径：全部消息都在预算内则无需截断（估算已校准）
+    if (calibrateToken(llm::TokenCounter::countMessages(messages)) <= budget) return messages;
 
     std::vector<llm::Message> result;
     int used = 0;
     for (auto it = normal_msgs.rbegin(); it != normal_msgs.rend(); ++it) {
-        int cost = llm::TokenCounter::countSingleMessage(**it);
+        int cost = calibrateToken(llm::TokenCounter::countSingleMessage(**it));
         if (used + cost > remaining_budget) break;
         used += cost;
         result.push_back(**it);

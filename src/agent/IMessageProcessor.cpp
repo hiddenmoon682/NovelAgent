@@ -129,6 +129,21 @@ SerialProcessor::Result SerialProcessor::process(
     auto result = loop.run(conversation, tools, effective_prompt,
                            std::move(callbacks), config, &effective_messages);
 
+    // ── 步骤 6.5: Token 校准回传 ──
+    // 必须在 recordUsage 之前执行：tracker_.currentContextSize() 此时仍持有
+    // assemble() 写入的启发式估算值（recordUsage 会将其覆盖为真实值）。
+    // 将估算值与 API 返回的真实 prompt_tokens 对比，更新校准器的 EMA 修正因子。
+    if (context_manager_ && context_manager_->hasCalibrator()) {
+        int estimated = context_manager_->tracker().currentContextSize();
+        if (estimated > 0 && result.input_tokens > 0) {
+            context_manager_->calibrator()->calibrate(
+                client_.config().model, estimated, result.input_tokens);
+            spdlog::debug("[SerialProcessor] Token 校准: model={}, estimated={}, actual={}, correction={:.3f}",
+                          client_.config().model, estimated, result.input_tokens,
+                          context_manager_->calibrator()->getCorrection(client_.config().model));
+        }
+    }
+
     // ── 步骤 7: 记录 token 消耗（会话级追踪）
     if (context_manager_) {
         context_manager_->recordUsage(result.input_tokens, result.output_tokens);
@@ -307,6 +322,17 @@ ParallelProcessor::Result ParallelProcessor::process(
 
         // D6: 恢复并行模式的上下文预算管理——从 orchestrator 收集其自身的 LLM 调用 token
         // （串行回退 + 汇总 LLM；子任务 SubAgent 使用独立 LLMClient，其 token 不计入以避免竞争）。
+
+        // Token 校准回传（必须在 recordUsage 之前，原理同 SerialProcessor）
+        if (context_manager_ && context_manager_->hasCalibrator()) {
+            int estimated = context_manager_->tracker().currentContextSize();
+            int actual = orchestrator_->lastInputTokens();
+            if (estimated > 0 && actual > 0) {
+                context_manager_->calibrator()->calibrate(
+                    factory_.config().model, estimated, actual);
+            }
+        }
+
         if (context_manager_) {
             context_manager_->recordUsage(
                 orchestrator_->lastInputTokens(),
