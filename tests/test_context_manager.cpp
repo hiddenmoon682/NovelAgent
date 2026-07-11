@@ -280,6 +280,11 @@ void test_compact_actually_removes_messages() {
     CHECK(result.messages_compacted == 10);
     // 对话消息数下降到 20（保留最近 10 对 = 20 条）+ 2（摘要 user/assistant 对）
     CHECK(conv.size() == 22);
+    // 摘要插入在头部，保留的最近消息紧随其后
+    const auto& msgs = conv.messages();
+    CHECK(msgs[0].content.find("以下是被压缩的旧对话摘要") != std::string::npos);
+    CHECK(msgs[1].content.find("被压缩的历史摘要") != std::string::npos);
+    CHECK(msgs[2].content.find("用户消息 5") != std::string::npos);  // 第一条保留消息
     // 摘要被存储
     CHECK(cm.hasCompactedSummary());
     CHECK(result.summary.find("压缩摘要") != std::string::npos);
