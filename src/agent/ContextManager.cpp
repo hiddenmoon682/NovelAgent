@@ -1,4 +1,5 @@
-// ContextManager 实现 — 增强版（会话追踪 + pin + compaction + 降级可见性）。
+// ContextManager 实现 — 会话追踪 + compaction + 持久化。
+// Compactor 类已展开合并到本文件，消除冗余常量和转发方法。
 
 #include "agent/ContextManager.h"
 
@@ -20,35 +21,18 @@
 namespace agent {
 
 namespace {
-// 默认存储占位符（不使用持久化功能时的回退）。
-FileStorageBackend& defaultStorage() {
-    static FileStorageBackend s("");
-    return s;
-}
-
 // 取项目设定文件的最后修改时间戳（取多个文件中的最新值）。
-// 用于会话恢复时检测"项目在保存后被外部修改"→ 清空旧摘要。
-// 返回 0 表示取不到（项目路径为空或所有文件均不存在）。
-//
-// A12 修复：此前只盯 project.json（后改为 novel.json，A5 已修），颗粒度不足——
-//   修改角色/设定/规则时，characters.json/settings.json/world_rules.json 等文件才会变，
-//   novel.json 可能不变。现改为取 novel.json + outline.json + characters.json +
-//   settings.json + world_rules.json 的最新 mtime，覆盖全部主要 JSON 设定文件。
-//   局限：章节正文（.md 文件）不在检测范围内（A12 根治需工具层标记向量失效）。
 int64_t projectSettingsMtime(const std::string& project_path) {
     if (project_path.empty()) return 0;
 
-    // 取多个设定 JSON 文件的最新 mtime，覆盖角色/大纲/设定/规则变更
     static const std::array<const char*, 5> kSettingFiles = {
-        ProjectIO::kNovelJsonFileName,           // novel.json — 项目元数据
-        ProjectIO::kOutlineJsonFileName,          // outline.json — 大纲
-        ProjectIO::kCharactersJsonFileName,       // characters.json — 角色
-        ProjectIO::kSettingsJsonFileName,         // settings.json — 设定
-        ProjectIO::kWorldRulesJsonFileName        // world_rules.json — 世界规则
+        ProjectIO::kNovelJsonFileName,
+        ProjectIO::kOutlineJsonFileName,
+        ProjectIO::kCharactersJsonFileName,
+        ProjectIO::kSettingsJsonFileName,
+        ProjectIO::kWorldRulesJsonFileName
     };
 
-    // MinGW 实现下 last_write_time().time_since_epoch().count() 可能为负值或零，
-    // 但跨文件比较时方向一致。此处取所有存在文件的最新值。
     int64_t latest = std::numeric_limits<int64_t>::min();
     bool any_found = false;
     for (const auto* fname : kSettingFiles) {
@@ -63,10 +47,14 @@ int64_t projectSettingsMtime(const std::string& project_path) {
     return any_found ? latest : 0;
 }
 
-// Compaction 时保留的最近消息对数。
-constexpr int kCompactKeepExchanges = 10;   // 保留最近 10 对 = ~20 条消息
+// 默认存储占位符（不使用持久化功能时的回退）。
+FileStorageBackend& defaultStorage() {
+    static FileStorageBackend s("");
+    return s;
+}
 
-// Compaction 用的 system prompt — 双层摘要：情节事实 + 风格样本。
+// ── Compaction 常量 ──
+// Compaction 时的 system prompt — 双层摘要：情节事实 + 风格样本。
 constexpr const char* kCompactSystemPrompt =
     "你是一个小说创作助手的上下文压缩器。用中文对以下对话历史进行双层摘要：\n"
     "\n"
@@ -76,7 +64,15 @@ constexpr const char* kCompactSystemPrompt =
     "2. 风格参考：摘录 2-3 句最能代表当前写作风格的原句——\n"
     "   保留其修辞手法、句式节奏、情绪氛围和对话语气\n"
     "\n"
-    "总长度控制在 2000 字以内，事实与风格的比例由你判断。";
+    "总长度控制在 2000 字以内，事实与风格的比例由你判断。\n"
+    "\n"
+    "注意：对话历史中可能包含之前生成的压缩摘要，\n"
+    "请以已有摘要中的情节事实为基础，补充新增对话中的关键进展，\n"
+    "避免过度概括或丢失已有摘要中的细节。";
+
+// Compaction 时保留的最近消息对数。
+constexpr int kCompactKeepExchanges = 10;   // 保留最近 10 对 = ~20 条消息
+constexpr int kMinKeepExchanges = 2;        // 最少保留 2 对 = 4 条消息
 
 // Token 用量告警阈值。
 constexpr int kWarnPercent = 60;
@@ -110,8 +106,8 @@ void ContextManager::saveSessionState(
     const int64_t mtime = project_ ? projectSettingsMtime(project_->path) : 0;
 
     SessionMeta meta;
-    meta.compacted_summary = compactor_.summary();
-    meta.compaction_marker = compactor_.marker();
+    meta.compacted_summary = summary_;
+    meta.compaction_marker = marker_;
     meta.token_state = tracker_.snapshot();
     meta.preserved_indices = preserved_indices;
     meta.project_mtime = mtime;
@@ -136,8 +132,8 @@ void ContextManager::loadSessionState(
         meta.compaction_marker = 0;
     }
 
-    // 恢复到 Compactor + TokenTracker 状态
-    compactor_.restore(meta.compacted_summary, meta.compaction_marker);
+    // 恢复到 TokenTracker + Compaction 状态
+    restoreCompactionState(meta.compacted_summary, meta.compaction_marker);
     tracker_.restore(meta.token_state);
 
     // 恢复 preserved 标记
@@ -152,13 +148,13 @@ void ContextManager::loadSessionState(
 
 void ContextManager::resetSession() {
     tracker_.reset();
-    compactor_.clear();
+    summary_.clear();
+    marker_ = 0;
     last_warnings_.clear();
-    last_truncated_count_ = 0;
 }
 
 // ===========================================================================
-// Compaction 委托
+// Compaction
 // ===========================================================================
 
 CompactResult ContextManager::compact(
@@ -166,28 +162,109 @@ CompactResult ContextManager::compact(
     llm::ILLMClient& llm_client,
     std::optional<std::string> focus)
 {
-    auto result = compactor_.compact(conversation, llm_client,
-                                     std::move(focus));
+    CompactResult result;
+    const auto& all_msgs = conversation.all();
+    int total_msgs = static_cast<int>(all_msgs.size());
+
+    // 计算保留边界：理想保留 kCompactKeepExchanges*2 条。
+    const int ideal_keep = kCompactKeepExchanges * 2;   // 20
+    const int min_keep = kMinKeepExchanges * 2;          // 4
+
+    if (total_msgs <= 1) {
+        spdlog::info("[ContextManager] compact 跳过: 没有可压缩的消息 ({} 条)", total_msgs);
+        result.summary = "(消息数量不足，无法压缩)";
+        return result;
+    }
+
+    int keep_count = ideal_keep;
+    if (total_msgs <= ideal_keep) {
+        keep_count = std::min(min_keep, total_msgs - 1);
+        if (keep_count == 0) keep_count = 1;
+    }
+    int compact_count = total_msgs - keep_count;
+    result.messages_compacted = compact_count;
+
+    // 估算压缩前后的 token 数
+    std::vector<llm::Message> to_compact(all_msgs.begin(), all_msgs.begin() + compact_count);
+    result.tokens_before = llm::TokenCounter::countMessages(to_compact);
+
+    // 拼接待压缩消息为文本
+    std::ostringstream oss;
+    for (const auto& msg : to_compact) {
+        std::string role_str;
+        switch (msg.role) {
+            case llm::MessageRole::User:       role_str = "用户"; break;
+            case llm::MessageRole::Assistant:  role_str = "助手"; break;
+            case llm::MessageRole::Tool:       role_str = "工具"; break;
+            default: continue;
+        }
+        oss << "[" << role_str << "] " << msg.content << "\n";
+    }
+    std::string conversation_text = oss.str();
+
+    // 构建压缩提示词
+    std::string compact_prompt = buildCompactPrompt(conversation_text, focus);
+
+    std::vector<llm::Message> compact_msgs = {
+        llm::Message::user(conversation_text)
+    };
+
+    try {
+        // 计算发送的估算 token（供校准回传使用）
+        int send_convo = estimateTokens(conversation_text);
+        int send_prompt = estimateTokens(compact_prompt);
+        int estimated_input = send_convo + send_prompt + 50;
+
+        auto response = llm_client.chatNonStreaming(compact_msgs, {}, compact_prompt);
+        result.summary = response.content;
+        result.tokens_after = response.completion_tokens;
+
+        // 将 compaction LLM 调用的真实 token 数回传给校准器
+        if (calibrator_ && !model_name_.empty() && estimated_input > 0 && response.prompt_tokens > 0) {
+            calibrator_->calibrate(model_name_, estimated_input, response.prompt_tokens);
+            spdlog::debug("[ContextManager] Token 校准: model={}, estimated={}, actual={}",
+                          model_name_, estimated_input, response.prompt_tokens);
+        }
+
+        summary_ = result.summary;
+        marker_ = compact_count;
+
+        // 从 conversation 头部删除已压缩的旧消息
+        conversation.removeOldest(compact_count);
+
+        // 将被压缩的对话摘要以 user/assistant 消息对插入对话头部
+        conversation.addUser("【系统】以下是被压缩的旧对话摘要：");
+        conversation.addAssistant("[被压缩的历史摘要]\n" + result.summary);
+
+        spdlog::info("[ContextManager] compact 完成: {} 条 → 摘要 ({} → {} tokens, {:.0f}%)",
+                     compact_count, result.tokens_before, result.tokens_after,
+                     result.tokens_before > 0
+                         ? (1.0 - static_cast<double>(result.tokens_after) / result.tokens_before) * 100.0
+                         : 0.0);
+    } catch (const std::exception& e) {
+        spdlog::error("[ContextManager] compact LLM 调用失败: {}", e.what());
+        result.summary = "(压缩失败: " + std::string(e.what()) + ")";
+        result.messages_compacted = 0;
+    }
+
     return result;
 }
 
 void ContextManager::setAutoCompact(bool enabled, int threshold_pct) {
-    compactor_.setAutoCompact(enabled, threshold_pct);
+    auto_compact_ = enabled;
+    if (threshold_pct > 0 && threshold_pct <= 100)
+        auto_compact_threshold_ = threshold_pct;
 }
 
-bool ContextManager::shouldAutoCompact() const {
-    return compactor_.shouldAutoCompact(tracker_.usagePercent());
+bool ContextManager::shouldAutoCompact(int usage_percent) const {
+    if (!auto_compact_) return false;
+    return usage_percent >= auto_compact_threshold_;
 }
 
 // ===========================================================================
 // assemble — 上下文组装核心方法
 //
-// 职责：
-//   在每次 LLM 请求前，将静态项目设定与当前对话历史合并，
-//   在 max_context_tokens 预算内执行消息截断，
-//   并输出 token 用量告警，最终产出完整的 ContextAssembly。
-//
-// 执行流程（共 6 步）：
+// 执行流程（共 5 步）：
 //
 //   ┌─────────────────────────────────────────────────────────────┐
 //   │  步骤 0: System Prompt 构建                                  │
@@ -196,77 +273,86 @@ bool ContextManager::shouldAutoCompact() const {
 //   └──────────────────┬──────────────────────────────────────────┘
 //                      ▼
 //   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 1: Token 预算分配                                      │
+//   │  步骤 1: Token 预算                                          │
 //   │  sys_tokens  = countTokens(system_prompt)                   │
 //   │  msg_budget = max(0, max_context_tokens - sys_tokens)      │
-//   │  → 剩余预算全部留给对话消息列表                              │
+//   │  ● msg_budget <= 0 → error：system prompt 独占窗口          │
 //   └──────────────────┬──────────────────────────────────────────┘
 //                      ▼
 //   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 2: Token 阈值告警                                      │
-//   │  checkThresholds() → 分三级状态：                            │
-//   │  ● Normal  ( < 60% )  → 静默                                │
-//   │  ● Warning (60%-85%)  → 建议 /compact                       │
-//   │  ● Critical( ≥ 85% )  → 强烈建议 /compact                    │
-//   │  ● msg_budget <= 0    → error：system prompt 独占窗口       │
+//   │  步骤 2: 实时用量计算 + 自动压缩检查                          │
+//   │  total_tokens = sys_tokens + msg_tokens（含新用户输入）      │
+//   │  ● 自动压缩（llm_client 非空 + 启用 + 超阈值）：              │
+//   │    compact() → 压缩成功则重算 total_tokens                   │
 //   └──────────────────┬──────────────────────────────────────────┘
 //                      ▼
 //   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 3: 对话消息截断                                        │
-//   │  truncateMessages(all_msgs, msg_budget, truncated_count)    │
-//   │  → 从最新消息反向贪心保留，preserved 消息优先但不免预算       │
-//   │  → 安全兜底：至少保留最后一条消息（当前用户输入）             │
+//   │  步骤 3: 告警                                                │
+//   │  total_tokens / model_limit → 三级预警（实时数据）：          │
+//   │  ● Normal  ( <  60% ) → 静默                                │
+//   │  ● Warning (60%-85%) → 建议 /compact                       │
+//   │  ● Critical( ≥ 85% ) → 强烈建议 /compact                    │
+//   │  ●  > 100% → 致命告警                                       │
 //   └──────────────────┬──────────────────────────────────────────┘
 //                      ▼
 //   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 4: 最终 Token 统计                                     │
-//   │  total_tokens = sys_tokens + countMessages(result.messages) │
-//   └──────────────────┬──────────────────────────────────────────┘
-//                      ▼
-//   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 5: 模型窗口超限预检（API 400 防护）                    │
-//   │  total_tokens > model_context_limit → 致命告警               │
-//   │  提示用户减少 /pin 数量或执行 /compact                       │
-//   └──────────────────┬──────────────────────────────────────────┘
-//                      ▼
-//   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 6: 内部状态缓存                                        │
-//   │  last_warnings_        → 供 Agent/REPL 读取                  │
-//   │  last_truncated_count_ → 供外部查询截断数                    │
-//   │  current_context_size_ → 更新为 total_tokens，供下次阈值检查 │
+//   │  步骤 4: 内部状态缓存                                        │
+//   │  last_warnings_     → 供 Agent/REPL 读取                    │
+//   │  current_context_size_ → 更新为 total_tokens                │
 //   └─────────────────────────────────────────────────────────────┘
-//
-// 输出 ContextAssembly 关键字段：
-//   system_prompt         — 项目上下文的拼接结果
-//   messages              — 截断后的有效消息列表
-//   warnings              — 所有告警的文本数组
-//   total_tokens          — 最终发送的 token 总量
-//   truncated_count       — 被丢弃的消息数量
 // ===========================================================================
 
 ContextAssembly ContextManager::assemble(
-    const llm::Conversation& conversation,
-    int max_context_tokens)
+    llm::Conversation& conversation,
+    int max_context_tokens,
+    llm::ILLMClient* llm_client)
 {
     ContextAssembly result;
 
     // ── 步骤 0: System Prompt 构建 ──────────────────────────────────────
-    // 输出项目概要 + 工具使用指南，LLM 通过工具按需获取章节/角色/设定等上下文。
     if (project_) {
         result.system_prompt = buildSystemPrompt(*project_);
     }
 
-    // ── 步骤 1: Token 预算分配 ────────────────────────────────────────────
-    // 总预算 = max_context_tokens；system_prompt 优先占用，剩余归消息列表。
-    int sys_tokens = result.system_prompt.empty()
-        ? 0 : llm::TokenCounter::countTokens(result.system_prompt);
-    // 应用 Token 校准修正因子
-    sys_tokens = calibrateToken(sys_tokens);
+    // ── 步骤 1: Token 预算 ──────────────────────────────────────────────
+    int sys_tokens = llm::TokenCounter::countTokensCalibrated(result.system_prompt, model_name_, calibrator_);
     int msg_budget = std::max(0, max_context_tokens - sys_tokens);
 
-    // ── 步骤 2: 生成 Token 用量告警 ──────────────────────────────────────
-    // 基于最后一次请求的实际上下文大小（非累计值）分三级预警。
-    auto pre_check = checkThresholds();
+    if (msg_budget <= 0) {
+        result.warnings.push_back(
+            "System prompt 已占用全部预算（" + std::to_string(sys_tokens) +
+            " tokens），无法容纳对话历史。建议精简项目上下文或增加 max_context_tokens。");
+        spdlog::error("[ContextManager] msg_budget <= 0 (sys={}, max={})",
+                      sys_tokens, max_context_tokens);
+    }
+
+    // ── 步骤 2: 实时用量计算 + 自动压缩检查 ────────────────────────────
+    result.messages = conversation.messages();
+    int msg_tokens = llm::TokenCounter::countMessagesCalibrated(result.messages, model_name_, calibrator_);
+    result.total_tokens = sys_tokens + msg_tokens;
+
+    // 基于本轮实时 total_tokens 判断是否需要自动压缩。
+    // 直接计算 usage_pct，不依赖 tracker_.usagePercent()（那是上一轮的陈旧数据）。
+    int model_limit = tracker_.modelLimit();
+    if (llm_client && auto_compact_ && model_limit > 0) {
+        int usage_pct = (result.total_tokens * 100) / model_limit;
+        if (usage_pct >= auto_compact_threshold_) {
+            spdlog::info("[ContextManager] 自动压缩触发 (用量 {}%, 阈值 {}%)",
+                         usage_pct, auto_compact_threshold_);
+            auto cr = compact(conversation, *llm_client, "自动压缩：上下文用量过高");
+            if (cr.messages_compacted > 0) {
+                // 压缩成功 — 重新计算（conversation 已被 compact() 修改）
+                result.messages = conversation.messages();
+                msg_tokens = llm::TokenCounter::countMessagesCalibrated(result.messages, model_name_, calibrator_);
+                result.total_tokens = sys_tokens + msg_tokens;
+                spdlog::info("[ContextManager] 自动压缩完成: {} 条 → 摘要, 新用量 {} tokens",
+                             cr.messages_compacted, result.total_tokens);
+            }
+        }
+    }
+
+    // ── 步骤 3: 实时用量告警 ────────────────────────────────────────────
+    auto pre_check = checkThresholds(result.total_tokens);
     if (pre_check.status == ContextStatus::Critical) {
         result.warnings.push_back(
             "上下文用量已达 " + std::to_string(pre_check.usage_percent) +
@@ -278,54 +364,8 @@ ContextAssembly ContextManager::assemble(
             "%，可考虑 /compact 释放空间。");
     }
 
-    // msg_budget <= 0 意味着静态上下文已占满窗口 → 消息列表无任何预算
-    if (msg_budget <= 0) {
-        result.warnings.push_back(
-            "System prompt 已占用全部预算（" + std::to_string(sys_tokens) +
-            " tokens），无法容纳对话历史。建议精简项目上下文或增加 max_context_tokens。");
-        spdlog::error("[ContextManager] msg_budget <= 0 (sys={}, max={})",
-                      sys_tokens, max_context_tokens);
-    }
-
-    // ── 步骤 3: 截断消息（支持 preserved 标记）───────────────────────────
-    // truncateMessages 内部按 "preserved 优先 → 从最新反向贪心" 的策略
-    // 在 msg_budget 内尽可能保留更多消息。
-    const auto& all_msgs = conversation.messages();
-    result.messages = truncateMessages(all_msgs, msg_budget, result.truncated_count);
-
-    if (result.truncated_count > 0) {
-        result.warnings.push_back(
-            "对话历史已截断 " + std::to_string(result.truncated_count) +
-            " 条消息，旧内容可能丢失。使用 /compact 可压缩保留关键信息。");
-        spdlog::warn("[ContextManager] 截断 {} 条消息 (预算={} sys={} msg_budget={})",
-                     result.truncated_count, max_context_tokens, sys_tokens, msg_budget);
-    }
-
-    // ── 步骤 4: 统计总 token ────────────────────────────────────────────
-    int msg_tokens = llm::TokenCounter::countMessages(result.messages);
-    // 应用 Token 校准修正因子
-    msg_tokens = calibrateToken(msg_tokens);
-    result.total_tokens = sys_tokens + msg_tokens;
-
-    // ── 步骤 5: 最终预检 ──────────────────────────────────────────────
-    // 在即将发送前再检查一次：总 token 是否超出模型上下文窗口上限。
-    // 这是防止 LLM API 返回 400 Bad Request 的最后一道防线。
-    int model_limit = tracker_.modelLimit();
-    if (model_limit > 0
-        && result.total_tokens > model_limit) {
-        result.warnings.push_back(
-            "⚠ 总 token(" + std::to_string(result.total_tokens)
-            + ") 超出模型窗口(" + std::to_string(model_limit)
-            + ")，请求可能被 API 拒绝。请减少 /pin 数量或 /compact 压缩。");
-        spdlog::error("[ContextManager] 总 token({}) 超出模型窗口({})",
-                      result.total_tokens, model_limit);
-    }
-
-    // ── 步骤 6: 缓存到内部状态 ──────────────────────────────────────────
-    // 供 Agent / REPL 层查询：last_warnings_ 用于展示给用户，
-    // last_truncated_count_ 用于统计，current_context_size_ 用于下次阈值检查。
+    // ── 步骤 4: 缓存到内部状态 ─────────────────────────────────────────
     last_warnings_ = result.warnings;
-    last_truncated_count_ = result.truncated_count;
     tracker_.setCurrentContextSize(result.total_tokens);
 
     return result;
@@ -333,14 +373,6 @@ ContextAssembly ContextManager::assemble(
 
 // ===========================================================================
 // buildSystemPrompt — 构建项目级静态上下文
-//
-// 职责：
-//   为 LLM 请求提供静态项目信息（标题、Logline、主题），
-//   并附加按需获取上下文的工具使用指南。
-//   LLM 通过 get_latest_chapter / get_chapter_context / get_relevant_characters
-//   等工具按需获取章节、角色、设定等详情，不再自动注入章节级上下文。
-//
-// 设计：始终输出项目级概要，不注入章节特定信息。
 // ===========================================================================
 
 std::string ContextManager::buildSystemPrompt(
@@ -351,70 +383,49 @@ std::string ContextManager::buildSystemPrompt(
     if (!project.logline.empty()) prompt += "Logline: " + project.logline + "\n";
     if (!project.theme.empty()) prompt += "主题: " + project.theme + "\n";
 
-    // 附加按需获取上下文的工具使用指南
     prompt += "\n" + prompt::PromptContextBuilder::renderToolUseInstructions();
 
     return prompt;
 }
+
 // ===========================================================================
-// truncateMessages — 支持 preserved 标记（纯函数，Issue 3 候选迁移至 utils）
+// 私有辅助方法
 // ===========================================================================
 
-std::vector<llm::Message> ContextManager::truncateMessages(
-    const std::vector<llm::Message>& messages,
-    int budget,
-    int& truncated_count)
+std::string ContextManager::buildCompactPrompt(
+    const std::string& conversation_text,
+    const std::optional<std::string>& focus) const
 {
-    truncated_count = 0;
-    if (messages.empty()) return messages;
+    std::string compact_prompt = kCompactSystemPrompt;
 
-    std::vector<llm::Message> preserved_msgs;
-    std::vector<const llm::Message*> normal_msgs;
-    for (const auto& msg : messages) {
-        if (msg.preserved) preserved_msgs.push_back(msg);
-        else normal_msgs.push_back(&msg);
-    }
+    // 检查是否超出模型窗口，超出则截断对话文本
+    int convo_tokens = estimateTokens(conversation_text);
+    int prompt_tokens = estimateTokens(compact_prompt);
+    int total_estimated = convo_tokens + prompt_tokens + 50;
+    int model_limit = tracker_.modelLimit();
 
-    int preserved_tokens = llm::TokenCounter::countMessages(preserved_msgs);
-    // 应用 Token 校准修正因子（preserved 消息的 token 估算可能被高估/低估）
-    preserved_tokens = calibrateToken(preserved_tokens);
-    int remaining_budget = budget - preserved_tokens;
+    std::string text = conversation_text;  // 可修改的副本
 
-    if (remaining_budget < 0) {
-        spdlog::warn("[ContextManager] preserved 消息已占 {} tokens，超出预算 {} tokens",
-                     preserved_tokens, -remaining_budget);
-        truncated_count = static_cast<int>(normal_msgs.size());
-        if (!normal_msgs.empty()) {
-            preserved_msgs.push_back(*normal_msgs.back());
-            --truncated_count;
+    if (model_limit > 0 && total_estimated > model_limit) {
+        spdlog::warn("[ContextManager] 待压缩对话 {} tokens 超过模型窗口 {}，"
+                     "截断后再提交", total_estimated, model_limit);
+        size_t max_convo_chars = text.size()
+            * model_limit / total_estimated * 7 / 10;
+        if (max_convo_chars < text.size()) {
+            max_convo_chars = (std::max)(max_convo_chars, size_t{500});
+            text = text.substr(0, max_convo_chars) + "\n...(已截断)";
         }
-        return preserved_msgs;
     }
 
-    // 快速路径：全部消息都在预算内则无需截断（估算已校准）
-    if (calibrateToken(llm::TokenCounter::countMessages(messages)) <= budget) return messages;
-
-    std::vector<llm::Message> result;
-    int used = 0;
-    for (auto it = normal_msgs.rbegin(); it != normal_msgs.rend(); ++it) {
-        int cost = calibrateToken(llm::TokenCounter::countSingleMessage(**it));
-        if (used + cost > remaining_budget) break;
-        used += cost;
-        result.push_back(**it);
+    if (focus && !focus->empty()) {
+        compact_prompt += std::string("\n特别注意：") + *focus;
     }
-    std::reverse(result.begin(), result.end());
 
-    for (auto it = preserved_msgs.rbegin(); it != preserved_msgs.rend(); ++it)
-        result.insert(result.begin(), *it);
+    return compact_prompt;
+}
 
-    truncated_count = static_cast<int>(messages.size()) - static_cast<int>(result.size());
-
-    if (result.empty() && !messages.empty()) {
-        result.push_back(messages.back());
-        --truncated_count;
-        spdlog::warn("[ContextManager] 预算严重不足，仅保留最后一条消息");
-    }
-    return result;
+int ContextManager::estimateTokens(const std::string& text) const {
+    return llm::TokenCounter::countTokensCalibrated(text, model_name_, calibrator_);
 }
 
 } // namespace agent

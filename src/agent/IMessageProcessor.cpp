@@ -42,7 +42,7 @@ SerialProcessor::SerialProcessor(
 //         同时生成有效消息列表（可能经裁剪/摘要处理）
 //
 //   5. 配置 ToolCallLoop
-//      ├─ max_rounds:        最多 tool_call 轮数（防无限循环）
+//      ├─ max_rounds:           最多 tool_call 轮数（防无限循环）
 //      ├─ all_rounds_streaming: 首轮流式，后续非流式（兼容 Mock 环境）
 //      ├─ max_repeated_calls:   同一工具连续重复调用上限（循环检测, Fix #2）
 //      └─ token_warning_threshold: token 用量告警阈值（0=不监控, Fix #4）
@@ -85,29 +85,6 @@ SerialProcessor::Result SerialProcessor::process(
     // ── 步骤 4: 构建最终提示词 ──
     std::vector<llm::Message> effective_messages;
     auto effective_prompt = buildEffectivePrompt(conversation, effective_messages);
-
-    // ── 步骤 4.5: 同步压缩检查（截断 ≥5 条时立即 compact，不等下一轮）
-    //
-    // 这是一个逃生阀：当单次请求截断大量消息时，说明上下文严重超出预算。
-    // 不等下一轮用户输入就立即压缩，防止关键信息在多轮截断中永久丢失。
-    //
-    // 流程：
-    //   1. 检测 lastTruncatedCount() >= 5（阈值：截断 5+ 条 = 约 10 轮对话丢失）
-    //   2. 调用 compact() 将旧消息压缩为摘要并存入 ContextManager
-    //   3. 重新调用 buildEffectivePrompt() —— 新摘要已注入 system prompt，截断量大幅减少
-    //   4. 如果 compact 失败（LLM 调用异常），使用原始 effective_prompt（不阻塞主流程）
-    if (context_manager_ && context_manager_->lastTruncatedCount() >= 5) {
-        spdlog::info("[SerialProcessor] 截断 {} 条，立即触发 compact",
-                     context_manager_->lastTruncatedCount());
-        auto cr = context_manager_->compact(conversation, client_,
-            "自动压缩：单次截断" + std::to_string(context_manager_->lastTruncatedCount()) + "条消息");
-        if (cr.messages_compacted > 0) {
-            spdlog::info("[SerialProcessor] 同步 compact 完成: {} 条 → {} tokens",
-                         cr.messages_compacted, cr.tokens_after);
-            // 重建提示词：新 compacted_summary_ 已注入，截断量将大幅减少
-            effective_prompt = buildEffectivePrompt(conversation, effective_messages);
-        }
-    }
 
     // ── 步骤 5: 配置 ToolCallLoop ──
     // 创建 ToolCallLoop 实例并设置运行参数。
@@ -206,7 +183,7 @@ SerialProcessor::Result SerialProcessor::process(
 //   3. 兼容性 — 无 ContextManager 时退化为简单直通模式，不影响已有功能
 // ===========================================================================
 std::string SerialProcessor::buildEffectivePrompt(
-    const llm::Conversation& conversation,
+    llm::Conversation& conversation,
     std::vector<llm::Message>& out_messages)
 {
     // ── 路径 A：无 ContextManager（直通模式） ──
@@ -221,7 +198,7 @@ std::string SerialProcessor::buildEffectivePrompt(
     // assemble() 内部根据 max_context_tokens_ 做消息裁剪和警告生成，
     // 警告通过 ContextManager::lastWarnings() 传递到 Agent → REPL 展示。
     // 返回组装后的消息列表和附加的系统提示词。
-    auto assembly = context_manager_->assemble(conversation, max_context_tokens_);
+    auto assembly = context_manager_->assemble(conversation, max_context_tokens_, &client_);
     out_messages = std::move(assembly.messages);
 
     // 通过 PromptComposer 将 personality（固定角色）和 context（动态上下文）拼接。
@@ -274,7 +251,7 @@ ParallelProcessor::Result ParallelProcessor::process(
         if (context_manager_) {
             // 使用真实 conversation 而非临时单消息对话，确保上下文组装能看到
             // 完整的对话历史（token 预算、向量检索上下文、压缩摘要等）。
-            auto assembly = context_manager_->assemble(conversation, max_context_tokens_);
+            auto assembly = context_manager_->assemble(conversation, max_context_tokens_, nullptr);
             if (!assembly.system_prompt.empty())
                 effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
         }

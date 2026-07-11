@@ -113,7 +113,7 @@ private:
     // 将固定 system_prompt_ 与 ContextManager 提供的动态上下文拼接，
     // 同时将辅助消息（如工具调用结果摘要）填充到 out_messages 中一并发送。
     std::string buildEffectivePrompt(
-        const llm::Conversation& conversation,
+        llm::Conversation& conversation,
         std::vector<llm::Message>& out_messages);
 };
 

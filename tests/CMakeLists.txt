@@ -12,8 +12,7 @@ endfunction()
 foreach(name test_main test_models test_project_io test_prompt_context
              test_token_counter test_sse_parser test_llm_client
              test_context_manager test_retrieval test_file_utils test_app_config
-             test_parameter_validator test_thread_pool test_compactor
-             test_TokenCalibrator)
+             test_parameter_validator test_thread_pool)
     add_novelagent_test(${name} novelagent_core)
 endforeach()
 
@@ -30,8 +29,7 @@ if(EXISTS "D:/SoftWare/msys2/mingw64/bin")
     set(CORE_TESTS test_main test_models test_project_io test_prompt_context
                    test_token_counter test_sse_parser test_llm_client
                    test_context_manager test_retrieval test_file_utils test_app_config
-                   test_parameter_validator test_thread_pool test_compactor
-                   test_TokenCalibrator)
+                   test_parameter_validator test_thread_pool)
     set(TOOLS_TESTS test_tool_registry test_agent test_chapter_tools
                     test_character_tools test_sub_agent test_shell_tools
                     test_setting_tools test_world_rule_tools

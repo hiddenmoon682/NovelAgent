@@ -43,7 +43,6 @@ set(NOVELAGENT_LLM
     src/llm/LLMClient.h src/llm/LLMClient.cpp
     src/llm/LLMClientFactory.h src/llm/LLMClientFactory.cpp
     src/llm/Conversation.h
-    src/llm/TokenCalibrator.h src/llm/TokenCalibrator.cpp
 )
 
 set(NOVELAGENT_RETRIEVAL
@@ -62,7 +61,6 @@ set(NOVELAGENT_AGENT
     src/agent/ParameterValidator.h src/agent/ParameterValidator.cpp
     src/agent/ExecutionTracer.h src/agent/ExecutionTracer.cpp
     src/agent/TokenTracker.h                                    # Issue 3: Token 追踪器
-    src/agent/Compactor.h src/agent/Compactor.cpp               # Issue 3: 对话压缩器
     src/agent/PromptSelector.h src/agent/PromptSelector.cpp
     src/agent/ThreadPool.h                                      # Issue 4: 固定线程池
     src/agent/ToolCallLoop.h src/agent/ToolCallLoop.cpp

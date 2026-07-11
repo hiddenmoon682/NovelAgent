@@ -277,16 +277,6 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
     // 供后续调试、日志审计和可观测性面板使用。
     tracer_.record("user_input", 0, 0, {{"input", input.substr(0, 200)}});
 
-    // ── 步骤 4: 自动 Compaction 检查 ──
-    if (context_manager_ && context_manager_->shouldAutoCompact()) {
-        spdlog::info("[Agent] 自动压缩触发 (用量 {}%)", context_manager_->usagePercent());
-        auto cr = compactConversation("自动压缩：对话过长");
-        if (cr.messages_compacted > 0) {
-            spdlog::info("[Agent] 自动压缩完成: {} 条 → {} tokens",
-                         cr.messages_compacted, cr.tokens_after);
-        }
-    }
-
     // ── 步骤 5: 状态转换 Idle → Thinking（Fix #6）──
     // 通知状态机 Agent 进入思考阶段。
     // 外部组件（如 StreamDisplay）可据此切换 UI 提示状态。

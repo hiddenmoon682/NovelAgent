@@ -1,5 +1,41 @@
 # Changelog
 
+## [2026-07-11] 合并 Compactor 到 ContextManager + 修正自动压缩触发时机
+
+> Compactor 类展开合并到 ContextManager，消除 1:1 转发方法和重复字段同步代码。
+> 自动压缩检查从 Agent（请求前，读陈旧数据）移到 assemble() 内部（实时 total_tokens），
+> 解决新用户输入可能导致超阈值但检查过早无法捕获的问题。
+
+### 核心改动
+- `ContextManager`：合并 Compactor 全部成员和方法（`summary_`, `marker_`, `auto_compact_`, `compact()` 等），删除 `compactor_` 转发层
+- `ContextManager::assemble()`：新增步骤 2.5 自动压缩检查，基于本轮实时 `total_tokens` 判断，修正了此前用 `tracker_.usagePercent()`（上一轮陈旧数据）的问题
+- `ContextManager::assemble()` 签名：`const Conversation&` → `Conversation&`（压缩需修改对话），新增 `ILLMClient*` 参数（默认 nullptr）
+- `Agent::processInput()`：删除步骤 4 早期自动压缩检查（已由 assemble 内部接管）
+- `setCalibrator`/`setModelName`/`setModelContextLimit`：删除 `compactor_.setXxx()` 同步调用，字段只存一份
+
+### 删除的文件
+- `src/agent/Compactor.h`、`src/agent/Compactor.cpp`：合并到 ContextManager
+- `tests/test_compactor.cpp`：核心测试已叠加覆盖
+
+### 消除的冗余
+- `kCompactKeepExchanges` / `kCompactSystemPrompt`：两份重复常量合并为一份
+- `calibrator_` / `model_name_` / `model_context_limit_`：不再在 Compactor 中重复存储
+- 9 个 1:1 转发方法：变为直接成员访问
+
+## [2026-07-11] 删除 truncateMessages 截断机制
+
+> 截断丢弃旧消息永久丢失信息，与 compaction（摘要保留）的哲学相悖。
+> `shouldAutoCompact()` 在 70% 阈值主动压缩，截断安全网几乎不会触发。
+
+### 核心改动
+- `ContextManager::assemble()`：删除步骤 3 截断，全部消息直接通过
+- `ContextManager`：删除 `truncateMessages()`、`lastTruncatedCount()`、`truncated_count`
+- `IMessageProcessor`：删除依赖 `lastTruncatedCount()` 的同步压缩逃生阀
+- 测试：移除 6 个截断相关用例
+
+### 文档
+- `COMPACTOR_PROJECT_REF_TRUNCATION.md` 状态更新：9/12 已解决（原 8/12）
+
 ## [2026-07-11] 重构：压缩摘要从 system prompt 迁移到对话消息
 
 > 将压缩摘要从 `assemble()` 步骤 1 中注入 system prompt 改为在 `compact()` 时

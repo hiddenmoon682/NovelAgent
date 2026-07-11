@@ -32,15 +32,6 @@ static int tests_passed = 0;
 // 辅助
 // =========================================================================
 
-static llm::Conversation makeLongConversation() {
-    llm::Conversation conv;
-    conv.addUser("这是一条比较长的用户消息用于测试上下文窗口的截断功能判断是否正常。" + std::string(100, 'x'));
-    conv.addAssistant("助手回复同样包含较多文字内容用于占满预算空间触发截断逻辑。" + std::string(100, 'y'));
-    conv.addUser("第二条用户消息继续增加对话历史的长度以测试截断是否正确工作。" + std::string(100, 'z'));
-    conv.addAssistant("助手再次回复确保消息列表中有足够条目可以触发截断行为验证。" + std::string(100, 'w'));
-    return conv;
-}
-
 // Mock LLMClient — compact() 用 chatNonStreaming 生成摘要，这里返回固定摘要文本。
 class CompactMockLLMClient : public llm::ILLMClient {
 public:
@@ -118,29 +109,6 @@ void test_session_mtime_restored_from_novel_json() {
 // assemble 基础测试
 // =========================================================================
 
-void test_no_truncation() {
-    TEST("assemble — 短消息不触发截断");
-    llm::Conversation conv;
-    conv.addUser("短消息");
-
-    agent::ContextManager cm;
-    auto result = cm.assemble(conv, 131072);
-
-    CHECK(result.truncated_count == 0);
-    CHECK(result.messages.size() == 1);
-    PASS();
-}
-
-void test_truncation() {
-    TEST("assemble — 长消息触发截断 + 生成警告");
-    auto conv = makeLongConversation();
-    agent::ContextManager cm;
-    auto result = cm.assemble(conv, 50);
-    CHECK(result.truncated_count > 0);
-    CHECK(!result.warnings.empty());  // 截断应生成警告
-    PASS();
-}
-
 void test_assemble_no_project() {
     TEST("assemble — 无 Project 时 system_prompt 为空");
     llm::Conversation conv;
@@ -186,16 +154,6 @@ void test_total_tokens() {
     agent::ContextManager cm;
     auto result = cm.assemble(conv, 131072);
     CHECK(result.total_tokens > 0);
-    PASS();
-}
-
-void test_truncation_keeps_newest() {
-    TEST("assemble — 截断保留最新消息");
-    auto conv = makeLongConversation();
-    agent::ContextManager cm;
-    auto result = cm.assemble(conv, 80);
-    CHECK(result.truncated_count > 0);
-    CHECK(!result.messages.empty());
     PASS();
 }
 
@@ -259,36 +217,6 @@ void test_reset_session() {
 // =========================================================================
 // 消息保留（Pin）测试
 // =========================================================================
-
-void test_preserved_messages_survive() {
-    TEST("truncateMessages — preserved 消息不丢失");
-    llm::Conversation conv;
-    conv.addUser("旧消息一" + std::string(200, 'x'));    // 大消息
-    conv.addAssistant("旧回复一" + std::string(200, 'y'));
-    conv.addUser("重要消息需要保留" + std::string(50, 'z'));
-    conv.addAssistant("最新回复");
-
-    // 标记第 2 条（索引 2 = "重要消息需要保留"）为 preserved
-    CHECK(conv.pinMessage(2));
-
-    agent::ContextManager cm;
-    // 极小预算：只够保留 ~1-2 条小消息
-    auto result = cm.assemble(conv, 80);
-
-    // 应至少包含 preserved 消息 + 最后的兜底消息
-    CHECK(result.messages.size() >= 1);
-
-    // 检查结果中是否包含 preserved 消息
-    bool found_preserved = false;
-    for (const auto& msg : result.messages) {
-        if (msg.content.find("重要消息需要保留") != std::string::npos) {
-            found_preserved = true;
-            break;
-        }
-    }
-    CHECK(found_preserved);
-    PASS();
-}
 
 void test_pin_unpin() {
     TEST("Conversation — pin/unpin 往返");
@@ -379,18 +307,21 @@ void test_compact_skip_when_messages_insufficient() {
 void test_last_warnings_cached() {
     TEST("ContextManager — lastWarnings 缓存");
     agent::ContextManager cm;
-    // 初始状态无警告
     CHECK(cm.lastWarnings().empty());
 
-    // 触发截断 → 生成警告 → 缓存
-    auto conv = makeLongConversation();
-    cm.assemble(conv, 50);
+    // 通过真实消息内容触发临界告警（模型窗口 200 tokens，消息远超此值）。
+    cm.setModelContextLimit(200);
+    llm::Conversation conv;
+    // 构造大量单词文本触发高 token 数（countTokens 按单词数统计 ASCII）。
+    std::string big_text = "word ";
+    for (int i = 0; i < 600; ++i) big_text += "word ";
+    conv.addUser(big_text);  // ~600 单词 × 1.3 ≈ 780 tokens，远超 200 限制
+    cm.assemble(conv, 131072);
     CHECK(!cm.lastWarnings().empty());
 
-    // 不截断 → 警告清空
-    llm::Conversation short_conv;
-    short_conv.addUser("短消息");
-    cm.assemble(short_conv, 131072);
+    // 恢复大窗口 → 不再有告警
+    cm.setModelContextLimit(131072);
+    cm.assemble(conv, 131072);
     CHECK(cm.lastWarnings().empty());
 
     PASS();
@@ -400,29 +331,16 @@ void test_last_warnings_cached() {
 // 降级可见性
 // =========================================================================
 
-void test_truncation_warning() {
-    TEST("assemble — 截断生成中文警告");
-    auto conv = makeLongConversation();
-    agent::ContextManager cm;
-    auto result = cm.assemble(conv, 50);
-
-    CHECK(result.truncated_count > 0);
-    bool has_truncation_warning = false;
-    for (const auto& w : result.warnings) {
-        if (w.find("截断") != std::string::npos) has_truncation_warning = true;
-    }
-    CHECK(has_truncation_warning);
-    PASS();
-}
-
 void test_critical_warning() {
     TEST("assemble — 接近限制时生成临界警告");
     agent::ContextManager cm;
-    cm.setModelContextLimit(1000);
-    cm.recordUsage(900, 0);  // 90% — 临界
+    cm.setModelContextLimit(200);
 
     llm::Conversation conv;
-    conv.addUser("测试");
+    // 构造大量单词文本触发高 token 数（countTokens 按单词数统计 ASCII）。
+    std::string big_text = "word ";
+    for (int i = 0; i < 600; ++i) big_text += "word ";
+    conv.addUser(big_text);  // ~600 单词 × 1.3 ≈ 780 tokens，远超 200 限制
     auto result = cm.assemble(conv, 131072);
 
     bool has_critical = false;
@@ -433,22 +351,7 @@ void test_critical_warning() {
     PASS();
 }
 
-void test_msg_budget_tiny_fallback() {
-    TEST("assemble — 极小预算时兜底保留最后一条");
-    agent::ContextManager cm;
-    llm::Conversation conv;
-    conv.addUser("长消息" + std::string(300, 'x'));
-    conv.addAssistant("最新回复" + std::string(300, 'y'));
 
-    // max_context_tokens 极小，消息太大无法正常容纳
-    auto result = cm.assemble(conv, 1);
-
-    // 兜底逻辑确保至少保留最后一条消息
-    CHECK(!result.messages.empty());
-    // 最后一条是 "最新回复"
-    CHECK(result.messages.back().content.find("最新回复") != std::string::npos);
-    PASS();
-}
 
 // =========================================================================
 
@@ -458,13 +361,10 @@ int main() {
     // 基础
     test_session_save_load();
     test_session_mtime_restored_from_novel_json();
-    test_no_truncation();
-    test_truncation();
     test_assemble_no_project();
     test_build_system_prompt();
     test_build_system_prompt_no_chapter();
     test_total_tokens();
-    test_truncation_keeps_newest();
 
     // 会话追踪
     test_record_usage();
@@ -473,7 +373,6 @@ int main() {
     test_reset_session();
 
     // Pin
-    test_preserved_messages_survive();
     test_pin_unpin();
     test_pin_out_of_range();
 
@@ -484,9 +383,7 @@ int main() {
     test_last_warnings_cached();
 
     // 降级可见性
-    test_truncation_warning();
     test_critical_warning();
-    test_msg_budget_tiny_fallback();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;
