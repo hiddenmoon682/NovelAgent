@@ -1,10 +1,25 @@
 # Compaction/上下文管理 相关设计问题记录
 
 > 记录日期：2026-07-10
+> 最后更新：2026-07-11
 >
-> 已解决：`buildProjectRef` 整体已删除（2026-07-11）。详见下方问题一的"执行记录"。
+> 已解决的问题（6/12）：
+> - ✅ 问题一：buildProjectRef 截断多余 → 整体删除
+> - ✅ 延伸问题：buildProjectRef 放在 Compactor 内部不合理 → 随函数删除
+> - ✅ 延伸问题：章节切换自动 compact → maybeAutoCompact 删除
+> - ✅ 延伸问题：current_chapter_id_ 追踪断裂 → 全套机制移除，全索引模式
+> - ✅ 重构方案：工具替代自动注入 → 已实施（get_chapter_context + get_latest_chapter）
+> - ✅ 去重逻辑半成品（问题四第 4 点）→ covered_ids 随 current_chapter_id_ 移除
+>
+> 未解决的问题（6/12）：
+> - ⚠️ 延伸问题：assemble() 自动向量检索不可控（去重已修，自动检索仍在）
+> - ❌ 问题：压缩摘要注入到 system prompt 而非对话中
+> - ❌ 问题：assemble() 步骤 4 告警依赖过时数据
+> - ❌ 问题：truncateMessages 安全网几乎不触发
+> - ❌ 问题十：用强迫压缩替代截断作为安全网
+> - ❌ 问题十一：assemble() 步骤 7 状态缓存反馈循环
 
-## 问题一：buildProjectRef 的 1200 字节截断多余
+## 问题一：buildProjectRef 的 1200 字节截断多余（✅ 已修复）
 
 `src/agent/Compactor.cpp:44-61` 的 `buildProjectRef` 函数在调用 `PromptContextBuilder::buildForChapter` 构建完整项目上下文后，用 1200 字节硬限制截断输出。这个截断是多余的。
 
@@ -44,7 +59,7 @@
 
 ---
 
-## 延伸问题：buildProjectRef 放在 Compactor 内部不合理
+## 延伸问题：buildProjectRef 放在 Compactor 内部不合理（✅ 已修复）
 
 ### 问题
 
@@ -74,7 +89,7 @@ Compaction 的核心职责是"压缩对话"，它不应该自己决定要取什�
 
 ---
 
-## 延伸问题：章节切换时自动触发 compact 不合理
+## 延伸问题：章节切换时自动触发 compact 不合理（✅ 已修复）
 
 ### 问题
 
@@ -109,7 +124,7 @@ Compaction 的核心职责是"压缩对话"，它不应该自己决定要取什�
 
 ---
 
-## 延伸问题：assemble() 中的自动向量检索不可控
+## 延伸问题：assemble() 中的自动向量检索不可控（⚠️ 部分修复）
 
 ### 问题
 
@@ -129,17 +144,17 @@ Compaction 的核心职责是"压缩对话"，它不应该自己决定要取什�
 
 `search_memory` 工具（SearchMemoryTools.cpp）已经是完善的对等实现——LLM 自己构造 query、自己决定何时搜索、结果在对话消息中可被后续上下文自然遗忘。`assemble()` 的自动注入与 `search_memory` 功能完全重叠。
 
-**4. 去重逻辑是半成品**
+**4. 去重逻辑是半成品（✅ 已清理）**
 
 第 370-373 行的"相邻章节去重"：
-```cpp
 covered_ids.insert(current_chapter_id_);
 for (const auto& ch : project_->outline.chapters) {
     if (ch.id == current_chapter_id_) continue;
     // 相邻章节也标记为已覆盖（缩减范围而非全包含）
 }
-```
 循环体是空的——注释说标记相邻章节，实际只有当前章节被加入了 `covered_ids`。这个去重只跳过了与当前章节 ID 完全相同的结果，相邻章节从未被排除。
+
+> 2026-07-11 全索引模式已移除 `current_chapter_id_` 和 `covered_ids`，此去重逻辑不再存在。
 
 **5. 每轮都有 API 开销**
 
@@ -149,11 +164,13 @@ for (const auto& ch : project_->outline.chapters) {
 
 1. 去掉 `assemble()` 中的自动向量检索，让 LLM 完全通过 `search_memory` 工具按需搜索
 2. 如果保留自动注入，至少加一个相似度阈值（如低于 0.6 不注入），避免噪声进入 system prompt
-3. 修复第 370-373 行的空循环去重，或者直接删除这段无效代码
+3. 修复第 370-373 行的空循环去重，或者直接删除这段无效代码（✅ 已执行）
+
+> 执行记录：2026-07-11 — 去重逻辑随 `current_chapter_id_` 移除而清理（第 3 点已修）。建议 1、2 未实施。
 
 ---
 
-## 延伸问题：current_chapter_id_ 的追踪机制存在多处断裂
+## 延伸问题：current_chapter_id_ 的追踪机制存在多处断裂（✅ 已修复）
 
 ### 问题
 
@@ -165,7 +182,6 @@ for (const auto& ch : project_->outline.chapters) {
 
 `chapter_id` 不是用户或 LLM 主动声明的，而是 Agent 在 LLM 返回响应后"偷看"其 `tool_calls` 参数推断出来的。这意味着：
 
-```
 第 N 轮：
   LLM 调用 read_chapter("ch-005")
   ↓
@@ -175,13 +191,11 @@ for (const auto& ch : project_->outline.chapters) {
   ↓
 第 N+1 轮：
   buildSystemPrompt 才输出 ch-005 的上下文
-```
 
 **第 N 轮请求中 buildSystemPrompt 输出的仍然是旧章节的上下文，滞后一轮。** LLM 在上下文"错误"的情况下已经完成了一轮对话。
 
 **2. LLM 临时读旧章节会意外切换上下文**
 
-```
 当前在写 ch-005，system prompt 是 ch-005 的上下文
 LLM 为了参考前文调了 read_chapter("ch-001")
   ↓
@@ -191,7 +205,6 @@ LLM 为了参考前文调了 read_chapter("ch-001")
   ↓
 第 N+1 轮：system prompt 变成了 ch-001 的上下文
 LLM 继续写 ch-005，但 buildSystemPrompt 给的是第一章的信息
-```
 
 LLM 只是想参考一下，结果当前上下文被切换了。
 
@@ -213,9 +226,13 @@ LLM 只是想参考一下，结果当前上下文被切换了。
 2. 考虑多章节同时活跃的场景，用 `set<string>` 或优先级列表替代单值存储
 3. 首次进入项目时，如果没有指定章节，至少取第一章或最近写过的一章作为默认值，避免初始状态为空
 
+### 执行记录
+
+> 2026-07-11：`current_chapter_id_` / `last_chapter_id_` / `setCurrentChapter` / `maybeAutoCompact` 已全部删除。`buildSystemPrompt` 不再接收 chapter_id 参数。不再有任何"当前章节"的概念——LLM 通过 `get_latest_chapter` / `get_chapter_context` 工具按需查询。问题 1-5 全部解决。
+
 ---
 
-## 重构方案：用 get_chapter_context 工具替代 buildSystemPrompt 的自动注入
+## 重构方案：用 get_chapter_context 工具替代 buildSystemPrompt 的自动注入（✅ 已实施）
 
 ### 动机
 
@@ -225,7 +242,6 @@ LLM 只是想参考一下，结果当前上下文被切换了。
 
 当前：
 
-```
 每轮 LLM 请求前：
   buildSystemPrompt(project, chapter_id)
   → PromptContextBuilder::buildForChapter()
@@ -235,11 +251,9 @@ LLM 只是想参考一下，结果当前上下文被切换了。
   chapter_id 来源：
   → Agent 事后从 tool_calls 推断（滞后一轮）
   → 单值，临时读旧章会意外切换
-```
 
 改为：
 
-```
 system prompt 精简为：
   # 项目: xxx
   Logline: xxx
@@ -251,7 +265,6 @@ LLM 按需调用：
     → 调 PromptContextBuilder::buildForChapter()
     → 返回角色/设定/规则/大纲的完整 Markdown
     → 结果在对话消息中，LLM 基于它继续写作
-```
 
 ### 优势
 
@@ -277,9 +290,20 @@ LLM 按需调用：
 3. **保留少量调性信息。** 即使按工具方案，标题 + logline + theme + 写作目标这几行"调性信息"每轮都需要，适合留在 system prompt 里。
 4. **`get_chapter_context` 和 `search_memory` 的关系。** `get_chapter_context` 获取结构化上下文（角色/设定/规则/大纲），`search_memory` 获取语义相似片段。前者精确、确定，后者模糊、灵活。两者互补，不存在重叠。
 
+### 执行记录
+
+> 2026-07-11：方案已实施。
+> - `buildSystemPrompt` 精简为标题 + Logline + theme + `renderToolUseInstructions()`（注意事项第 3 条已遵守）
+> - `maybeAutoCompact` 已删除
+> - `current_chapter_id_` 已移除
+> - `buildProjectRef` 已删除
+> - `get_chapter_context` 工具已存在
+> - `get_latest_chapter` 工具已新增（LLM 无需自己追踪章节 ID）
+> - `renderToolUseInstructions` 已更新，加入 `get_latest_chapter` 和更新的写作流程建议
+
 ---
 
-## 问题：压缩摘要注入到 system prompt 而非对话中
+## 问题：压缩摘要注入到 system prompt 而非对话中（❌ 未修复）
 
 ### 问题
 
@@ -330,9 +354,11 @@ LLM 按需调用：
 - 多次压缩时旧的摘要可以被再次压缩，不会在 system prompt 里永久累积
 - 后续的强迫压缩（问题十）产生的摘要同样按此处理
 
+> 执行记录：2026-07-11 — 未实施。当前仍将压缩摘要追加到 system prompt 末尾。
+
 ---
 
-## 问题：assemble() 步骤 4 的告警依赖的是过时数据
+## 问题：assemble() 步骤 4 的告警依赖的是过时数据（❌ 未修复）
 
 ### 问题
 
@@ -373,9 +399,11 @@ LLM 按需调用：
 
 `shouldAutoCompact()` 保持不动（process 步骤 4，用于请求前触发压缩），assemble 内部的告警改用实时数据，两件事彻底分离。
 
+> 执行记录：2026-07-11 — 未实施。步骤 4 的 `checkThresholds()` 告警仍使用 `TokenTracker` 的过时数据。
+
 ---
 
-## 问题：truncateMessages 是几乎不会实际执行的安全网
+## 问题：truncateMessages 是几乎不会实际执行的安全网（❌ 未修复）
 
 ### 问题
 
@@ -410,9 +438,11 @@ if (llm::TokenCounter::countMessages(messages) <= budget) return messages;
 
 将 `truncateMessages` 替换为"强迫压缩"机制（详见问题十），截断仅作为 API 异常时的最后回退。
 
+> 执行记录：2026-07-11 — 未实施。`truncateMessages` 仍作为唯一的安全网，强迫压缩机制未实现。
+
 ---
 
-## 问题十：用强迫压缩替代截断作为安全网
+## 问题十：用强迫压缩替代截断作为安全网（❌ 未修复）
 
 ### 问题
 
@@ -470,6 +500,8 @@ compact() 发起的 LLM 请求：
 1. `compact()` 本身不能递归触发——压缩中的压缩可能会导致无限循环。需要在 `compact()` 入口处加一个重入守卫（如 `static std::atomic<bool> compacting`）。
 2. 正常情况下 70% 的 `shouldAutoCompact()` 已经拦截了，95% 的强迫压缩应该很少触发，额外的 API 成本可忽略。
 3. `compact()` 的 focus 参数可以指定为"强迫压缩：窗口即将耗尽"，让 LLM 知道这是紧急压缩。
+
+> 执行记录：2026-07-11 — 未实施。
 
 ### 特别警告：反复压缩的信息衰减
 
@@ -539,4 +571,6 @@ compact() 发起的 LLM 请求：
 ### 建议
 
 维持 `setCurrentContextSize` 不变（它是 `shouldAutoCompact` 的必要输入）。步骤 4 的告警移除，合并到步骤 6 之后用实时数据。步骤 6.5 从"告警但不阻断"升级为"阻断请求并通知用户"。
+
+> 执行记录：2026-07-11 — 未实施。步骤 4 告警、步骤 6.5 检查逻辑均未变更。
 
