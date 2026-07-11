@@ -277,12 +277,12 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
     // 供后续调试、日志审计和可观测性面板使用。
     tracer_.record("user_input", 0, 0, {{"input", input.substr(0, 200)}});
 
-    // ── 步骤 5: 状态转换 Idle → Thinking（Fix #6）──
+    // ── 步骤 4: 状态转换 Idle → Thinking（Fix #6）──
     // 通知状态机 Agent 进入思考阶段。
     // 外部组件（如 StreamDisplay）可据此切换 UI 提示状态。
     state_.transition(AgentState::Thinking);
 
-    // ── 步骤 6-7.5: 核心处理 + 轨迹记录 + 章节检测 + 增量保存 ──
+    // ── 步骤 5-6.5: 核心处理 + 轨迹记录 + 增量保存 ──
     // 整体以 try-catch 包裹（B8 修复）：若 processor_->process() 或后续
     // 步骤抛异常（LLM 超时、工具异常等），异常不再穿透到 ReplHandler 导致
     // state_ 卡在 Thinking 永久拒输入。捕获后强制恢复：Thinking → Error → Idle。

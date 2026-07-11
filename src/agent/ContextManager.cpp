@@ -1,5 +1,7 @@
-// ContextManager 实现 — 会话追踪 + compaction + 持久化。
-// Compactor 类已展开合并到本文件，消除冗余常量和转发方法。
+// ContextManager 实现 — system prompt 构建 + 对话压缩 + 自动压缩 + 持久化。
+//
+// Token 追踪委托给 TokenTracker，会话持久化委托给 SessionPersistence。
+// Compaction 逻辑已内聚到本文件（不再通过独立的 Compactor 类转发）。
 
 #include "agent/ContextManager.h"
 
@@ -53,8 +55,8 @@ FileStorageBackend& defaultStorage() {
     return s;
 }
 
-// ── Compaction 常量 ──
-// Compaction 时的 system prompt — 双层摘要：情节事实 + 风格样本。
+// ── 压缩常量 ──
+// 压缩时的 system prompt — 双层摘要：情节事实 + 风格样本。
 constexpr const char* kCompactSystemPrompt =
     "你是一个小说创作助手的上下文压缩器。用中文对以下对话历史进行双层摘要：\n"
     "\n"
@@ -73,10 +75,6 @@ constexpr const char* kCompactSystemPrompt =
 // Compaction 时保留的最近消息对数。
 constexpr int kCompactKeepExchanges = 10;   // 保留最近 10 对 = ~20 条消息
 constexpr int kMinKeepExchanges = 2;        // 最少保留 2 对 = 4 条消息
-
-// Token 用量告警阈值。
-constexpr int kWarnPercent = 60;
-constexpr int kCriticalPercent = 85;
 } // namespace
 
 // ===========================================================================
@@ -132,7 +130,7 @@ void ContextManager::loadSessionState(
         meta.compaction_marker = 0;
     }
 
-    // 恢复到 TokenTracker + Compaction 状态
+    // 恢复到 TokenTracker + 压缩状态
     restoreCompactionState(meta.compacted_summary, meta.compaction_marker);
     tracker_.restore(meta.token_state);
 
@@ -154,7 +152,7 @@ void ContextManager::resetSession() {
 }
 
 // ===========================================================================
-// Compaction
+// 压缩
 // ===========================================================================
 
 CompactResult ContextManager::compact(
@@ -166,7 +164,8 @@ CompactResult ContextManager::compact(
     const auto& all_msgs = conversation.all();
     int total_msgs = static_cast<int>(all_msgs.size());
 
-    // 计算保留边界：理想保留 kCompactKeepExchanges*2 条。
+    // 保留最近 kCompactKeepExchanges 对消息，压缩更早的历史。
+    // 消息不足时按比例缩减保留数，最少保留 1 条。
     const int ideal_keep = kCompactKeepExchanges * 2;   // 20
     const int min_keep = kMinKeepExchanges * 2;          // 4
 

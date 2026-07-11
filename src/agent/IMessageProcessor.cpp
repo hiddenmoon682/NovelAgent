@@ -152,9 +152,8 @@ SerialProcessor::Result SerialProcessor::process(
 // SerialProcessor::buildEffectivePrompt — 构建最终发给 LLM 的系统提示词
 //
 // 职责：
-//   将固定 system_prompt_ 与 ContextManager 提供的动态上下文（如 RAG 检索结果、
-//   对话摘要、滑动窗口裁剪后的历史）拼接成最终的系统提示词，
-// 并输出经过处理的消息列表（可能被裁剪或摘要过）。
+//   将固定 system_prompt_ 与 ContextManager 提供的动态上下文（项目上下文、
+//   工具使用指南）拼接成最终的系统提示词，并输出处理后的消息列表。
 //
 // 两个输出：
 //   1. 返回值（string）— 最终系统提示词，发给 LLM 的 system 角色消息
@@ -169,17 +168,19 @@ SerialProcessor::Result SerialProcessor::process(
 //
 //   路径 B：有 ContextManager
 //     ├─ context_manager_->assemble() 执行动态上下文策略：
-//     │   ├─ 可能对过长的 conversation 做滑动窗口裁剪
-//     │   ├─ 可能对早期消息做摘要压缩
-//     │   └─ 可能注入 RAG 检索到的外部知识
+//     │   ├─ 构建项目级 system prompt（标题、Logline、主题、工具指南）
+//     │   ├─ 计算实时 token 用量（含本轮新用户输入）
+//     │   ├─ 若启用自动压缩且用量超阈值 → 触发 compact() 修改 conversation
+//     │   └─ 用量告警
 //     ├─ assembly.messages     → 处理后的消息列表（传出）
-//     ├─ assembly.system_prompt → 动态生成的附加系统提示（如检索到的知识摘要）
+//     ├─ assembly.system_prompt → 动态生成的附加系统提示（项目上下文）
 //     └─ 最后通过 PromptComposer::compose() 将 personality（固定角色设定）
 //        与 context（动态上下文）拼接为最终系统提示词。
 //
+// conversation 非 const — assemble() 在自动压缩时会修改对话（删除旧消息、插入摘要）。
 // 为什么需要这个函数？
 //   1. 隔离复杂性 — 将提示词构建逻辑集中在一处，便于调试和修改策略
-//   2. 支持动态上下文 — 不依赖固定 system_prompt，可根据对话状态注入不同知识
+//   2. 支持动态上下文 — 不依赖固定 system_prompt，可根据对话状态调整
 //   3. 兼容性 — 无 ContextManager 时退化为简单直通模式，不影响已有功能
 // ===========================================================================
 std::string SerialProcessor::buildEffectivePrompt(
@@ -195,9 +196,9 @@ std::string SerialProcessor::buildEffectivePrompt(
     }
 
     // ── 路径 B：有 ContextManager（动态上下文模式） ──
-    // assemble() 内部根据 max_context_tokens_ 做消息裁剪和警告生成，
+    // assemble() 构建项目上下文、计算实时 token 用量，
+    // 并在启用自动压缩且超阈值时触发 compact()。
     // 警告通过 ContextManager::lastWarnings() 传递到 Agent → REPL 展示。
-    // 返回组装后的消息列表和附加的系统提示词。
     auto assembly = context_manager_->assemble(conversation, max_context_tokens_, &client_);
     out_messages = std::move(assembly.messages);
 
