@@ -93,9 +93,9 @@ SerialProcessor::Result SerialProcessor::process(
     config.max_rounds = max_tool_rounds_;              // 最大 tool_call 轮数
     config.all_rounds_streaming = false;               // 首轮流式 + 后续非流式
     config.max_repeated_calls = 3;                     // Fix #2: 循环检测上限
-    config.timeout = std::chrono::seconds(0);            // A1: 串行路径不设 ToolCallLoop 级超时，避免每次请求创建线程。
-                                                          //     HTTP 客户端已有 180s read_timeout 兜底网络挂起。
-                                                          //     子任务（SubAgent）的超时由各自 config 独立管理。
+    config.timeout = std::chrono::seconds(0);          // A1: 串行路径不设 ToolCallLoop 级超时，避免每次请求创建线程。
+                                                       //     HTTP 客户端已有 180s read_timeout 兜底网络挂起。
+                                                       //     子任务（SubAgent）的超时由各自 config 独立管理。
     config.token_warning_threshold = 0;                // Fix #4: 默认不监控 token
 
     // ── 步骤 6: 执行 ToolCallLoop ──

@@ -337,7 +337,7 @@ void test_last_warnings_cached() {
 // =========================================================================
 
 void test_critical_warning() {
-    TEST("assemble — 接近限制时生成临界警告");
+    TEST("assemble — 超限时生成致命错误");
     agent::ContextManager cm;
     cm.setModelContextLimit(200);
 
@@ -348,11 +348,13 @@ void test_critical_warning() {
     conv.addUser(big_text);  // ~600 单词 × 1.3 ≈ 780 tokens，远超 200 限制
     auto result = cm.assemble(conv, 131072);
 
-    bool has_critical = false;
+    // 390% 超出模型窗口上限 → Error（致命错误），fatal 标志置位
+    CHECK(result.fatal);
+    bool has_error = false;
     for (const auto& w : result.warnings) {
-        if (w.find("接近模型上限") != std::string::npos) has_critical = true;
+        if (w.find("超过模型上限") != std::string::npos) has_error = true;
     }
-    CHECK(has_critical);
+    CHECK(has_error);
     PASS();
 }
 

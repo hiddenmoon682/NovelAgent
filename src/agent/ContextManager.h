@@ -48,12 +48,11 @@ public:
     //
     // 使用内部存储的 project_（由 setProject 设置）。
     //
-    // 处理流程（共 5 步）：
+    // 处理流程（共 4 步）：
     //   1. 构建系统提示词（项目上下文 + 工具使用指南）
-    //   2. Token 预算分配 + 实时用量计算
-    //   3. 自动压缩检查（基于实时 total_tokens，llm_client 非空时启用）
-    //   4. 阈值告警（用量临界 / 预算耗尽）
-    //   5. 缓存警告/当前大小（供 Agent/REPL 在下一次请求前读取）
+    //   2. Token 预算分配
+    //   3. 实时用量检查 + 自动压缩 + 告警（三级决策：Normal/Warning/Critical）
+    //   4. 缓存警告/当前大小（供 Agent/REPL 在下一次请求前读取）
     //
     // llm_client 用于自动压缩（为 nullptr 时跳过自动压缩检查）。
     // conversation 非 const — 自动压缩可能删除旧消息并插入摘要。
@@ -128,9 +127,14 @@ public:
     int compactionMarker() const { return marker_; }
 
     // 设置自动 compaction（达到阈值自动触发）。
-    void setAutoCompact(bool enabled, int threshold_pct = 70);
+    void setAutoCompact(bool enabled, int threshold_pct = 95);
     // 是否应该触发自动压缩（usage_percent 直接传入，不依赖 tracker_ 陈旧数据）。
     bool shouldAutoCompact(int usage_percent) const;
+
+    // 四级阈值配置（转发到 TokenTracker）。
+    void setWarningThreshold(int pct)      { tracker_.setWarningThreshold(pct); }
+    void setCriticalThreshold(int pct)     { tracker_.setCriticalThreshold(pct); }
+    void setAutoCompactThreshold(int pct)  { tracker_.setAutoCompactThreshold(pct); }
 
     // 从持久化恢复压缩状态（供 loadSessionState 使用）。
     void restoreCompactionState(const std::string& summary, int new_marker) {
@@ -173,7 +177,6 @@ private:
     std::string summary_;               //  LLM 生成的压缩摘要
     int marker_ = 0;                    //  被压缩的消息数标记，/rewind 检测用
     bool auto_compact_ = false;         //  是否启用自动压缩
-    int auto_compact_threshold_ = 70;   //  自动压缩触发阈值（用量百分比）
 
     // ── Project 注入（非拥有）──
     const Project* project_ = nullptr;

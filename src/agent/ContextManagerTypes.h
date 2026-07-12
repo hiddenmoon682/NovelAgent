@@ -19,6 +19,7 @@ struct ContextAssembly {
     std::string system_prompt;              //  动态系统提示词（项目上下文等）
     int total_tokens = 0;                   //  system_prompt + messages 的总 token 数
     std::vector<std::string> warnings;      //  降级/问题警告列表（供 CLI/TUI 展示）
+    bool fatal = false;                     //  Error 状态时为 true，供调用方中断请求
 };
 
 // ===========================================================================
@@ -34,7 +35,7 @@ struct SessionTokenState {
 };
 
 // 上下文用量状态枚举。
-enum class ContextStatus { Normal, Warning, Critical };
+enum class ContextStatus { Normal, Warning, Critical, AutoCompact, Error };
 
 // 请求前检查结果（供调用方决定是否需要压缩）。
 struct PreRequestResult {

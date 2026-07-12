@@ -31,11 +31,15 @@ public:
         r.estimated_tokens = current_context_size_;
         if (r.model_limit > 0) {
             r.usage_percent = (r.estimated_tokens * 100) / r.model_limit;
-        }
-        if (r.usage_percent >= 85) {
-            r.status = ContextStatus::Critical;
-        } else if (r.usage_percent >= 60) {
-            r.status = ContextStatus::Warning;
+            if (r.estimated_tokens > r.model_limit) {
+                r.status = ContextStatus::Error;
+            } else if (r.usage_percent >= auto_compact_threshold_) {
+                r.status = ContextStatus::AutoCompact;
+            } else if (r.usage_percent >= critical_threshold_) {
+                r.status = ContextStatus::Critical;
+            } else if (r.usage_percent >= warning_threshold_) {
+                r.status = ContextStatus::Warning;
+            }
         }
         return r;
     }
@@ -47,13 +51,15 @@ public:
         r.estimated_tokens = realtime_total_tokens;
         if (r.model_limit > 0) {
             r.usage_percent = (realtime_total_tokens * 100) / r.model_limit;
-        }
-        if (r.model_limit > 0 && realtime_total_tokens > r.model_limit) {
-            r.status = ContextStatus::Critical;
-        } else if (r.usage_percent >= 85) {
-            r.status = ContextStatus::Critical;
-        } else if (r.usage_percent >= 60) {
-            r.status = ContextStatus::Warning;
+            if (realtime_total_tokens > r.model_limit) {
+                r.status = ContextStatus::Error;
+            } else if (r.usage_percent >= auto_compact_threshold_) {
+                r.status = ContextStatus::AutoCompact;
+            } else if (r.usage_percent >= critical_threshold_) {
+                r.status = ContextStatus::Critical;
+            } else if (r.usage_percent >= warning_threshold_) {
+                r.status = ContextStatus::Warning;
+            }
         }
         return r;
     }
@@ -88,9 +94,22 @@ public:
         current_context_size_ = context_size;
     }
 
+    // ── 四级可配置阈值 ──
+    void setWarningThreshold(int pct)      { if (pct > 0 && pct <= 100) warning_threshold_ = pct; }
+    void setCriticalThreshold(int pct)     { if (pct > 0 && pct <= 100) critical_threshold_ = pct; }
+    void setAutoCompactThreshold(int pct)  { if (pct > 0 && pct <= 100) auto_compact_threshold_ = pct; }
+    int warningThreshold() const           { return warning_threshold_; }
+    int criticalThreshold() const          { return critical_threshold_; }
+    int autoCompactThreshold() const       { return auto_compact_threshold_; }
+
 private:
     SessionTokenState state_;
     int current_context_size_ = 0;  //  最后一次请求的实际上下文 token 数
+
+    // 四级阈值（可配置，供 check()/check(int) 使用）
+    int warning_threshold_ = 60;            //  Warning 阈值，默认 60%
+    int critical_threshold_ = 85;           //  Critical 阈值，默认 85%
+    int auto_compact_threshold_ = 95;       //  AutoCompact 阈值，默认 95%（Critical 与 Error 之间）
 };
 
 } // namespace agent

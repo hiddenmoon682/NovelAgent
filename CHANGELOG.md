@@ -1,5 +1,27 @@
 # Changelog
 
+## [2026-07-12] 合并 ContextManager::assemble() 自动压缩和告警为多级决策 + 四级阈值体系
+
+> 将 assemble() 中步骤 2（自动压缩检查）与步骤 3（阈值告警）合并为统一的多级决策块，
+> 用 checkThresholds() 作为单一入口，消除重复计算和压缩成功后仍产生误导性告警的问题。
+>
+> 引入 Error/AutoCompact 状态，四级可配置阈值体系：Warning(60%) → Critical(85%) → AutoCompact(95%) → Error(>100%)。
+> 阈值从硬编码改为可配置，auto_compact_threshold_ 从 ContextManager 移至 TokenTracker 统一管理。
+
+### 核心改动
+- `ContextManager::assemble()`：合并步骤 2+3；自动压缩条件改为 `pre_check.status >= AutoCompact`；四级 switch 告警
+- `ContextStatus` 枚举：`Normal/Warning/Critical` → `Normal/Warning/Critical/AutoCompact/Error`
+- `ContextAssembly`：新增 `bool fatal` 标志，Error 状态下置位供调用方中断请求
+- `TokenTracker`：新增三个可配置阈值字段（warning/critical/auto_compact）+ setter/getter；`check()`/`check(int)` 四级判定替代硬编码 60/85
+- `ContextManager`：删除 `auto_compact_threshold_` 字段（阈值归属 TokenTracker）；`setAutoCompact` 默认值 70→95；新增 `setWarningThreshold`/`setCriticalThreshold`/`setAutoCompactThreshold` 转发接口
+
+### 注释同步
+- `ContextManager.h`：assemble() 处理流程由 5 步改为 4 步
+- `ContextManager.cpp`：assemble() 流程注释块同步更新为 4 步结构
+
+### 测试
+- `test_critical_warning`：从搜索 "接近模型上限"（Critical）改为 "超过模型上限"（Error）+ 验证 `result.fatal`
+
 ## [2026-07-11] 合并 Compactor 到 ContextManager + 修正自动压缩触发时机
 
 > Compactor 类展开合并到 ContextManager，消除 1:1 转发方法和重复字段同步代码。

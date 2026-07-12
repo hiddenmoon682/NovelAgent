@@ -257,46 +257,42 @@ CompactResult ContextManager::compact(
 void ContextManager::setAutoCompact(bool enabled, int threshold_pct) {
     auto_compact_ = enabled;
     if (threshold_pct > 0 && threshold_pct <= 100)
-        auto_compact_threshold_ = threshold_pct;
+        tracker_.setAutoCompactThreshold(threshold_pct);
 }
 
 bool ContextManager::shouldAutoCompact(int usage_percent) const {
     if (!auto_compact_) return false;
-    return usage_percent >= auto_compact_threshold_;
+    return usage_percent >= tracker_.autoCompactThreshold();
 }
 
 // ===========================================================================
 // assemble — 上下文组装核心方法
 //
-// 执行流程（共 5 步）：
+// 执行流程（共 4 步）：
 //
 //   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 0: System Prompt 构建                                  │
+//   │  步骤 1: System Prompt 构建                                  │
 //   │  buildSystemPrompt(project)                                 │
 //   │  → 输出项目级静态上下文（标题、Logline、主题、工具指南）    │
 //   └──────────────────┬──────────────────────────────────────────┘
 //                      ▼
 //   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 1: Token 预算                                          │
+//   │  步骤 2: Token 预算                                          │
 //   │  sys_tokens  = countTokens(system_prompt)                   │
 //   │  msg_budget = max(0, max_context_tokens - sys_tokens)      │
 //   │  ● msg_budget <= 0 → error：system prompt 独占窗口          │
 //   └──────────────────┬──────────────────────────────────────────┘
 //                      ▼
 //   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 2: 实时用量计算 + 自动压缩检查                          │
-//   │  total_tokens = sys_tokens + msg_tokens（含新用户输入）      │
-//   │  ● 自动压缩（llm_client 非空 + 启用 + 超阈值）：              │
-//   │    compact() → 压缩成功则重算 total_tokens                   │
-//   └──────────────────┬──────────────────────────────────────────┘
-//                      ▼
-//   ┌─────────────────────────────────────────────────────────────┐
-//   │  步骤 3: 告警                                                │
-//   │  total_tokens / model_limit → 三级预警（实时数据）：          │
-//   │  ● Normal  ( <  60% ) → 静默                                │
-//   │  ● Warning (60%-85%) → 建议 /compact                       │
-//   │  ● Critical( ≥ 85% ) → 强烈建议 /compact                    │
-//   │  ●  > 100% → 致命告警                                       │
+//   │  步骤 3: 实时用量检查 + 自动压缩 + 告警（三级决策）           │
+//   │  checkThresholds(total_tokens) → Normal/Warning/Critical    │
+//   │                                                             │
+//   │  ● 用量 ≥ auto_compact_threshold_ + 条件满足 → compact()   │
+//   │    压缩成功 → 重算 total_tokens → 重新 checkThresholds      │
+//   │                                                             │
+//   │  ● Critical ( ≥ 85% )  → 强告警                             │
+//   │  ● Warning  (60%-84%)  → 软告警                             │
+//   │  ● Normal   ( < 60% )  → 静默                               │
 //   └──────────────────┬──────────────────────────────────────────┘
 //                      ▼
 //   ┌─────────────────────────────────────────────────────────────┐
@@ -330,19 +326,22 @@ ContextAssembly ContextManager::assemble(
                       sys_tokens, max_context_tokens);
     }
 
-    // ── 步骤 2: 实时用量计算 + 自动压缩检查 ────────────────────────────
+    // ── 步骤 3（合并原步骤 2+3）: 实时用量检查 + 自动压缩 + 告警 ──────
     result.messages = conversation.messages();
     int msg_tokens = llm::TokenCounter::countMessagesCalibrated(result.messages, model_name_, calibrator_);
     result.total_tokens = sys_tokens + msg_tokens;
 
-    // 基于本轮实时 total_tokens 判断是否需要自动压缩。
-    // 直接计算 usage_pct，不依赖 tracker_.usagePercent()（那是上一轮的陈旧数据）。
     int model_limit = tracker_.modelLimit();
-    if (llm_client && auto_compact_ && model_limit > 0) {
-        int usage_pct = (result.total_tokens * 100) / model_limit;
-        if (usage_pct >= auto_compact_threshold_) {
+    if (model_limit > 0) {
+        auto pre_check = checkThresholds(result.total_tokens);
+
+        // 用量达到 AutoCompact 及以上 → 尝试压缩（压缩阈值独立于告警阈值，
+        // 默认 95% 落在 Critical [85] 与 Error [>100] 之间，可自由配置）
+        if (llm_client && auto_compact_
+            && pre_check.status >= ContextStatus::AutoCompact)
+        {
             spdlog::info("[ContextManager] 自动压缩触发 (用量 {}%, 阈值 {}%)",
-                         usage_pct, auto_compact_threshold_);
+                         pre_check.usage_percent, tracker_.autoCompactThreshold());
             auto cr = compact(conversation, *llm_client, "自动压缩：上下文用量过高");
             if (cr.messages_compacted > 0) {
                 // 压缩成功 — 重新计算（conversation 已被 compact() 修改）
@@ -351,21 +350,48 @@ ContextAssembly ContextManager::assemble(
                 result.total_tokens = sys_tokens + msg_tokens;
                 spdlog::info("[ContextManager] 自动压缩完成: {} 条 → 摘要, 新用量 {} tokens",
                              cr.messages_compacted, result.total_tokens);
+                // 重新检查（压缩可能将用量降到 Normal，避免不必要的告警）
+                pre_check = checkThresholds(result.total_tokens);
+            } else {
+                spdlog::warn("[ContextManager] 自动压缩未产生效果: {}",
+                             cr.summary.empty() ? "无可压缩消息" : cr.summary);
             }
         }
-    }
 
-    // ── 步骤 3: 实时用量告警 ────────────────────────────────────────────
-    auto pre_check = checkThresholds(result.total_tokens);
-    if (pre_check.status == ContextStatus::Critical) {
-        result.warnings.push_back(
-            "上下文用量已达 " + std::to_string(pre_check.usage_percent) +
-            "%，接近模型上限。建议使用 /compact 压缩对话历史。");
-        spdlog::warn("[ContextManager] 上下文用量临界: {}%", pre_check.usage_percent);
-    } else if (pre_check.status == ContextStatus::Warning) {
-        result.warnings.push_back(
-            "上下文用量 " + std::to_string(pre_check.usage_percent) +
-            "%，可考虑 /compact 释放空间。");
+        // 基于最新 pre_check 添加告警/错误
+        switch (pre_check.status) {
+        case ContextStatus::Error:
+            result.fatal = true;
+            result.warnings.push_back(
+                "致命错误：上下文用量已超过模型上限（"
+                + std::to_string(pre_check.usage_percent) + "%，"
+                + std::to_string(pre_check.estimated_tokens) + " / "
+                + std::to_string(pre_check.model_limit)
+                + " tokens）。请使用 /compact 压缩对话历史，或 /clear 清空对话后重试。");
+            spdlog::error("[ContextManager] 上下文用量超限: {}% ({} / {} tokens)",
+                         pre_check.usage_percent, pre_check.estimated_tokens, pre_check.model_limit);
+            break;
+        case ContextStatus::AutoCompact:
+            result.warnings.push_back(
+                "上下文用量已达 " + std::to_string(pre_check.usage_percent) +
+                "%，自动压缩未生效，请手动执行 /compact。");
+            spdlog::warn("[ContextManager] 自动压缩未生效，用量仍在 AutoCompact 级别: {}%",
+                        pre_check.usage_percent);
+            break;
+        case ContextStatus::Critical:
+            result.warnings.push_back(
+                "上下文用量已达 " + std::to_string(pre_check.usage_percent) +
+                "%，接近模型上限。建议使用 /compact 压缩对话历史。");
+            spdlog::warn("[ContextManager] 上下文用量临界: {}%", pre_check.usage_percent);
+            break;
+        case ContextStatus::Warning:
+            result.warnings.push_back(
+                "上下文用量 " + std::to_string(pre_check.usage_percent) +
+                "%，可考虑 /compact 释放空间。");
+            break;
+        default:
+            break;
+        }
     }
 
     // ── 步骤 4: 缓存到内部状态 ─────────────────────────────────────────
