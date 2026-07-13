@@ -69,6 +69,7 @@ set(NOVELAGENT_AGENT
     src/agent/IIndexService.h                                   # Issue 6: 索引服务接口
     src/agent/SessionPersistence.h src/agent/SessionPersistence.cpp
     src/agent/ContextManager.h src/agent/ContextManager.cpp
+    src/agent/SessionManager.h src/agent/SessionManager.cpp
     src/agent/PromptComposer.h
     src/agent/PromptContextBuilder.h src/agent/PromptContextBuilder.cpp
     src/agent/Agent.h src/agent/Agent.cpp
