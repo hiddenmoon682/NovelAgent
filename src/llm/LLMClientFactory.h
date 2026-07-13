@@ -12,7 +12,6 @@
 // 架构意图：
 //   - Agent / SubAgent 各自持有独立的 LLMClient，互不干扰
 //   - AgentOrchestrator 为每个并行子任务创建独立客户端
-//   - SessionManager 为每个会话创建独立 Agent（从而独立 LLMClient）
 
 #include "config/AppConfig.h"
 
