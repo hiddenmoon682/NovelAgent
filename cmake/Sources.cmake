@@ -105,11 +105,3 @@ set(NOVELAGENT_CLI
     src/cli/StreamDisplay.h src/cli/StreamDisplay.cpp
     src/cli/ReplHandler.h src/cli/ReplHandler.cpp
 )
-
-set(NOVELAGENT_SERVER
-    src/server/SSEQueue.h
-    src/server/SessionManager.h src/server/SessionManager.cpp
-    src/server/BackendServer.h src/server/BackendServer.cpp
-)
-
-# TUI 模块已移除（Tauri 前端替代）
