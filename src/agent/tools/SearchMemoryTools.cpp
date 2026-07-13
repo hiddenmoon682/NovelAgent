@@ -110,15 +110,6 @@ json SearchMemoryTool::execute(const json& args) {
 } // namespace agent
 
 // ===========================================================================
-// 手动工厂注册 — 不接收 Project&，工厂 lambda 忽略 shared_ptr<Project> 参数
-// （仿 ShellTools.cpp 的 ShellTools 注册模式）
+// 使用 REGISTER_TOOL_NP 注册 — 不需要 Project 指针
 // ===========================================================================
-namespace {
-    static const bool _reg_SearchMemory = []() {
-        agent::BuiltInTool::registerFactory("search_memory",
-            [](std::shared_ptr<Project>) -> std::unique_ptr<agent::BuiltInTool> {
-                return std::make_unique<agent::SearchMemoryTool>();
-            });
-        return true;
-    }();
-}
+REGISTER_TOOL_NP(agent::SearchMemoryTool, "search_memory", search_memory)

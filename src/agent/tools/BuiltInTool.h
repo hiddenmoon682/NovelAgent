@@ -68,7 +68,16 @@ public:
     static const std::vector<std::string>& registeredToolNames();
 
 private:
+    // 注册条目：工具名 + 工厂函数
+    // 每个工具在 main() 前通过 REGISTER_TOOL 宏向 factories() 存入一个 Entry。
+    // name    工具名称（如 "read_chapter"），用于去重和禁用检查
+    // factory 接受 Project 指针，返回 unique_ptr<BuiltInTool>
     struct Entry { std::string name; Factory factory; };
+
+    // 全局工厂容器（Meyers' Singleton，函数内 static 局部变量）
+    // 返回对所有已注册工厂的引用。
+    // 生命周期：首次调用时创建，程序结束时销毁。
+    // 线程安全性：动态初始化阶段（main() 前）为单线程，无需加锁。
     static std::vector<Entry>& factories();
 };
 
@@ -93,6 +102,24 @@ private:
                 toolName, \
                 [](std::shared_ptr<::Project> p) -> std::unique_ptr<agent::BuiltInTool> { \
                     return std::make_unique<ToolClass>(std::move(p)); \
+                }); \
+            return true; \
+        }(); \
+    }
+
+// 对于不需要 Project 指针的工具，使用此宏注册。
+// 示例: REGISTER_TOOL_NP(RunPowerShellTool, "run_powershell", run_powershell)
+//
+// 与 REGISTER_TOOL 的区别：工厂 lambda 中构造工具时不传入 Project 参数。
+// 适用于构造函数签名为 T()（无参数）的内置工具。
+// 静态初始化顺序限制与 REGISTER_TOOL 相同（见上方注释）。
+#define REGISTER_TOOL_NP(ToolClass, toolName, varSuffix) \
+    namespace { \
+        static const bool _reg_##varSuffix = []() { \
+            agent::BuiltInTool::registerFactory( \
+                toolName, \
+                [](std::shared_ptr<::Project>) -> std::unique_ptr<agent::BuiltInTool> { \
+                    return std::make_unique<ToolClass>(); \
                 }); \
             return true; \
         }(); \

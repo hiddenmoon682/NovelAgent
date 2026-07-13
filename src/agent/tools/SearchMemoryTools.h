@@ -8,7 +8,7 @@
 // - 自行决定是否需要搜索，避免不必要的上下文注入
 //
 // 依赖：IVectorStore + IEmbeddingGenerator（由 NovelAgentApp 注入）
-// 注册方式：手动工厂（不接收 Project&，仿 ShellTools 模式）
+// 注册方式：REGISTER_TOOL_NP 宏（不需要 Project 指针）
 
 #include "agent/tools/BuiltInTool.h"
 #include <nlohmann/json_fwd.hpp>

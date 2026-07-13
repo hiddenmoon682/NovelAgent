@@ -37,8 +37,7 @@
 
 ### 工具自注册 — 新增工具只需两步
 1. 创建类继承 `agent::BuiltInTool`（实现 name/description/parameters/execute/category）
-2. 在 `.cpp` 中添加 `REGISTER_TOOL(ToolClass, "tool_name", unique_suffix)`
-- ShellTools 等不接收 `Project&` 的工具使用手动注册（见 `ShellTools.cpp`）
+2. 在 `.cpp` 中添加 `REGISTER_TOOL(ToolClass, "tool_name", unique_suffix)`（需要 Project 指针）或 `REGISTER_TOOL_NP(ToolClass, "tool_name", unique_suffix)`（不需要 Project 指针）
 - **禁止**：手动编辑 `AgentSetup.cpp` 添加注册代码
 
 ### 读写分离

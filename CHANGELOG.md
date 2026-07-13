@@ -1,5 +1,22 @@
 # Changelog
 
+## [2026-07-13] 工具自注册宏灵活化：新增 REGISTER_TOOL_NP 消除手动样板代码
+
+> 新增 `REGISTER_TOOL_NP` 宏，用于不需要 `Project` 指针的工具注册。
+> 将 `ShellTools.cpp` 和 `SearchMemoryTools.cpp` 中的手动注册块替换为单行宏调用。
+
+### 核心改动
+- `BuiltInTool.h`：新增 `REGISTER_TOOL_NP(ToolClass, toolName, varSuffix)` 宏，工厂 lambda 构造工具时不传 Project 参数
+- `ShellTools.cpp`：手动注册（9 行）→ `REGISTER_TOOL_NP`（1 行）
+- `SearchMemoryTools.cpp`：手动注册（9 行）→ `REGISTER_TOOL_NP`（1 行）
+- `CLAUDE.md`：更新工具自注册章节，说明两个宏的适用场景
+- `SearchMemoryTools.h`：注释更新
+
+### 影响范围
+- 34 处现有 `REGISTER_TOOL(...)` 零改动
+- `BuiltInTool::Factory` 签名不变，`registerAllTo` 不变
+- 净删 ~14 行样板代码，净增 ~12 行宏定义
+
 ## [2026-07-12] 合并 ContextManager::assemble() 自动压缩和告警为多级决策 + 四级阈值体系
 
 > 将 assemble() 中步骤 2（自动压缩检查）与步骤 3（阈值告警）合并为统一的多级决策块，

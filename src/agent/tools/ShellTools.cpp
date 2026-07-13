@@ -176,13 +176,5 @@ json RunPowerShellTool::execute(const json& args) {
 
 } // namespace agent
 
-// ShellTools 不接收 Project& 参数，手动注册
-namespace {
-    static const bool _reg_ShellTools = []() {
-        agent::BuiltInTool::registerFactory("run_powershell",
-            [](std::shared_ptr<Project>) -> std::unique_ptr<agent::BuiltInTool> {
-                return std::make_unique<agent::RunPowerShellTool>();
-            });
-        return true;
-    }();
-}
+// ShellTools 不接收 Project& 参数，使用 REGISTER_TOOL_NP
+REGISTER_TOOL_NP(agent::RunPowerShellTool, "run_powershell", run_powershell)
