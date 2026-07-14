@@ -497,7 +497,7 @@ void ReplHandler::run() {
         } catch (const std::exception& e) {
             gui_.stopSpinner();
             agent_.tracer().record("error", 0, 0,
-                {{"reason", e.what()}});
+                agent::ErrorPayload{.reason = e.what()});
             gui_.writeError(userFriendlyError(e.what()));
             out_.write(Ansi::dim() + "（输入消息即可重试）\n" + Ansi::reset());
             autoSaveOnError();

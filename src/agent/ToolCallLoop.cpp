@@ -124,7 +124,7 @@ ToolCallLoopResult ToolCallLoop::run(
                 r.cancelled = true;
                 r.error = "任务已取消";
                 if (tracer_) tracer_->record("error", r.total_tokens_used, 0,
-                    {{"reason", "外部取消信号"}, {"round", round}});
+                    ErrorPayload{.reason = "外部取消信号", .round = round});
                 return r;
             }
 
@@ -167,7 +167,7 @@ ToolCallLoopResult ToolCallLoop::run(
                     conversation.add(std::move(reflection));
 
                     if (tracer_) tracer_->record("reflection", 0, 0,
-                        {{"tool", repeated_tool_name}, {"round", reflection_rounds_}});
+                        ReflectionPayload{.tool = repeated_tool_name, .round = reflection_rounds_});
 
                     // 跳过工具执行，直接调 LLM
                     auto t5 = std::chrono::steady_clock::now();
@@ -188,7 +188,7 @@ ToolCallLoopResult ToolCallLoop::run(
                 r.error = "检测到重复工具调用循环，已自动终止（反思" +
                           std::to_string(reflection_rounds_) + "轮后未解决）";
                 if (tracer_) tracer_->record("error", r.total_tokens_used, 0,
-                    {{"reason", "重复工具调用循环（反思耗尽）"}, {"round", round}});
+                    ErrorPayload{.reason = "重复工具调用循环（反思耗尽）", .round = round});
                 llm::Message err_msg;
                 err_msg.role = llm::MessageRole::Tool;
                 err_msg.content = "{\"error\":\"已经尝试了多种方法但陷入重复调用，请告知用户当前进度和遇到的问题。\"}";
@@ -206,7 +206,7 @@ ToolCallLoopResult ToolCallLoop::run(
             if (tracer_) {
                 for (const auto& tc : response.tool_calls)
                     tracer_->record("tool_call", 0, 0,
-                        {{"name", tc.function_name}, {"args", tc.arguments}});
+                        ToolCallPayload{.name = tc.function_name, .args = tc.arguments});
             }
 
             if (state_) state_->transition(AgentState::AwaitingTool);
@@ -247,7 +247,7 @@ ToolCallLoopResult ToolCallLoop::run(
         r.rounds_executed = config.max_rounds;
         spdlog::warn("[ToolCallLoop] 达到最大轮数 ({})", config.max_rounds);
         if (tracer_) tracer_->record("error", r.total_tokens_used, 0,
-            {{"reason", "达到最大工具调用轮数"}, {"max_rounds", config.max_rounds}});
+            ErrorPayload{.reason = "达到最大工具调用轮数", .max_rounds = config.max_rounds});
         return r;
     };
 
@@ -257,7 +257,7 @@ ToolCallLoopResult ToolCallLoop::run(
             result.timed_out = true;
             result.error = "工具调用循环超时 (" + std::to_string(config.timeout.count()) + "s)";
             if (tracer_) tracer_->record("error", 0, static_cast<int>(config.timeout.count()) * 1000,
-                {{"reason", "工具调用循环超时"}, {"timeout_s", config.timeout.count()}});
+                ErrorPayload{.reason = "工具调用循环超时", .timeout_s = config.timeout.count()});
             return result;
         }
         return future.get();

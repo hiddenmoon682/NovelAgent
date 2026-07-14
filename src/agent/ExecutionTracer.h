@@ -10,20 +10,61 @@
 //   tracer.record({.event_type="llm_call", .tokens_used=1500, .duration_ms=3200});
 //   tracer.dump(".novelagent/traces/");
 
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 
+#include <cstdint>
+#include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 #include <chrono>
 
 namespace agent {
+
+// ── 结构化负载类型（编译器检查字段名和类型，替代裸 nlohmann::json）──
+
+struct ErrorPayload {
+    std::string reason;
+    std::optional<std::string> state;        // 可选：状态名
+    int round = -1;                           // 可选：当前轮次（-1 表示无）
+    std::optional<int> max_rounds;            // 可选：最大轮次
+    std::optional<int64_t> timeout_s;         // 可选：超时秒数
+};
+
+struct UserInputPayload {
+    std::string input;                        // 用户输入前 200 字符
+};
+
+struct ToolCallPayload {
+    std::string name;                         // 工具名
+    std::string args;                         // 参数 JSON 字符串
+};
+
+struct ReflectionPayload {
+    std::string tool;                         // 重复调用的工具名
+    int round = 0;                            // 反思轮次
+};
+
+struct ParallelStartPayload {
+    std::string input;                        // 输入前 200 字符
+};
+
+// 负载变体 — 每个事件类型对应一种结构化负载，std::monostate 表示无负载。
+using TracePayload = std::variant<
+    std::monostate,
+    ErrorPayload,
+    UserInputPayload,
+    ToolCallPayload,
+    ReflectionPayload,
+    ParallelStartPayload
+>;
 
 // 单条执行轨迹。
 struct TraceEntry {
     std::string timestamp;       // ISO 8601 UTC 时间戳
     int step_index = 0;          // 步骤序号
     std::string event_type;      // user_input | llm_call | tool_call | tool_result | llm_response | error
-    nlohmann::json payload;      // 事件详情（不含完整章节内容，只含摘要）
+    TracePayload payload;        // 事件详情（结构化类型，见上）
     int tokens_used = 0;         // 该步骤消耗的 token 数
     int duration_ms = 0;         // 该步骤耗时（毫秒）
 
@@ -41,7 +82,7 @@ public:
 
     // 记录一条简单轨迹（便捷接口）。
     void record(const std::string& event_type, int tokens = 0, int duration_ms = 0,
-                const nlohmann::json& payload = {});
+                const TracePayload& payload = {});
 
     // 获取所有记录（只读）。
     const std::vector<TraceEntry>& entries() const { return entries_; }

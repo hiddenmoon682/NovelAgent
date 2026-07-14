@@ -241,7 +241,7 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
     // 符合 fail-fast 原则：尽早发现无效输入，减少资源浪费。
     if (input.empty()) {
         spdlog::warn("[Agent] 收到空输入，已忽略");
-        tracer_.record("error", 0, 0, {{"reason", "空输入被拒绝"}});
+        tracer_.record("error", 0, 0, ErrorPayload{.reason = "空输入被拒绝"});
         return {};
     }
 
@@ -250,7 +250,7 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
         std::string reason;
         if (!validateInput(input, reason)) {
             spdlog::warn("[Agent] 输入校验失败: {}", reason);
-            tracer_.record("error", 0, 0, {{"reason", "输入校验: " + reason}});
+            tracer_.record("error", 0, 0, ErrorPayload{.reason = "输入校验: " + reason});
             return {};
         }
     }
@@ -260,9 +260,9 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
     // 若处于 Error 状态则自动尝试恢复；若处于 Fatal / Thinking 等非法状态则拒绝。
     if (!state_.canAcceptInput()) {
         spdlog::warn("[Agent] 当前状态 [{}] 不接受新输入", agentStateName(state_.current()));
-        tracer_.record("error", 0, 0, {
-            {"reason", "状态不允许输入"},
-            {"state", agentStateName(state_.current())}
+        tracer_.record("error", 0, 0, ErrorPayload{
+            .reason = "状态不允许输入",
+            .state = agentStateName(state_.current())
         });
         if (state_.isError()) {
             spdlog::info("[Agent] 尝试从错误状态自动恢复 → Idle");
@@ -275,7 +275,7 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
     // ── 步骤 3: 轨迹记录（Fix #3）──
     // 记录用户输入的前 200 字符到 ExecutionTracer，
     // 供后续调试、日志审计和可观测性面板使用。
-    tracer_.record("user_input", 0, 0, {{"input", input.substr(0, 200)}});
+    tracer_.record("user_input", 0, 0, UserInputPayload{.input = input.substr(0, 200)});
 
     // ── 步骤 4: 状态转换 Idle → Thinking（Fix #6）──
     // 通知状态机 Agent 进入思考阶段。
@@ -326,7 +326,7 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
         // B8 修复：核心处理异常强制状态恢复，防止卡在 Thinking 永久拒输入。
         // Thinking → Error（合法转换）→ Idle（recover），返回空响应用户可继续。
         spdlog::error("[Agent] 处理异常，强制状态恢复: {}", e.what());
-        tracer_.record("error", 0, 0, {{"reason", "处理异常: " + std::string(e.what())}});
+        tracer_.record("error", 0, 0, ErrorPayload{.reason = "处理异常: " + std::string(e.what())});
         state_.transition(AgentState::Error);
         state_.recover();
         return {};
@@ -370,7 +370,7 @@ llm::LLMResponse Agent::execute(const std::string& command,
         return response;
     } catch (const std::exception& e) {
         spdlog::error("[Agent] execute 异常，强制状态恢复: {}", e.what());
-        tracer_.record("error", 0, 0, {{"reason", "execute 异常: " + std::string(e.what())}});
+        tracer_.record("error", 0, 0, ErrorPayload{.reason = "execute 异常: " + std::string(e.what())});
         state_.transition(AgentState::Error);
         state_.recover();
         return {};

@@ -263,7 +263,7 @@ ParallelProcessor::Result ParallelProcessor::process(
     try {
         // tracer 支持 — 记录并行编排关键事件
         if (tracer_) tracer_->record("parallel_start", 0, 0,
-            {{"input", input.substr(0, 200)}});
+            ParallelStartPayload{.input = input.substr(0, 200)});
 
         auto text = orchestrator_->processMessage(input);
         conversation.addUser(input);
@@ -334,7 +334,7 @@ ParallelProcessor::Result ParallelProcessor::process(
         spdlog::error("[ParallelProcessor] 并行处理异常: {}", e.what());
         r.raw_response.finish_reason = "error";
         if (tracer_) tracer_->record("error", 0, 0,
-            {{"reason", "并行处理异常: " + std::string(e.what())}});
+            ErrorPayload{.reason = "并行处理异常: " + std::string(e.what())});
         if (callbacks.on_error) {
             callbacks.on_error(e.what());
         }

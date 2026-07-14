@@ -12,10 +12,40 @@
 #include <mutex>
 #include <random>
 #include <sstream>
+#include <type_traits>
 
 using json = nlohmann::json;
 
 namespace agent {
+
+// ===========================================================================
+// tracePayloadToJson — 将结构化负载序列化为 JSON
+// ===========================================================================
+
+static json tracePayloadToJson(const TracePayload& payload) {
+    return std::visit([](const auto& p) -> json {
+        using T = std::decay_t<decltype(p)>;
+        if constexpr (std::is_same_v<T, std::monostate>) {
+            return json::object();
+        } else if constexpr (std::is_same_v<T, ErrorPayload>) {
+            json j;
+            j["reason"] = p.reason;
+            if (p.state) j["state"] = *p.state;
+            if (p.round >= 0) j["round"] = p.round;
+            if (p.max_rounds) j["max_rounds"] = *p.max_rounds;
+            if (p.timeout_s) j["timeout_s"] = *p.timeout_s;
+            return j;
+        } else if constexpr (std::is_same_v<T, UserInputPayload>) {
+            return json{{"input", p.input}};
+        } else if constexpr (std::is_same_v<T, ToolCallPayload>) {
+            return json{{"name", p.name}, {"args", p.args}};
+        } else if constexpr (std::is_same_v<T, ReflectionPayload>) {
+            return json{{"tool", p.tool}, {"round", p.round}};
+        } else if constexpr (std::is_same_v<T, ParallelStartPayload>) {
+            return json{{"input", p.input}};
+        }
+    }, payload);
+}
 
 // ===========================================================================
 // TraceEntry
@@ -41,7 +71,7 @@ void ExecutionTracer::record(const TraceEntry& entry) {
 }
 
 void ExecutionTracer::record(const std::string& event_type, int tokens,
-                              int duration_ms, const json& payload) {
+                              int duration_ms, const TracePayload& payload) {
     TraceEntry e;
     e.event_type = event_type;
     e.tokens_used = tokens;
@@ -68,7 +98,7 @@ std::string ExecutionTracer::dump(const std::string& dir_path) const {
         j["timestamp"] = e.timestamp;
         j["step_index"] = e.step_index;
         j["event_type"] = e.event_type;
-        j["payload"] = e.payload;
+        j["payload"] = tracePayloadToJson(e.payload);
         j["tokens_used"] = e.tokens_used;
         j["duration_ms"] = e.duration_ms;
         oss << j.dump() << "\n";
