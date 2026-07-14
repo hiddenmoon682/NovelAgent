@@ -180,10 +180,13 @@ void test_usage_percent() {
     agent::ContextManager cm;
     cm.setModelContextLimit(10000);
 
-    cm.recordUsage(6000, 0);  // 60% — Warning 阈值
+    // usagePercent 读的是 current_total_tokens_（对话总 Token 数）
+    cm.tracker().setCurrentTotalTokens(6000);  // 模拟 assemble() 计算后的值
     CHECK(cm.usagePercent() == 60);
 
-    auto check = cm.checkThresholds();
+    // checkThresholds() (无参) 仍读 current_context_size_（最后 API input）
+    // 这里只验证 checkThresholds(int) 的实时计算路径
+    auto check = cm.checkThresholds(6000);
     CHECK(check.status == agent::ContextStatus::Warning);
     CHECK(check.usage_percent == 60);
     PASS();

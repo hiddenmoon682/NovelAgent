@@ -16,18 +16,16 @@ struct ConversationDiff {
 
 // 对话历史管理器 — 封装消息列表的便捷操作。
 //
-// 职责：
-// - 维护有序消息列表（system → user → assistant → tool → ...）
-// - 提供按角色添加消息的便捷方法
-// - 分离 system 消息与其他消息（与 LLMClient::chat() 参数语义对齐）
+// System 消息独立存储为 system_prompt_（只有一条），其余角色（User/Assistant/Tool）
+// 存储在 messages_ 中，因此 messages() 直接返回内部引用无需拷贝过滤。
 //
 // 使用示例：
 //   Conversation conv;
-//   conv.addSystem("你是一个有用的助手。");
+//   conv.setSystemPrompt("你是一个有用的助手。");
 //   conv.addUser("你好");
 //   conv.addAssistant("你好！有什么可以帮助你的？");
 //
-//   // 传给 LLMClient
+//   // 传给 LLMClient（messages() 零拷贝）
 //   client.chat(conv.messages(), {}, conv.systemPrompt());
 //
 // 注意：Conversation 不负责持久化——序列化由 Agent 层处理。
@@ -38,14 +36,24 @@ public:
     // ================================================================
 
     // 添加一条已构造好的消息（通用接口，追加到尾部）
+    // System 角色消息存入 system_prompt_，其余存入 messages_。
     Conversation& add(Message msg) {
-        messages_.push_back(std::move(msg));
+        if (msg.role == MessageRole::System) {
+            system_prompt_ = std::move(msg.content);
+        } else {
+            messages_.push_back(std::move(msg));
+        }
         return *this;
     }
 
     // 在对话头部插入一条消息（通用接口）
+    // System 角色消息覆盖 system_prompt_，其余插入 messages_ 头部。
     Conversation& prepend(Message msg) {
-        messages_.insert(messages_.begin(), std::move(msg));
+        if (msg.role == MessageRole::System) {
+            system_prompt_ = std::move(msg.content);
+        } else {
+            messages_.insert(messages_.begin(), std::move(msg));
+        }
         return *this;
     }
 
@@ -54,9 +62,14 @@ public:
         return add(Message::user(std::move(content)));
     }
 
-    // 添加系统提示词消息（通常只有一条，放在最前面）
+    // 设置系统提示词（替换旧的 system_prompt_）。
+    Conversation& setSystemPrompt(std::string content) {
+        system_prompt_ = std::move(content);
+        return *this;
+    }
+    // 等价于 setSystemPrompt，保持向后兼容。
     Conversation& addSystem(std::string content) {
-        return add(Message::system(std::move(content)));
+        return setSystemPrompt(std::move(content));
     }
 
     // 添加 AI 助手消息
@@ -73,62 +86,71 @@ public:
     // 查询
     // ================================================================
 
-    // 提取系统提示词（首条 system 角色消息的 content）。
-    // 如果没有 system 消息，返回空字符串。
-    //
-    // ⚠️ 注意：此方法仅用于调试/日志查询，不作为 LLM 请求的 system prompt 来源。
+    // 返回系统提示词。
     // System prompt 的实际来源是 Agent::system_prompt_（经过 PromptComposer 和
     // ContextManager 动态注入），通过 LLMClient::chat() 的 system_prompt 参数单独传递。
-    // Conversation 中的 System 消息不会被发送给 LLM（见 messages() — 过滤了 System 角色）。
-    std::string systemPrompt() const {
-        for (const auto& msg : messages_) {
-            if (msg.role == MessageRole::System) {
-                return msg.content;
-            }
-        }
-        return {};
-    }
+    const std::string& systemPrompt() const { return system_prompt_; }
 
     // 获取不含 system 消息的对话历史（传给 LLMClient::chat）。
-    // system 消息由 LLMClient::chat() 的 system_prompt 参数单独传递。
-    std::vector<Message> messages() const {
+    // 零拷贝 — 直接返回内部引用，system_prompt_ 通过独立的 systemPrompt() 获取。
+    const std::vector<Message>& messages() const { return messages_; }
+
+    // 获取全部消息（含 system 消息），用于持久化和调试。
+    // 注意：返回值为临时 vector（拼接 system_prompt_ + messages_），仅在低频路径使用。
+    std::vector<Message> all() const {
+        if (system_prompt_.empty()) return messages_;
         std::vector<Message> result;
-        result.reserve(messages_.size());
-        for (const auto& msg : messages_) {
-            if (msg.role != MessageRole::System) {
-                result.push_back(msg);
-            }
-        }
+        result.reserve(1 + messages_.size());
+        result.push_back(Message::system(system_prompt_));
+        result.insert(result.end(), messages_.begin(), messages_.end());
         return result;
     }
-
-    // 获取所有消息（含 system 消息），用于调试和完整遍历。
-    const std::vector<Message>& all() const { return messages_; }
 
     // ================================================================
     // 容器操作（只读，修改通过 add*() 方法保证一致性）
     // ================================================================
 
-    bool empty() const { return messages_.empty(); }
-    size_t size() const { return messages_.size(); }
+    bool empty() const { return messages_.empty() && system_prompt_.empty(); }
+    size_t size() const { return messages_.size() + (system_prompt_.empty() ? 0 : 1); }
 
     const Message& back() const { return messages_.back(); }
     const Message& front() const { return messages_.front(); }
-    const Message& operator[](size_t i) const { return messages_[i]; }
+    // 按 all() 视角索引访问消息（0 = system_prompt_ 若存在，1+ = messages_）。
+    // 返回 by value（system_prompt_ 是 std::string 而非 Message 成员）。
+    Message operator[](size_t i) const {
+        size_t offset = system_prompt_.empty() ? 0 : 1;
+        if (i < offset) return Message::system(system_prompt_);
+        return messages_[i - offset];
+    }
 
-    void clear() { messages_.clear(); }
+    void clear() {
+        messages_.clear();
+        system_prompt_.clear();
+    }
     void popBack() { messages_.pop_back(); }
     void reserve(size_t n) { messages_.reserve(n); }
 
     // 截断到前 N 条消息（保留 [0, keep_count)），丢弃其余。
-    // 注意：被截断的消息中若有 preserved 标记的消息将被静默丢弃，
-    // 调用方（如 Agent::rewindTo）应在截断前检查并提示用户。
+    // keep_count 计数包含 system_prompt_（如果存在）。
     void truncateTo(size_t keep_count) {
-        if (keep_count < messages_.size()) messages_.resize(keep_count);
+        size_t offset = system_prompt_.empty() ? 0 : 1;
+        if (keep_count == 0) {
+            messages_.clear();
+            system_prompt_.clear();
+            return;
+        }
+        if (keep_count <= offset) {
+            // 仅保留 system_prompt_
+            messages_.clear();
+            return;
+        }
+        size_t total = offset + messages_.size();
+        if (keep_count >= total) return;  // No-op
+        messages_.resize(keep_count - offset);
     }
 
-    // 从头部删除 |count| 条消息（最旧的），保留 [count, size())。
-    // compact() 在生成摘要后用此方法删除已压缩的旧消息。
+    // 从头部删除 |count| 条非 system 消息（最旧的），保留 [count, size())。
+    // system_prompt_ 不受影响，始终在索引 0 位置。
     void removeOldest(size_t count) {
         if (count >= messages_.size()) {
             messages_.clear();
@@ -139,12 +161,13 @@ public:
     }
 
     // 编辑指定索引的消息内容（仅允许 User 和 Assistant 消息）。
-    // 返回 false 表示索引越界或角色不允许编辑。
-    // Issue 27: 编辑后自动清除 preserved 标记（编辑视为"修改内容"而非"标记重要"，
-    // 用户如需保留需重新 /pin）。
+    // index 为 all() 视角的索引（0 = system_prompt_，1+ = messages_）。
     bool editMessage(size_t index, std::string new_content) {
-        if (index >= messages_.size()) return false;
-        auto& msg = messages_[index];
+        size_t offset = system_prompt_.empty() ? 0 : 1;
+        if (index < offset) return false;  // 不能编辑 system 消息
+        size_t msg_idx = index - offset;
+        if (msg_idx >= messages_.size()) return false;
+        auto& msg = messages_[msg_idx];
         if (msg.role != MessageRole::User && msg.role != MessageRole::Assistant)
             return false;
         msg.content = std::move(new_content);
@@ -153,24 +176,29 @@ public:
     }
 
     // ── 消息保留标记（Pin）──
-    // 按 all() 索引标记消息为"保留"，截断时优先保留。
-    // 返回 false 表示索引越界。
+    // 以下 index 均为 all() 视角的索引。
     bool pinMessage(size_t index) {
-        if (index >= messages_.size()) return false;
-        messages_[index].preserved = true;
+        size_t offset = system_prompt_.empty() ? 0 : 1;
+        if (index < offset) return false;  // 不能 pin system 消息
+        size_t msg_idx = index - offset;
+        if (msg_idx >= messages_.size()) return false;
+        messages_[msg_idx].preserved = true;
         return true;
     }
-    // 取消保留标记。
     bool unpinMessage(size_t index) {
-        if (index >= messages_.size()) return false;
-        messages_[index].preserved = false;
+        size_t offset = system_prompt_.empty() ? 0 : 1;
+        if (index < offset) return false;
+        size_t msg_idx = index - offset;
+        if (msg_idx >= messages_.size()) return false;
+        messages_[msg_idx].preserved = false;
         return true;
     }
-    // 获取所有保留消息的索引（按 all() 顺序）。
+    // 获取所有保留消息的索引（all() 视角）。
     std::vector<size_t> pinnedIndices() const {
         std::vector<size_t> result;
+        size_t offset = system_prompt_.empty() ? 0 : 1;
         for (size_t i = 0; i < messages_.size(); ++i) {
-            if (messages_[i].preserved) result.push_back(i);
+            if (messages_[i].preserved) result.push_back(offset + i);
         }
         return result;
     }
@@ -191,14 +219,15 @@ public:
     }
 
     // ================================================================
-    // 迭代器（只读）
+    // 迭代器（只读，遍历 messages_ 部分）
     // ================================================================
 
     auto begin() const { return messages_.begin(); }
     auto end()   const { return messages_.end(); }
 
 private:
-    std::vector<Message> messages_;
+    std::vector<Message> messages_;   // 非 System 消息（User / Assistant / Tool）
+    std::string system_prompt_;       // 唯一的一条 System 消息
 };
 
 } // namespace llm

@@ -22,6 +22,7 @@ public:
         state_.total_output_tokens += output_tokens;
         state_.request_count++;
         current_context_size_ = input_tokens;
+        last_output_tokens_ = output_tokens;
     }
 
     // 请求前检查上下文用量状态（基于最近一次请求的实际大小）。
@@ -74,24 +75,34 @@ public:
     // 返回当前用量百分比 [0, 100]。
     int usagePercent() const {
         if (state_.model_context_limit <= 0) return 0;
-        return (current_context_size_ * 100) / state_.model_context_limit;
+        return (current_total_tokens_ * 100) / state_.model_context_limit;
     }
 
     // 返回最近一次请求的上下文大小（供外部使用）。
     int currentContextSize() const { return current_context_size_; }
+    // 返回最近一次请求的输出 token 数。
+    int lastOutputTokens() const { return last_output_tokens_; }
+    // 返回当前对话的总 token 数（由 assemble() 设置，record() 不覆盖）。
+    int currentTotalTokens() const { return current_total_tokens_; }
     // 手动设置当前上下文大小（供 assemble() 在 LLM 调用前写入启发式估算值）。
     void setCurrentContextSize(int size) { current_context_size_ = size; }
+    // 设置当前对话的总 token 数（由 assemble() 在步骤 2 算完后写入）。
+    void setCurrentTotalTokens(int total) { current_total_tokens_ = total; }
 
     // 重置全部会话统计。
     void reset() {
         state_ = SessionTokenState{};
         current_context_size_ = 0;
+        last_output_tokens_ = 0;
+        current_total_tokens_ = 0;
     }
 
     // Issue 3: 从持久化恢复 Token 统计（供 ContextManager::loadSessionState 使用）。
     void restore(const SessionTokenState& snapshot, int context_size = 0) {
         state_ = snapshot;
         current_context_size_ = context_size;
+        last_output_tokens_ = 0;  // 最近一次输出是运行时状态，不持久化
+        current_total_tokens_ = 0;
     }
 
     // ── 四级可配置阈值 ──
@@ -104,7 +115,9 @@ public:
 
 private:
     SessionTokenState state_;
-    int current_context_size_ = 0;  //  最后一次请求的实际上下文 token 数
+    int current_context_size_ = 0;   //  最后一次请求的实际上下文 token 数
+    int last_output_tokens_ = 0;     //  最后一次请求的输出 token 数
+    int current_total_tokens_ = 0;   //  当前对话的总 token 数（由 assemble 设置）
 
     // 四级阈值（可配置，供 check()/check(int) 使用）
     int warning_threshold_ = 60;            //  Warning 阈值，默认 60%

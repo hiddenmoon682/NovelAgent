@@ -189,8 +189,9 @@ int main() {
 
     // ── 对话历史统计 ──
     std::cout << "▶ 对话历史: " << agent.conversation().size() << " 条消息\n";
-    for (size_t i = 0; i < agent.conversation().size(); ++i) {
-        const auto& msg = agent.conversation().all()[i];
+    auto all_msgs = agent.conversation().all();
+    for (size_t i = 0; i < all_msgs.size(); ++i) {
+        const auto& msg = all_msgs[i];
         std::string role_str;
         switch (msg.role) {
             case llm::MessageRole::User:      role_str = "User     "; break;

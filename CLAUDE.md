@@ -176,4 +176,3 @@
 | 文档 | 内容 |
 |------|------|
 | `docs/DEV_GUIDE.md` | 完整开发指南（设计模式、优化策略、注意事项），持续更新 |
-| `docs/review/REVIEW_NOTES.md` | 设计回顾记录（ShellTools 安全教训等），非待修项 |

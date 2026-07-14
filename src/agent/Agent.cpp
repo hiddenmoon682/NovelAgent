@@ -210,7 +210,7 @@ void Agent::useParallelProcessor(TemplateManager* tm) {
 
 void Agent::setProcessor(std::unique_ptr<IMessageProcessor> p) { processor_ = std::move(p); }
 bool Agent::isParallelEnabled() const {
-    return dynamic_cast<ParallelProcessor*>(processor_.get()) != nullptr;
+    return processor_ && processor_->isParallel();
 }
 
 // ============================================================================

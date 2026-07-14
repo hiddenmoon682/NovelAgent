@@ -164,7 +164,8 @@ public:
     // 自动对比 project_mtime，如果 Project 被修改过则清空压缩摘要。
     void loadSessionState(llm::Conversation& conv);
 
-    // 公开子组件（只读访问，供测试/诊断使用）
+    // 公开子组件（供测试/诊断使用）
+    TokenTracker& tracker() { return tracker_; }
     const TokenTracker& tracker() const { return tracker_; }
 
 private:

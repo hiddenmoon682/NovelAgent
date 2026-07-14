@@ -107,11 +107,10 @@ SerialProcessor::Result SerialProcessor::process(
                            std::move(callbacks), config, &effective_messages);
 
     // ── 步骤 6.5: Token 校准回传 ──
-    // 必须在 recordUsage 之前执行：tracker_.currentContextSize() 此时仍持有
-    // assemble() 写入的启发式估算值（recordUsage 会将其覆盖为真实值）。
-    // 将估算值与 API 返回的真实 prompt_tokens 对比，更新校准器的 EMA 修正因子。
+    // 将 assemble() 算出的估算值与 API 返回的真实 prompt_tokens 对比，
+    // 更新校准器的 EMA 修正因子。
     if (context_manager_ && context_manager_->hasCalibrator()) {
-        int estimated = context_manager_->tracker().currentContextSize();
+        int estimated = context_manager_->tracker().currentTotalTokens();
         if (estimated > 0 && result.input_tokens > 0) {
             context_manager_->calibrator()->calibrate(
                 client_.config().model, estimated, result.input_tokens);
@@ -303,7 +302,7 @@ ParallelProcessor::Result ParallelProcessor::process(
 
         // Token 校准回传（必须在 recordUsage 之前，原理同 SerialProcessor）
         if (context_manager_ && context_manager_->hasCalibrator()) {
-            int estimated = context_manager_->tracker().currentContextSize();
+            int estimated = context_manager_->tracker().currentTotalTokens();
             int actual = orchestrator_->lastInputTokens();
             if (estimated > 0 && actual > 0) {
                 context_manager_->calibrator()->calibrate(

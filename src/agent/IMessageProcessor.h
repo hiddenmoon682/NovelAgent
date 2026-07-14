@@ -54,6 +54,9 @@ public:
         const std::string& input,
         llm::Conversation& conversation,
         llm::StreamCallbacks callbacks) = 0;
+
+    // B1: 判断是否为并行处理器（替代 dynamic_cast）。
+    virtual bool isParallel() const { return false; }
 };
 
 // 串行处理器 — 标准 tool call 循环模式（默认）。
@@ -137,6 +140,8 @@ public:
     void setMaxToolRounds(int n) override { max_tool_rounds_ = n; }
     void setTracer(class ExecutionTracer* t) override { tracer_ = t; }
     void setStateMachine(class StateMachine* s) override { state_ = s; }
+
+    bool isParallel() const override { return true; }
 
     AgentOrchestrator& orchestrator() { return *orchestrator_; }
     void setTemplateManager(class TemplateManager* tm);

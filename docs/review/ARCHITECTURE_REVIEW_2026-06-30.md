@@ -16,11 +16,10 @@
 
 | # | 问题 | 模块 | 描述 | 建议方案 |
 |---|------|------|------|---------|
-| B1 | `isParallelEnabled()` 用 `dynamic_cast` | `Agent.cpp:261` | 若 processor 被包装则 dynamic_cast 静默失败 | 在 `IMessageProcessor` 接口上加 `bool isParallel() const` 虚方法 |
+| ~~B1~~ | ~~`isParallelEnabled()` 用 `dynamic_cast`~~ | ~~`Agent.cpp:261`~~ | ✅ 已修复 — 改为 `IMessageProcessor::isParallel()` 虚方法 |
 | B2 | 无模板时并行降级为单子任务包装 | `AgentOrchestrator.cpp:44-53` | 无 TemplateManager 时创建单一 SubAgent 有受限工具集，增加了开销但没有价值 | 空分解回退到串行模式 |
-| B3 | `TokenTracker::record()` 只记 input_tokens | `TokenTracker.h:23` | `current_context_size_` 应设为 `input + output`，否则 `usagePercent()` 偏低 | `current_context_size_ = input_tokens + output_tokens;` |
+| ~~B3~~ | ~~`TokenTracker::record()` 只记 input_tokens~~ | ~~`TokenTracker.h:23`~~ | ✅ 已修复 — 新增 `last_output_tokens_` 追踪输出 token，`current_context_size_` 保留为 input 语义不变 |
 | B4 | `Conversation::messages()` 每次深度复制 | `Conversation.h:88-97` | 长对话每次调用都深度复制所有字符串，ToolCallLoop 每轮多次调用 | 添加 `messagesView()` 返回 `std::span<const Message>` |
-| B5 | `PromptComposer` 职责过薄 | `PromptComposer.h` | 实际只做字符串拼接，不值得独立类 | 内联到 ContextManager 或注入更多职责 |
 | B6 | `ExecutionTracer` payload 非强类型 | `ExecutionTracer.h:44` | `nlohmann::json payload` 无结构化约束 | 为常见事件类型添加结构化负载类型 |
 
 ### 批次 C：低优先级（小改进/边缘情况）

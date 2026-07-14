@@ -161,7 +161,7 @@ CompactResult ContextManager::compact(
     std::optional<std::string> focus)
 {
     CompactResult result;
-    const auto& all_msgs = conversation.all();
+    const auto& all_msgs = conversation.messages();
     int total_msgs = static_cast<int>(all_msgs.size());
 
     // 保留最近 kCompactKeepExchanges 对消息，压缩更早的历史。
@@ -396,7 +396,7 @@ ContextAssembly ContextManager::assemble(
 
     // ── 步骤 4: 缓存到内部状态 ─────────────────────────────────────────
     last_warnings_ = result.warnings;
-    tracker_.setCurrentContextSize(result.total_tokens);
+    tracker_.setCurrentTotalTokens(result.total_tokens);
 
     return result;
 }

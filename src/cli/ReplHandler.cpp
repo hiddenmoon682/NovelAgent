@@ -350,8 +350,9 @@ void ReplHandler::setupCommands() {
             } else {
                 std::ostringstream ss;
                 ss << Ansi::info() << "可回滚的消息 (" << checkpoints.size() << " 个用户消息):\n" << Ansi::reset();
+                auto all_msgs = agent_.conversation().all();
                 for (auto idx : checkpoints) {
-                    const auto& msg = agent_.conversation().all()[idx];
+                    const auto& msg = all_msgs[idx];
                     std::string preview = msg.content.substr(0, 80);
                     ss << "  [" << idx << "] " << preview;
                     if (msg.content.size() > 80) ss << "...";
@@ -382,8 +383,9 @@ void ReplHandler::setupCommands() {
         } else {
             std::ostringstream ss;
             ss << Ansi::info() << "保留消息 (" << pinned.size() << " 条):\n" << Ansi::reset();
+            auto all_msgs = agent_.conversation().all();
             for (auto idx : pinned) {
-                const auto& msg = agent_.conversation().all()[idx];
+                const auto& msg = all_msgs[idx];
                 std::string role;
                 switch (msg.role) {
                     case llm::MessageRole::User: role = "用户"; break;

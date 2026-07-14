@@ -1,8 +1,11 @@
 # NovelAgent 设计合理性评审报告
 
 > 评审日期: 2026-06-28 | 评审范围: 全项目（约 15000 行 C++20）| 方法: 三路并行只读审查 + 关键断言人工核实
-> 性质: **设计合理性评审**。**修复状态: 已完成 6 批次修复（35 项），剩余 14 项未修（全部为中/低严重度）。**
+> 性质: **设计合理性评审**。
 >
+> **已修复的 35 项详情 → [REVIEW_STATUS.md#二设计合理性评审](./REVIEW_STATUS.md)**
+>
+> 本文件仅保留尚未修复的暂缓问题的原始分析，供后续改版时参考。
 > 修复汇总: 批次① (1674246) → 批次② (1b19a2b) → 批次③ (460e5aa) → 批次④ (6dc457a) → 批次⑤ (0f68d0a) → A6 (58c0dcc) → 收尾 (A17+C6+A10)
 > 复核: 2026-06-29 对全部 35 项已修复条目做逐项源码复核，补齐 A6 覆盖遗漏 + C1+C2 绕过向量 + 段内参数解析 bug，详见 CHANGELOG 同日条目。
 
@@ -35,70 +38,13 @@ NovelAgent 的**模型层建模相当用心**（Chapter 的 goal/conflict/foresh
 
 > 写小说 Agent 的核心诉求是「跨几十万字保持角色弧光、伏笔回收、世界规则不穿帮」。本维度问题最多最严重。
 
-### 高严重度
-
-**【✅ 已修复】A1. compact() 不删除已压缩消息——压缩形同虚设**
-- `ContextManager.cpp:563-652`：`compact()` 签名是 `const llm::Conversation&`（const 引用，无法修改对话），只把摘要存进 `compacted_summary_`，**被压缩的旧消息仍留在 conversation 中**。
-- 后果：`assemble()` 下次仍面对完整对话做贪心截断，`current_context_size_` 不降，`shouldAutoCompact()` 反复触发，每轮白做一次 LLM 摘要调用（额外 token 成本）。这是上下文链路的**根因缺陷**。
-
-**【✅ 已修复】A2. 语义检索子系统整条空转——/index 是桩，向量库永远空**
-- `ReplHandler.cpp:156-167`：`/index` 只打印提示，不调用任何构建逻辑。全库 grep 确认 `NovelChunker`、`EmbeddingGenerator::generateEmbeddings`、`VectorStore::insert` **从未被任何工具/命令调用**。
-- 后果：`VectorStore::entries_` 永远空，`ContextManager.cpp:331` 的 `count() > 0` 守卫永远 false，语义召回分支**从未执行**。最重的基础设施（接口/实现/chunker/embedding/dirty 标记/风格冲突解决全写好了）却无一条路径把内容喂进向量库。PLAN.md:269「章节写入后增量更新」从未实现。
-
-**A3. 「三层相关性融合排序 0.5/0.2/0.3」仅存于 PLAN.md，代码零实现** ✅ 已处理
-- `PLAN.md:262-266` 定义了 0.5/0.2/0.3 权重融合——这一设计对写小说 Agent 无实用价值（LLM 看到的是排序后的文本，无法利用数值权重）。批次⑤已采用更实用的方案：分层标签 + chapter_id 去重。PLAN.md 中相关描述已删除。
-
-
-**【✅ 已修复】A4. 摘要 500 字上限——长期一致性无法承载**
-- `ContextManager.cpp:42`：`kCompactSystemPrompt` 末尾「总长度控制在 500 字以内」；`:607` 项目设定参考也截断到 500 字节。
-- 后果：500 字要承载角色决策/情节转折/世界观变更/未解决伏笔/待办+风格样本六类信息，对几十万字长篇远远不够。「主角第 5 章决定隐藏身份」这类关键设定极可能在压缩中丢失，后续章节穿帮。
-
-**【✅ 已修复】A5. project.json 错路径致 mtime 一致性保障整条失效【已核实】**
-- `ContextManager.cpp:127/155/219/224` 三处写死 `/project.json`，但实际元数据文件是 `novel.json`（`ProjectIO.cpp:24` `kNovelJson`，`ProjectManager.cpp:62` 用 novel.json 判有效项目）。
-- 后果：`last_write_time(".../project.json")` 因文件不存在必然置 `ec`，`isVectorStoreStale()` 永远返回 false，`saveSessionState/loadSessionState` 的 `project_mtime` 永远 0 → 「Project 修改后清空旧摘要」的保障（`current_mtime > 0 && meta.project_mtime > 0`）永远不成立。**用户改了角色名后继续写，含旧名字的摘要不会被清空，LLM 基于矛盾设定写作。** 这是最危险的静默失效。
-
-**【✅ 已修复（2026-06-29 复核补齐覆盖）】A6. 跨实体引用无完整性保护——删除/更新可致 ID 悬空**
-- `Relationship.target_character_id`、`Setting.related_characters`、`Chapter.pov_characters`、`PlotThread.related_characters` 全是裸 `std::string` ID，无任何外键约束。全库 grep `dangling|orphan|referential` 零命中。
-- `UpdateChapterTool`/`UpdateWorldRuleTool`/`UpdateSettingTool` 更新关联 ID 时不校验存在性。对长篇（角色多、关系网复杂）会直接导致设定崩溃。
-- **2026-06-29 复核**：初版软校验（warn 不阻断）已覆盖 create/update_chapter/character/setting/world_rule/plot_thread，但遗漏评审点名的 `update_character_relationships.target_character_id`、`update_chapter_scenes` 的 pov/participants/location/plot_thread_ids、`update_volume` 的引用字段。本次全部补齐，统一为软校验语义（warn 不阻断，悬空 ID 仍写入），配套测试验证。硬失败改造留待后续（需权衡"先建实体再关联"工作流）。
-
-**【✅ 已修复】A7. 5 个核心模型对 LLM 不可写——模型层与工具层割裂**
-- `ChapterTools.cpp:309` 注释「不在白名单中的字段→静默忽略（包括 scenes）」→ `update_chapter` **无法修改 scenes**。
-- `CharacterTools.cpp:188-213` 白名单**不含 `relationships`** → `update_character` 无法维护角色关系。
-- `CharacterDevelopment`（弧光追踪）、`Volume`（卷纲）、`PlotThread`（剧情线）**无任何写入工具**，只能用户手改 JSON。
-- 后果：10+ 模型中 5 个（Scene/Volume/PlotThread/Relationship/CharacterDevelopment）对 LLM 不可写，与「Agent 自主写小说」定位严重脱节。`PromptContextBuilder.cpp:443-484` 还对 development 做了时间线过滤，说明设计本意是要用它做弧光追踪，但工具层没接上。
-
-**【✅ 已修复】A8. 完全没有 delete/remove 工具**
-- 全 `tools/` grep `delete|remove` 只在 ShellTools 黑名单命中。无法废弃角色/章节/设定，只能 `update_*` 清空字段或绕道 Shell 删文件（更危险）。
-
-**【✅ 已修复】A18. 并行编排误判 + 子 Agent 能力不足——一致性检查场景反而做不好**
-- `AgentOrchestrator.h:46-50`：`shouldParallelize` 含「所有/检查/分析」即返回 true。写小说常言「把所有角色语气改紧张」「检查这段错别字」→ 误判触发 5 个子 Agent 空跑（`AgentOrchestrator.cpp:27-37` 遍历全部内置模板），成本 5-6 倍。
-- `AgentOrchestrator.cpp:163`：SubAgent `max_tool_rounds=3`，chapter-consistency 要跨章对比，3 轮最多读 3 章就得结论，**无法做跨章节一致性检查**。
-- `IMessageProcessor.cpp:236-266`：并行模式**完全绕过 ContextManager**，不调 assemble，不注入项目设定/角色发展/世界观——而这些都是一致性检查的核心数据。子 Agent 用只读工具却看不到 `get_character` 之外的角色发展时间线。
-- 后果：「检查全书一致性」这个并行编排本应擅长的场景，从检测到执行到汇总全程脱节。
-
 ### 中严重度
 
-**【✅ 已修复】A9. 降级纯贪心截断，不识别「设定类消息」** — `ContextManager.cpp:658-724` 从新到旧贪心，用户第 3 轮确立的「主角不能杀人」铁律会被第 50 轮闲聊挤掉（无 /pin 自动提升机制）。
-
-**【✅ 已修复】A10. 向量检索用「最后一条 user 消息」做查询** — `ContextManager.cpp:346-353`，「继续」「改得更有张力」这类指令性短句召回质量差，续写场景基本失效。
-
-**【✅ 已修复】A11. NovelChunker 中文适配缺陷** — `NovelChunker.cpp:227-229` 场景标记只认 Markdown `## Scene N`（漏判中文 `※/～/————/第N节`）；`:348` 段落只认空行（中文单换行连排退化成单超长 chunk，无硬切兜底）；`:374-389` overlap 按字节 substr，UTF-8 中文中间断字节产乱码喂嵌入 API（`EmbeddingGenerator.cpp:176` 同病）。目标语种是中文却全程按字节操作。
-
 **【⏭ 暂缓】A12. 嵌入刷新时机缺失** — 章节/角色更新后向量不自动失效，staleness 只看（且路径错的）project.json，颗粒度不足。
-
-**【✅ 已修复】A13. word_count/current_word_count 无写入点** — `Chapter.h:55`、`Project.h:49` 全库只有 from_json 读取，`get_project_status` 展示给 LLM 的进度是假数据。
-
-**【✅ 已修复】A14. CharacterDevelopment 通道断开** — 见 A7，弧光追踪字段能读不能写。
-
-**【✅ 已修复】A15. 32KB 截断在 JSON 字符串中间切割** — `ToolPipeline.cpp:55-67` 在已 dump 的 JSON 字符串上找 `,/}/]` 截断当 preview，几乎必然产非法 JSON 片段；`read_chapter` 中文长章节（6000-10000 字）静默丢尾部。应改为对象层面截断。
-
-**【✅ 已修复】A19. 汇总策略截断 800 字** — `ISynthesisStrategy.h:43`，chapter-consistency 产出的详细不一致清单被腰斩，汇总质量下降。
 
 ### 低严重度
 
 **【⏭ 暂缓】A16. WorldRule 缺 contradicts_with/precedence** — 无法支撑自动化规则冲突检测。
-**【✅ 已修复】A17. list_chapters 不按 order 排序** — `ChapterTools.cpp:128-142`。
 
 ---
 
@@ -108,24 +54,8 @@ NovelAgent 的**模型层建模相当用心**（Chapter 的 goal/conflict/foresh
 
 ### 高严重度
 
-**【✅ 已修复】B1. writeText 非原子——所有持久化经此【已核实】**
-- `FileUtils.cpp:21-27`：直接 `std::ofstream f(path); f << content;`，无 write-to-temp-then-rename，无 fsync。
-- 被**所有持久化**复用：`ProjectIO::saveJsonFile`（进而 `ProjectIO::save` 连写 6 个 JSON）、`SessionPersistence`、`VectorStore::saveToFile`、`writeChapter`。
-- 后果：`ProjectIO::save` 写到第 3 个文件时崩溃 → 该文件半截 JSON，`loadJsonFile` 抛 parse_error 返回 nullopt，**对应实体整体丢失**（characters.json 损坏 = 所有角色消失）。应至少改 `writeText` 为写 `.tmp` 再 `fs::rename`。
-
-**【✅ 已修复】B2. 会话仅退出时保存——运行中途崩溃丢全部本轮对话【已核实】**
-- `ReplHandler.cpp:443/480` 是 `saveSessionState()` 仅有的两个调用点，都在退出路径。`Agent::processUserMessage`（`Agent.cpp:259-357`）全程无 save。
-- `NovelAgentApp.cpp:71-82` `saveConversationIfNeeded` 是**空壳**，body 只有 `// TODO: Phase 4 添加增量保存`。
-- 后果：用户写完一章（多轮 tool_call + 数千字生成），只要没退出 REPL，对话历史全在内存，崩溃即丢。重启后 Agent 不知写到哪、用户意图是什么，续写断裂。CONTEXT_MANAGEMENT_SYSTEM.md 第 7.2 节声称「自动保存」，文档与实现不符。
-
-**【✅ 已修复】B3. SubAgent 超时 use-after-free——注释自承认【已核实】**
-- `SubAgent.cpp:81-88`：超时后 `cancelled_=true`，再等 `timeout*2`，仍未完成则「放弃等待」返回。但 lambda 捕获 `[this]`（`:36`），SubAgent 返回后被销毁，异步线程仍可能在 HTTP 返回后访问 `this->conversation_/cancelled_`。`:87-88` 注释明确承认「此 SubAgent 返回后将被销毁」却未解决。一次超时的子任务可能撞坏主 Agent 内存。
-
 **【⏭ 暂缓】B4. write_chapter 全量覆写无版本/备份/回退**
 - `ChapterTools.cpp:68-81` + `ProjectIO.cpp:249-255` 直接覆盖磁盘，无快照。LLM 一次错误 `write_chapter` 永久毁一章正文。`Chapter.status` 支持 outlined/drafting/revised/final 状态机，却无草稿/正式版分离存储。
-
-**【✅ 已修复】B5. 主循环无超时——HTTP 半开挂起永久卡死**
-- `IMessageProcessor.cpp:114-118`：SerialProcessor 构造 config 时**不设 timeout**；`ToolCallLoop.cpp:158` 仅 `timeout > 0` 才走超时分支。SubAgent 有 120s 超时，**主循环反而没有**，保护不一致。TCP 半开/服务端卡死时主线程无限阻塞，一次卡死丢整段创作上下文。
 
 ### 中严重度
 
@@ -133,47 +63,27 @@ NovelAgent 的**模型层建模相当用心**（Chapter 的 goal/conflict/foresh
 
 **【⏭ 暂缓】B7. 无文件锁——多 Agent/多进程互相覆盖** — `ProjectIO::save` 是 read-modify-write 全量覆盖；`BackendServer.cpp:289` 每请求 `new tempAgent`。两进程开同一项目，A 写完 B 用旧内存覆盖，A 的修改静默丢失。
 
-**【✅ 已修复】B8. 异常后状态卡 Thinking 永久拒输入——真实死锁** — `Agent.cpp:331-346`：`processUserMessage` 在 `transition(Thinking)` 后、`transition(Idle)` 前抛异常，异常穿透到 REPL catch，但 `state_` 仍停 Thinking。下一轮 `canAcceptInput()` 返回 false，Agent **永久拒输入直到重启**。`isError()` 自动恢复只处理 Error 不处理 Thinking。
-
 ---
 
 ## 维度三：安全与工具合理性
 
-### 高严重度
-
-**【✅ 已修复（2026-06-29 复核收紧）】C1. Shell 工具过度授权——与写作任务无必要关联**
-- `ShellTools.cpp:68` 用 `CreateProcessA` 执行 PowerShell。项目已有完整 `ProjectIO` + 结构化工具覆盖文件/数据操作，**Shell 在写作任务中无不可替代用途**，却打开任意命令执行面。对一个能被 LLM prompt 注入触发的工具，这是明显过度授权。
-
-**【✅ 已修复（2026-06-29 复核收紧）】C2. 危险命令黑名单子串匹配易绕过**
-- `ShellTools.cpp:23-45` 用 `lower.find(kw) != npos`。缺 `Copy-Item/Move-Item/Rename-Item/cmd/wscript/cscript/mshta/certutil -decode` 等向量；字符串拼接（`& "Invoke-Express"+"ion"`）可绕；可读/覆盖任意文件。正确做法是白名单（只读 cmdlet）或直接移除该工具。
-- **2026-06-29 复核**：初版白名单含 `foreach-object`（可执行脚本块）且注入拦截未覆盖 `{}`/`;`/`&`。本次移除 `foreach-object`、入口拦截这四类字符；并修复预存 bug——原 token 解析把段内参数（如 `config.json`）当 cmdlet 校验致带参数命令被误拦，改为只校验每段首个 token。新增 `test_shell_tools` 黑盒测试 5 用例。
-
 ### 中严重度
 
-**【✅ 已修复（见 A6）】C3. 跨实体 ID 引用** — 见 A6，update_* 写入可破坏一致性。
 **【⏭ 暂缓】C4. additionalProperties 只 warn 不阻断** — `ParameterValidator.cpp:114-135`，LLM 拼错字段（如 `charcter_id`）被静默吞，浪费一轮工具调用。
+
 **【⏭ 暂缓】C5. update_* fields schema schema 是空 object** — LLM 看不到可更新字段清单，靠 description 猜，易传错字段名被静默忽略。应在 schema 用 propertyNames 列出。
-**【✅ 已修复】C6. create_chapter 不校验 ID 唯一性** — `ChapterTools.cpp:188-191`，非标准 ID（如 `ch-prologue`）致 `stoi` 失败被吞，编号回退冲突。对比 CreateCharacter 有重名检查。
+
 **【⏭ 暂缓】C7. 非 Windows 分支无超时且 powershell 可能不存在** — `ShellTools.cpp:103-113`，跨平台不完整。
 
 ### 低严重度
 
 **【⏭ 暂缓】C8. Style 个旋钮过度工程化且无 enum 约束** — `Style.h:13-18` 全自由字符串，LLM 难稳定区分 6 个 density/distance 类参数；对比 Character.role 用了 stringEnum，风格不一致。
+
 **【⏭ 暂缓】C9. ToolPipeline全量拷贝 getDefinitions 查找 schema** — `ToolPipeline.cpp:37`，应用 map 缓存。
 
 ---
 
 ## 维度四：架构抽象与过度设计 + 静默失效
-
-### 高严重度
-
-**【✅ 已修复】D1. 状态机从未触发——装饰性代码**
-- `AgentState.cpp:25-67` 定义完整转换图，但全库 grep `state_.transition` 仅 `Agent.cpp:316/343/345/375/389` 用到 **Idle 和 Thinking 两个状态**。`AwaitingTool/WaitingUser/Error/Fatal` 从未触发——`Agent.cpp:341` 注释甚至承认「isError 在 processor 内部被置位」，但 SerialProcessor 全程不持有 state_ 引用，根本无法置位。
-- 后果：状态机提供虚假可观测性保证。`WaitingUser` 本可用于「覆盖章节前确认」（写小说很需要的安全机制）却完全没实现，与 B4「无回退」叠加放大毁稿风险。
-
-**【✅ 已修复】D2. config 字段名漂移——用户配置静默失效【已核实】**
-- `config.json` 用 `context_window`，但 `AppConfig.h:19/26` 字段名是 `max_context_tokens`（`NLOHMANN_DEFINE_TYPE_INTRUSIVE` 严格匹配）。CHANGELOG 记录 commit 51b7616 重命名，但**未迁移旧 config.json**。
-- 后果：用户按文档配 `context_window: 65536`（DeepSeek 真实窗口），系统按默认 131072 算预算，塞超出真实窗口 → API 400。与 A5 同属「字段名漂移」类静默失效。
 
 ### 中严重度
 
@@ -199,7 +109,7 @@ NovelAgent 的**模型层建模相当用心**（Chapter 的 goal/conflict/foresh
 
 ---
 
-## 严重度汇总表
+## 附：原始严重度汇总（含已修复项）
 
 | 维度 | 高 | 中 | 低 |
 |------|----|----|-----|
@@ -212,13 +122,15 @@ NovelAgent 的**模型层建模相当用心**（Chapter 的 goal/conflict/foresh
 
 ---
 
-## 建议的修复优先级（仅排序，不展开实现）
+## 建议的修复优先级（原始，已全部处理）
 
 1. **第一优先——堵住会丢用户数据的洞**：B1（writeText 原子化）、B2（会话增量保存）、A5（project.json→novel.json）、D2（config 字段迁移）。这四项是静默失效/数据丢失，修复成本低、收益最高。
 2. **第二优先——修掉内存安全与死锁**：B3（SubAgent 超时不放弃等待，或改为不捕获 this）、B5（主循环加超时）、B8（异常时强制 transition(Idle/Error)）。
 3. **第三优先——兑现长篇一致性核心承诺**：A1（compact 真正删除消息）、A2+A3（接通向量索引 + 三层融合排序，或诚实地从文档/代码中移除该承诺）、A7+A8（补齐 Scene/Relationship/PlotThread/delete 工具）、A6（引用完整性校验）。
 4. **第四优先——收紧安全面**：C1+C2（Shell 改白名单或移除）、A15（截断改对象层面）、D1（实现 WaitingUser 覆盖确认，呼应 B4 回退）。
 5. **第五优先——清理抽象与文档**：D4（IStorageBackend 去掉或重定向到 IVectorStore）、D5/D6（并行模式配置与 token 传递）、D8（统一 vectors 存储说辞）。
+
+> 上述优先级中标注的 35 项均已修复。留此列表供了解当时修复顺序的决策逻辑。
 
 ---
 
@@ -237,5 +149,5 @@ NovelAgent 的**模型层建模相当用心**（Chapter 的 goal/conflict/foresh
 ## 后续使用方式
 
 - 本报告不修改任何业务代码，所有断言基于源码静态核实（5 个最关键断言经人工二次确认，以【已核实】标注）。
-- 每个高严重度条目可单独开修复任务；修复后按项目工作流（更新 CHANGELOG → commit → push）并在 `RESOLVED.md` 记录。
-- 索引已登记在 `REVIEW_NOTES.md` 审查历史表。
+- 暂缓问题的详细分析保留在本文件中，供后续改版时参考。
+- 已修复的 35 项汇总 → [REVIEW_STATUS.md#二设计合理性评审](./REVIEW_STATUS.md)
