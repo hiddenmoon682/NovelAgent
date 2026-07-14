@@ -61,9 +61,9 @@ ToolCallLoopResult ToolCallLoop::run(
     const ToolCallLoopConfig& config,
     const std::vector<llm::Message>* initial_messages)
 {
-    ToolCallLoopResult result;
-    ToolPipeline pipeline(tools_, conversation);
-    std::unordered_map<std::string, int> call_history;
+    ToolCallLoopResult result;                                      // 最终结果（含 LLM 回复、token 统计、超时/取消标志）
+    ToolPipeline pipeline(tools_, conversation);                    // 工具执行管线：校验参数 → 执行 → 截断结果 → 生成 diff
+    std::unordered_map<std::string, int> call_history;              // 调用历史：tool_name:args_json → 调用次数，用于重复检测
 
     // CRIT-2: 重置反思计数器
     reflection_rounds_ = 0;
@@ -85,6 +85,7 @@ ToolCallLoopResult ToolCallLoop::run(
                 "3. 我还需要获取哪些信息？需要调用什么工具？\n"
                 "4. 我的计划是什么？\n\n"
                 "请先输出你的分析，然后我会让你调用工具来执行计划。";
+                
             const auto& think_msgs = (initial_messages && !initial_messages->empty())
                 ? *initial_messages : conversation.messages();
             auto think_response = client_.chatNonStreaming(think_msgs, {}, thinking_prompt);

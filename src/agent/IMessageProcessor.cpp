@@ -44,8 +44,8 @@ SerialProcessor::SerialProcessor(
 //   5. 配置 ToolCallLoop
 //      ├─ max_rounds:           最多 tool_call 轮数（防无限循环）
 //      ├─ all_rounds_streaming: 首轮流式，后续非流式（兼容 Mock 环境）
-//      ├─ max_repeated_calls:   同一工具连续重复调用上限（循环检测, Fix #2）
-//      └─ token_warning_threshold: token 用量告警阈值（0=不监控, Fix #4）
+//      ├─ max_repeated_calls:   同一工具连续重复调用上限（循环检测）
+//      └─ token_warning_threshold: token 用量告警阈值（0=不监控）
 //
 //   6. 执行 ToolCallLoop
 //      └─ loop.run() 驱动 LLM ↔ 工具的多轮交互：
@@ -88,15 +88,15 @@ SerialProcessor::Result SerialProcessor::process(
 
     // ── 步骤 5: 配置 ToolCallLoop ──
     // 创建 ToolCallLoop 实例并设置运行参数。
-    ToolCallLoop loop(client_, registry_, tracer_, state_); // D1.1: 传递 StateMachine 用于工具执行状态转换
+    ToolCallLoop loop(client_, registry_, tracer_, state_); // 传递 StateMachine 用于工具执行状态转换
     ToolCallLoopConfig config;
     config.max_rounds = max_tool_rounds_;              // 最大 tool_call 轮数
     config.all_rounds_streaming = false;               // 首轮流式 + 后续非流式
-    config.max_repeated_calls = 3;                     // Fix #2: 循环检测上限
-    config.timeout = std::chrono::seconds(0);          // A1: 串行路径不设 ToolCallLoop 级超时，避免每次请求创建线程。
-                                                       //     HTTP 客户端已有 180s read_timeout 兜底网络挂起。
-                                                       //     子任务（SubAgent）的超时由各自 config 独立管理。
-    config.token_warning_threshold = 0;                // Fix #4: 默认不监控 token
+    config.max_repeated_calls = 3;                     // 循环检测上限
+    config.timeout = std::chrono::seconds(0);          // 串行路径不设 ToolCallLoop 级超时，避免每次请求创建线程。
+                                                       // HTTP 客户端已有 180s read_timeout 兜底网络挂起。
+                                                       // 子任务（SubAgent）的超时由各自 config 独立管理。
+    config.token_warning_threshold = 0;                // 默认不监控 token
 
     // ── 步骤 6: 执行 ToolCallLoop ──
     // loop.run() 是多轮交互的核心：
@@ -226,7 +226,7 @@ ParallelProcessor::~ParallelProcessor() = default;
 
 void ParallelProcessor::setSystemPrompt(const std::string& p) {
     system_prompt_ = p;
-    // CRIT-7: 使用 setMainPrompt 而非重建编排器，保留已注入的策略配置
+    // 使用 setMainPrompt 而非重建编排器，保留已注入的策略配置
     // （setParallelDetector/setDecompositionStrategy/setSynthesisStrategy 等）。
     // 仅在编排器尚未创建时的首次调用才真正构造。
     if (orchestrator_) {
@@ -243,10 +243,10 @@ ParallelProcessor::Result ParallelProcessor::process(
 {
     Result r;
 
-    // Issue 25: 并行模式状态机支持 — 与 SerialProcessor 对齐
+    // 并行模式状态机支持 — 与 SerialProcessor 对齐
     if (state_) state_->transition(AgentState::Thinking);
 
-    // A18.3: 并行模式补 ContextManager — 与 SerialProcessor 一样注入动态上下文
+    // 并行模式补 ContextManager — 与 SerialProcessor 一样注入动态上下文
     try {
         std::string effective_prompt = system_prompt_;
         if (context_manager_) {
@@ -262,7 +262,7 @@ ParallelProcessor::Result ParallelProcessor::process(
     }
 
     try {
-        // Issue 25: tracer 支持 — 记录并行编排关键事件
+        // tracer 支持 — 记录并行编排关键事件
         if (tracer_) tracer_->record("parallel_start", 0, 0,
             {{"input", input.substr(0, 200)}});
 
@@ -270,7 +270,7 @@ ParallelProcessor::Result ParallelProcessor::process(
         conversation.addUser(input);
         conversation.addAssistant(text);
 
-        // CRIT-1: 注入子任务工具调用详情，使后续 LLM 轮次能看到并行编排中执行的查询链
+        // 注入子任务工具调用详情，使后续 LLM 轮次能看到并行编排中执行的查询链
         {
             const auto& sub_tasks = orchestrator_->lastSubTasks();
             if (!sub_tasks.empty()) {
@@ -298,7 +298,7 @@ ParallelProcessor::Result ParallelProcessor::process(
         r.raw_response.content = text;
         r.raw_response.finish_reason = "stop";
 
-        // D6: 恢复并行模式的上下文预算管理——从 orchestrator 收集其自身的 LLM 调用 token
+        // 恢复并行模式的上下文预算管理——从 orchestrator 收集其自身的 LLM 调用 token
         // （串行回退 + 汇总 LLM；子任务 SubAgent 使用独立 LLMClient，其 token 不计入以避免竞争）。
 
         // Token 校准回传（必须在 recordUsage 之前，原理同 SerialProcessor）
@@ -317,7 +317,7 @@ ParallelProcessor::Result ParallelProcessor::process(
                 orchestrator_->lastOutputTokens());
         }
 
-        // Issue 28: 收集子任务 token 统计
+        // 收集子任务 token 统计
         if (context_manager_) {
             int sub_input = orchestrator_->lastSubInputTokens();
             int sub_output = orchestrator_->lastSubOutputTokens();
@@ -341,7 +341,7 @@ ParallelProcessor::Result ParallelProcessor::process(
         }
     }
 
-    // Issue 25: 恢复状态
+    // 恢复状态
     if (state_) {
         if (state_->isError()) {
             state_->transition(AgentState::Idle);
