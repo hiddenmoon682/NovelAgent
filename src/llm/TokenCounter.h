@@ -102,9 +102,10 @@ private:
         int total_actual = 0;         // 累计实际值（调试用）
     };
 
-    // EMA 平滑系数（α=0.3，即新观测值权重 30%，历史权重 70%）。
-    // 约 7 次观测后收敛到接近真实值，对单次异常值不敏感。
-    static constexpr double kAlpha = 0.3;
+    // 自适应 EMA：前 kFastObservations 次用较大 α 快速逼近，之后用小 α 稳定跟踪。
+    static constexpr int kFastObservations = 5;
+    static constexpr double kAlphaFast = 0.5;
+    static constexpr double kAlphaSlow = 0.1;
 
     // 修正因子安全钳位 [min, max]。
     // 正常情况下 ratio 通常在 [0.5, 2.0] 之间，极端值直接截断以防污染 EMA。

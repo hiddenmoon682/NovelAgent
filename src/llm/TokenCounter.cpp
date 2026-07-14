@@ -214,7 +214,8 @@ void TokenCounter::calibrate(const std::string& model, int estimated, int actual
     if (mc.observations == 0) {
         mc.correction = ratio;
     } else {
-        mc.correction = kAlpha * ratio + (1.0 - kAlpha) * mc.correction;
+        double alpha = (mc.observations < kFastObservations) ? kAlphaFast : kAlphaSlow;
+        mc.correction = alpha * ratio + (1.0 - alpha) * mc.correction;
     }
 
     mc.observations++;

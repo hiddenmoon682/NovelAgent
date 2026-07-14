@@ -6,6 +6,7 @@
 // 可独立单元测试，无需构造 ContextManager / Project / FileStorageBackend。
 
 #include "agent/ContextManagerTypes.h"
+#include "llm/TokenCounter.h"
 
 namespace agent {
 
@@ -89,12 +90,37 @@ public:
     // 设置当前对话的总 token 数（由 assemble() 在步骤 2 算完后写入）。
     void setCurrentTotalTokens(int total) { current_total_tokens_ = total; }
 
+    // 增量更新消息 token 原始值缓存（纯启发式，不校准），查询时统一乘当前校正因子。
+    // 正常追加消息时只计算新增部分 O(delta)，compaction/rewind 后自动全量重算 O(n)。
+    int updateMessageTokens(const std::vector<llm::Message>& messages,
+                            const std::string& model,
+                            const llm::TokenCounter* calibrator) {
+        int current_count = static_cast<int>(messages.size());
+        if (current_count != last_message_count_) {
+            if (current_count < last_message_count_ || last_message_count_ == 0) {
+                // 全量重算：首次调用/compaction/rewind/恢复后
+                accumulated_raw_tokens_ = llm::TokenCounter::countMessages(messages);
+            } else {
+                // 增量：只计算新增消息的原始值
+                std::vector<llm::Message> new_msgs(messages.begin() + last_message_count_, messages.end());
+                accumulated_raw_tokens_ += llm::TokenCounter::countMessages(new_msgs);
+            }
+            last_message_count_ = current_count;
+        }
+        // 返回时统一乘当前校正因子，避免因子漂移
+        return (calibrator && !model.empty())
+            ? calibrator->apply(model, accumulated_raw_tokens_)
+            : accumulated_raw_tokens_;
+    }
+
     // 重置全部会话统计。
     void reset() {
         state_ = SessionTokenState{};
         current_context_size_ = 0;
         last_output_tokens_ = 0;
         current_total_tokens_ = 0;
+        accumulated_raw_tokens_ = 0;
+        last_message_count_ = 0;
     }
 
     // Issue 3: 从持久化恢复 Token 统计（供 ContextManager::loadSessionState 使用）。
@@ -103,6 +129,8 @@ public:
         current_context_size_ = context_size;
         last_output_tokens_ = 0;  // 最近一次输出是运行时状态，不持久化
         current_total_tokens_ = 0;
+        accumulated_raw_tokens_ = 0;  // 缓存不持久化，下次 assemble 全量重算
+        last_message_count_ = 0;
     }
 
     // ── 四级可配置阈值 ──
@@ -115,9 +143,11 @@ public:
 
 private:
     SessionTokenState state_;
-    int current_context_size_ = 0;   //  最后一次请求的实际上下文 token 数
-    int last_output_tokens_ = 0;     //  最后一次请求的输出 token 数
-    int current_total_tokens_ = 0;   //  当前对话的总 token 数（由 assemble 设置）
+    int current_context_size_ = 0;       //  record() 写入的上次请求 input_tokens，check() 无参版用量检查用
+    int last_output_tokens_ = 0;         //  record() 写入的上次请求 output_tokens
+    int current_total_tokens_ = 0;       //  setCurrentTotalTokens() 写入，调用方（assemble）刚算出的 sys+msg 总和，供校准回传和 usagePercent()
+    int accumulated_raw_tokens_ = 0;     //  updateMessageTokens() 增量累计的原始消息 token 数（纯启发式，未校准），查询时统一乘当前校正因子
+    int last_message_count_ = 0;         //  updateMessageTokens() 上次缓存时的消息条数，用于检测增长/缩减以决定走增量还是全量
 
     // 四级阈值（可配置，供 check()/check(int) 使用）
     int warning_threshold_ = 60;            //  Warning 阈值，默认 60%

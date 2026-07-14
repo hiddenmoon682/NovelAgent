@@ -266,10 +266,10 @@ void test_cal_ema_smoothing() {
     auto c2 = cal.getCorrection("m");
 
     CHECK(c2 < c1);
-    CHECK_NEAR(c2, 0.77, 0.001);
+    CHECK_NEAR(c2, 0.75, 0.001);
 
     cal.calibrate("m", 100, 90);
-    CHECK_NEAR(cal.getCorrection("m"), 0.809, 0.001);
+    CHECK_NEAR(cal.getCorrection("m"), 0.825, 0.001);
 
     PASS();
 }
@@ -285,7 +285,7 @@ void test_cal_multi_model_isolation() {
     CHECK_NEAR(cal.getCorrection("model-b"), 1.2, 0.001);
 
     cal.calibrate("model-a", 100, 90);
-    CHECK_NEAR(cal.getCorrection("model-a"), 0.83, 0.001);
+    CHECK_NEAR(cal.getCorrection("model-a"), 0.85, 0.001);
     CHECK_NEAR(cal.getCorrection("model-b"), 1.2, 0.001);
 
     PASS();

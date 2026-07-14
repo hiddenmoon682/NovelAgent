@@ -328,7 +328,7 @@ ContextAssembly ContextManager::assemble(
 
     // ── 步骤 3（合并原步骤 2+3）: 实时用量检查 + 自动压缩 + 告警 ──────
     result.messages = conversation.messages();
-    int msg_tokens = llm::TokenCounter::countMessagesCalibrated(result.messages, model_name_, calibrator_);
+    int msg_tokens = tracker_.updateMessageTokens(result.messages, model_name_, calibrator_);
     result.total_tokens = sys_tokens + msg_tokens;
 
     int model_limit = tracker_.modelLimit();
@@ -346,7 +346,7 @@ ContextAssembly ContextManager::assemble(
             if (cr.messages_compacted > 0) {
                 // 压缩成功 — 重新计算（conversation 已被 compact() 修改）
                 result.messages = conversation.messages();
-                msg_tokens = llm::TokenCounter::countMessagesCalibrated(result.messages, model_name_, calibrator_);
+                msg_tokens = tracker_.updateMessageTokens(result.messages, model_name_, calibrator_);
                 result.total_tokens = sys_tokens + msg_tokens;
                 spdlog::info("[ContextManager] 自动压缩完成: {} 条 → 摘要, 新用量 {} tokens",
                              cr.messages_compacted, result.total_tokens);
