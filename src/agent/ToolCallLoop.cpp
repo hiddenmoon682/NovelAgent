@@ -199,8 +199,9 @@ ToolCallLoopResult ToolCallLoop::run(
             // ── 正常路径：追加 assistant + 执行工具 + 调 LLM ──
             llm::Message assistant;
             assistant.role = llm::MessageRole::Assistant;
-            assistant.content = response.content;
-            assistant.tool_calls = response.tool_calls;
+            assistant.content = std::move(response.content);
+            assistant.reasoning_content = std::move(response.reasoning_content);
+            assistant.tool_calls = response.tool_calls;  // 仍被后续 tracer 和 pipeline 使用
             conversation.add(std::move(assistant));
 
             if (tracer_) {

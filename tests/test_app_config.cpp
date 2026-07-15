@@ -99,6 +99,42 @@ void test_to_json_writes_only_new_name() {
     PASS();
 }
 
+void test_thinking_config_defaults() {
+    TEST("Thinking — enable_thinking 默认 false, reasoning_effort 默认 high");
+    ProviderConfig c;
+    CHECK(c.enable_thinking == false);
+    CHECK(c.reasoning_effort == "high");
+    PASS();
+}
+
+void test_thinking_config_roundtrip() {
+    TEST("Thinking — JSON 往返");
+    ProviderConfig c;
+    c.name = "deepseek";
+    c.enable_thinking = true;
+    c.reasoning_effort = "max";
+    nlohmann::json j = c;
+    CHECK(j["enable_thinking"] == true);
+    CHECK(j["reasoning_effort"] == "max");
+
+    ProviderConfig c2 = j.get<ProviderConfig>();
+    CHECK(c2.enable_thinking == true);
+    CHECK(c2.reasoning_effort == "max");
+    PASS();
+}
+
+void test_thinking_config_missing() {
+    TEST("Thinking — 旧 config 缺失字段使用默认值");
+    nlohmann::json j = {
+        {"name", "deepseek"},
+        {"api_key", "sk-xxx"},
+    };
+    ProviderConfig c = j.get<ProviderConfig>();
+    CHECK(c.enable_thinking == false);   // 缺失→默认 false
+    CHECK(c.reasoning_effort == "high"); // 缺失→默认 high
+    PASS();
+}
+
 void test_roundtrip_legacy_config_upgraded() {
     TEST("D2 — 旧 config.json 往返：加载→保存→重载，值一致且已升级");
     cleanup();
@@ -156,6 +192,9 @@ int main() {
     test_both_present_new_wins();
     test_missing_uses_default();
     test_to_json_writes_only_new_name();
+    test_thinking_config_defaults();
+    test_thinking_config_roundtrip();
+    test_thinking_config_missing();
     test_roundtrip_legacy_config_upgraded();
 
     cleanup();

@@ -98,6 +98,10 @@ nlohmann::json LLMClient::buildRequestBody(
 
     body["temperature"] = config_.temperature;
     body["max_tokens"] = config_.max_tokens;
+    if (config_.enable_thinking) {
+        body["thinking"] = nlohmann::json{{"type", "enabled"}};
+        body["reasoning_effort"] = config_.reasoning_effort;
+    }
     body["stream"] = stream;
 
     return body;

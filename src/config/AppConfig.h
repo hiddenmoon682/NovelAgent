@@ -25,6 +25,8 @@ struct ProviderConfig {
     double temperature = 0.7;
     int max_tokens = 4096;
     bool supports_cache_control = false; // 是否支持显式 cache_control 标记（Anthropic API 需开启）
+    bool enable_thinking = false;        // 是否启用 DeepSeek thinking 模式（默认关闭，token 消耗大）
+    std::string reasoning_effort = "high"; // 推理努力度: "high" / "max" / "medium" / "low"
 };
 
 // 手写序列化（替代 NLOHMANN_DEFINE_TYPE_INTRUSIVE）：
@@ -40,6 +42,8 @@ inline void to_json(nlohmann::json& j, const ProviderConfig& c) {
         {"temperature", c.temperature},
         {"max_tokens", c.max_tokens},
         {"supports_cache_control", c.supports_cache_control},
+        {"enable_thinking", c.enable_thinking},
+        {"reasoning_effort", c.reasoning_effort},
     };
 }
 
@@ -51,6 +55,8 @@ inline void from_json(const nlohmann::json& j, ProviderConfig& c) {
     c.temperature            = j.value("temperature", 0.7);
     c.max_tokens             = j.value("max_tokens", 4096);
     c.supports_cache_control = j.value("supports_cache_control", false);
+    c.enable_thinking        = j.value("enable_thinking", false);
+    c.reasoning_effort       = j.value("reasoning_effort", "high");
 
     // 上下文窗口字段：优先新名 max_context_tokens；
     // 旧 config.json 用 context_window，回退读取以保持向后兼容。

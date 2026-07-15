@@ -85,6 +85,7 @@ struct Message {
     std::vector<ToolCall> tool_calls;  // 工具调用列表（仅 assistant 角色使用）
     std::string tool_call_id;          // 关联的工具调用 ID（仅 tool 角色使用）
     std::string name;                  // 可选参与者名称
+    std::string reasoning_content;     // DeepSeek thinking 模式的推理过程（工具调用循环中使用）
     bool preserved = false;            // 内部标记：截断时优先保留（不参与 JSON 序列化）
 
     // ── 便捷工厂方法 ──
@@ -142,6 +143,9 @@ inline void to_json(nlohmann::json& j, const Message& msg) {
     if (!msg.name.empty()) {
         j["name"] = msg.name;
     }
+    if (!msg.reasoning_content.empty()) {
+        j["reasoning_content"] = msg.reasoning_content;
+    }
 }
 
 // Message 的 JSON 反序列化。
@@ -156,6 +160,7 @@ inline void from_json(const nlohmann::json& j, Message& msg) {
     }
     msg.tool_call_id = j.value("tool_call_id", "");
     msg.name = j.value("name", "");
+    msg.reasoning_content = j.value("reasoning_content", "");
 }
 
 // ============================================================================

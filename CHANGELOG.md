@@ -1,5 +1,24 @@
 # Changelog
 
+## [2026-07-15] 修复 DeepSeek reasoning_content 丢失问题 + 可配置 Thinking 模式
+
+> 修复了三处 reasoning_content 丢失问题：(1) Message 结构体缺少字段，
+> (2) ToolCallLoop 不复制 reasoning_content，(3) buildRequestBody 未请求思考模式。
+> 新增 ProviderConfig 中 enable_thinking / reasoning_effort 可配置项。
+
+### 核心改动
+- `Message.h`：新增 `reasoning_content` 字段及 to_json/from_json 序列化
+- `ToolCallLoop.cpp`：带 tool_calls 路径下复制 reasoning_content 到 assistant 消息
+- `AppConfig.h`：ProviderConfig 新增 `enable_thinking`（默认 false）+ `reasoning_effort`（默认 "high"）
+- `LLMClient.cpp`：buildRequestBody 中根据 enable_thinking 添加 thinking 参数
+- `test_app_config.cpp`：新增 3 个 thinking 配置测试
+- `test_tool_call_loop.cpp`：新增 reasoning_content 保留测试
+
+### 设计决策
+- reasoning_content 不持久化到 conversation.json（仅内存保留）
+- enable_thinking 默认关闭（opt-in，避免 token 浪费）
+- reasoning_effort 默认 "high"
+
 ## [2026-07-13] 工具自注册宏灵活化：新增 REGISTER_TOOL_NP 消除手动样板代码
 
 > 新增 `REGISTER_TOOL_NP` 宏，用于不需要 `Project` 指针的工具注册。

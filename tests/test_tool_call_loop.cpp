@@ -308,6 +308,71 @@ void test_state_machine_transitions() {
     PASS();
 }
 
+void test_reasoning_content_preserved() {
+    TEST("ToolCallLoop — reasoning_content 在工具调用循环中保留");
+    MockSeqLLMClient client;
+    // 第 1 轮：返回 reasoning_content + tool_call
+    {
+        llm::LLMResponse r;
+        r.content = "";
+        r.reasoning_content = "我需要先读取第一章的内容...";
+        r.finish_reason = "tool_calls";
+        llm::ToolCall tc;
+        tc.id = "call_1";
+        tc.function_name = "read_chapter";
+        tc.arguments = "{\"chapter_id\":\"ch-001\"}";
+        r.tool_calls.push_back(tc);
+        client.addResponse(r);
+    }
+    // 第 2 轮：最终文本回复（无 tool_calls）
+    {
+        llm::LLMResponse r;
+        r.content = "这是最终回复";
+        r.finish_reason = "stop";
+        client.addResponse(r);
+    }
+
+    agent::ToolRegistry registry;
+    auto mockTool = std::make_unique<MockReadTool>();
+    registry.registerBuiltInTool(std::move(mockTool));
+
+    g_read_calls = 0;
+    llm::Conversation conv;
+    conv.addUser("帮我分析第1章");
+
+    agent::ToolCallLoop loop(client, registry);
+    agent::ToolCallLoopConfig cfg;
+    cfg.max_rounds = 5;
+
+    auto result = loop.run(conv, registry.getToolDefinitions(), "", {}, cfg);
+    CHECK(!result.response.content.empty());
+
+    // 验证对话中保留了 reasoning_content（在 assistant 消息中）
+    bool found_reasoning = false;
+    for (const auto& msg : conv.messages()) {
+        if (msg.role == llm::MessageRole::Assistant && !msg.tool_calls.empty()) {
+            if (msg.reasoning_content == "我需要先读取第一章的内容...") {
+                found_reasoning = true;
+                break;
+            }
+        }
+    }
+    CHECK(found_reasoning);
+
+    // 验证最终退出消息（无 tool_calls）未被加入 conversation（符合 discard 规则）
+    // conversation 中应当只有 1 条带 tool_calls 的 assistant 消息，0 条不带 tool_calls 的
+    int assistant_with_tc = 0, assistant_without_tc = 0;
+    for (const auto& msg : conv.messages()) {
+        if (msg.role == llm::MessageRole::Assistant && !msg.tool_calls.empty())
+            ++assistant_with_tc;
+        if (msg.role == llm::MessageRole::Assistant && msg.tool_calls.empty())
+            ++assistant_without_tc;
+    }
+    CHECK(assistant_with_tc == 1);
+    CHECK(assistant_without_tc == 0);
+    PASS();
+}
+
 int main() {
     std::cout << "ToolCallLoop 测试:\n";
 
@@ -315,6 +380,7 @@ int main() {
     test_direct_text_response();
     test_repeated_call_reflection();
     test_reflection_exhausted();
+    test_reasoning_content_preserved();
     test_cancellation();
     test_state_machine_transitions();
 
