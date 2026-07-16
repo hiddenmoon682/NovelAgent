@@ -95,7 +95,7 @@ private:
     std::string system_prompt_;
 
     // 上下文管理器（可选指针，允许为 nullptr）。
-    // 负责处理 RAG 检索、对话历史摘要、滑动窗口等动态上下文策略。
+    // 负责构建动态 system prompt（项目上下文）、Token 追踪、对话压缩、会话持久化。
     // 为 buildEffectivePrompt() 提供额外的系统级上下文。
     class ContextManager* context_manager_ = nullptr;
 

@@ -1,5 +1,23 @@
 # Changelog
 
+## [2026-07-16] 架构审查文档整理 + 注释修正
+
+> 系统提示词所有权审查、initial_messages 参数审查、命名问题审查等三份文档写入 `docs/review/`。
+> 将 `PLAN_MODE_CLEANUP_PLAN.md` 从 design 移至 review。
+> 更新 `IMessageProcessor.h` 中 ContextManager 过时注释（移除"RAG 检索"引用）。
+
+### 新增审查文档
+- `docs/review/SYSTEM_PROMPT_OWNERSHIP_REVIEW_2026-07-16.md`：系统提示词三副本问题分析与 Conversation 统一管理决议
+- `docs/review/INITIAL_MESSAGES_REVIEW_2026-07-16.md`：`ToolCallLoop::initial_messages` 参数陈旧快照、死代码等问题分析
+- `docs/review/NAMING_ISSUES_REVIEW_2026-07-16.md`：`effective_prompt` 命名歧义分析与修复建议
+
+### 文档整理
+- `docs/design/PLAN_MODE_CLEANUP_PLAN.md` → `docs/review/PLAN_MODE_CLEANUP_PLAN.md`（按 review 分类归档）
+- 删除 `docs/design/thinking_step_detector.md`（已纳入 plan_mode.md 不再独立维护）
+
+### 注释修正
+- `IMessageProcessor.h`：ContextManager 成员注释更新，移除过时"RAG 检索"描述，改为准确职责：动态 system prompt / Token 追踪 / 对话压缩 / 会话持久化
+
 ## [2026-07-16] 修复工具注册缺失 + 清理架构审查文档
 
 > 修复 4 个工具缺少 REGISTER_TOOL 宏导致的静默失效（LLM 被指导使用却永远收到"工具未找到"）。
