@@ -8,7 +8,6 @@
 #include <spdlog/spdlog.h>
 #include <future>
 #include <nlohmann/json.hpp>
-#include <chrono>
 
 namespace agent {
 
@@ -74,19 +73,15 @@ ToolCallLoopResult ToolCallLoop::run(
 
         // ── 首轮（带工具）──
         const auto& first_msgs = conversation.messages();
-        auto t1 = std::chrono::steady_clock::now();
         llm::LLMResponse response;
         if (config.first_round_streaming || config.all_rounds_streaming)
             response = client_.chat(first_msgs, tools, system_prompt, callbacks);
         else
             response = client_.chatNonStreaming(first_msgs, tools, system_prompt);
-        auto t2 = std::chrono::steady_clock::now();
-        int round_ms = static_cast<int>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
         r.total_tokens_used += response.total_tokens;
         r.input_tokens += response.prompt_tokens;
         r.output_tokens += response.completion_tokens;
-        if (tracer_) tracer_->record("llm_response", response.total_tokens, round_ms);
+        if (tracer_) tracer_->record("llm_response", response.total_tokens, 0);
 
         if (config.token_warning_threshold > 0 &&
             r.total_tokens_used > config.token_warning_threshold) {
@@ -146,16 +141,12 @@ ToolCallLoopResult ToolCallLoop::run(
                         ReflectionPayload{.tool = repeated_tool_name, .round = reflection_rounds_});
 
                     // 跳过工具执行，直接调 LLM
-                    auto t5 = std::chrono::steady_clock::now();
                     response = client_.chatNonStreaming(
                         conversation.messages(), tools, system_prompt);
-                    round_ms = static_cast<int>(std::chrono::duration_cast
-                        <std::chrono::milliseconds>(
-                            std::chrono::steady_clock::now() - t5).count());
                     r.total_tokens_used += response.total_tokens;
                     r.input_tokens += response.prompt_tokens;
                     r.output_tokens += response.completion_tokens;
-                    if (tracer_) tracer_->record("llm_response", response.total_tokens, round_ms);
+                    if (tracer_) tracer_->record("llm_response", response.total_tokens, 0);
                     continue;
                 }
 
@@ -188,30 +179,23 @@ ToolCallLoopResult ToolCallLoop::run(
 
             if (state_) state_->transition(AgentState::AwaitingTool);
 
-            auto t3 = std::chrono::steady_clock::now();
             auto diff = pipeline.execute(response.tool_calls);
             conversation.apply(diff);
-            auto t4 = std::chrono::steady_clock::now();
 
             if (state_) state_->transition(AgentState::Thinking);
-            int tool_ms = static_cast<int>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(t4 - t3).count());
 
-            if (tracer_) tracer_->record("tool_result", 0, tool_ms);
+            if (tracer_) tracer_->record("tool_result", 0, 0);
 
             // 后续 LLM 调用
-            auto t5 = std::chrono::steady_clock::now();
             if (config.all_rounds_streaming)
                 response = client_.chat(conversation.messages(), tools, system_prompt, {});
             else
                 response = client_.chatNonStreaming(conversation.messages(), tools, system_prompt);
-            round_ms = static_cast<int>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t5).count());
             r.total_tokens_used += response.total_tokens;
             r.input_tokens += response.prompt_tokens;
             r.output_tokens += response.completion_tokens;
 
-            if (tracer_) tracer_->record("llm_response", response.total_tokens, round_ms);
+            if (tracer_) tracer_->record("llm_response", response.total_tokens, 0);
 
             if (config.token_warning_threshold > 0 &&
                 r.total_tokens_used > config.token_warning_threshold) {

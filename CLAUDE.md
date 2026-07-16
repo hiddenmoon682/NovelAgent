@@ -14,9 +14,7 @@
 - 命名空间：`utils::file`, `utils::string`, `agent::`, `llm::`。
 
 ### 工作流
-- 每 Phase 结束后：更新 CHANGELOG → git commit。（不自动 push，需要时手动执行）
 - 变更记录以增量添加方式写入根目录 `CHANGELOG.md`（按日期倒序，最新在最上），不创建额外的 changelog 文件。
-- 完成阶段性工作后更新 `docs/DEV_GUIDE.md` 中的相关章节。
 
 ---
 

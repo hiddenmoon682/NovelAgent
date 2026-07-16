@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026-07-16] 删除 ToolCallLoop 中不必要的计时代码
+
+> 移除 `ToolCallLoop::run()` 内部全部 8 次 `steady_clock::now()` 调用，
+> round_ms/tool_ms 计时仅 tracer 一个消费者，无 tracer 时完全浪费。
+
+### 源码清理
+- `ToolCallLoop.cpp`：删除首轮、正常循环路径、反思路径三处的计时代码和 round_ms/tool_ms 计算
+- `ToolCallLoop.cpp`：删除冗余的 `#include <chrono>`
+
 ## [2026-07-16] 移除 `initial_messages` 参数
 
 > 删除 `ToolCallLoop::run()` 的 `initial_messages` 参数及相关代码，此功能已因预思考代码清理和 ContextManager 直接修改 conversation 而不再需要。
