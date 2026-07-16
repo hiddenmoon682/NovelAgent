@@ -1,5 +1,26 @@
 # Changelog
 
+## [2026-07-16] 删除 IMessageProcessor 模块，内联串行/并行处理逻辑到 Agent
+
+> IMessageProcessor 策略模式存在 8 个属性与 Agent 完全重叠，6 个 setter 方法仅做转发
+> 胶水，配置变更需四级传递。删除抽象层后架构更扁平，消除属性重复和配置传播代码。
+
+### 架构变更
+- **删除** `IMessageProcessor.h` / `IMessageProcessor.cpp`（~513 行）
+- `Agent.h`：移除 `processor_` 成员和 `setProcessor()` 方法；新增 `parallel_mode_` 标志和
+  `orchestrator_` 成员；新增 `processSerial()` / `processParallel()` / `buildEffectivePrompt()`
+  私有方法
+- `Agent.cpp`：`processUserMessage()` 改为根据 `parallel_mode_` 标志 if-else 选择处理路径；
+  内联原 SerialProcessor::process()、ParallelProcessor::process()、buildEffectivePrompt()
+  实现；消除全部配置传播代码（setSystemPrompt/setMaxToolRounds/setContextManager/
+  setMaxContextTokens 不再同步到 processor）
+
+### 源码清理
+- `cmake/Sources.cmake`：删除 IMessageProcessor 构建条目
+- `ReplHandler.cpp`：删除 `/config max_context_tokens` 中通过重建 processor 同步配置的 hack
+- `SessionManager.cpp`：删除冗余的 `useSerialProcessor()` 调用（Agent 构造函数已默认串行模式）
+- `NovelAgentApp.cpp`：更新构造注释
+
 ## [2026-07-16] 重命名 effective_prompt → effective_system_prompt
 
 > NAMING_ISSUES_REVIEW: `effective_prompt` 命名歧义已修复，明确其角色为"系统提示词"。

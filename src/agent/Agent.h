@@ -1,6 +1,6 @@
 #pragma once
 
-// Agent — 核心写小说 Agent (Agent最佳实践增强版 Fix #3,#6)。
+// Agent — 核心写小说 Agent，统一处理串行和并行消息处理。
 //
 // Fix #3: 集成 ExecutionTracer，每个决策步骤自动记录轨迹。
 // Fix #6: 集成 StateMachine，状态转换在操作边界自动执行。
@@ -8,10 +8,11 @@
 // Phase 4 线程安全：Agent 通过 LLMClientFactory 创建独立的 LLMClient 实例，
 // 不再共享外部引用。每个 Agent 拥有自己的 HTTP 连接状态，确保并行隔离。
 
+#include "agent/AgentOrchestrator.h"
 #include "agent/AgentState.h"
 #include "agent/ContextManagerTypes.h"
 #include "agent/ExecutionTracer.h"
-#include "agent/IMessageProcessor.h"
+#include "agent/ToolCallLoop.h"
 #include "llm/Conversation.h"
 #include "llm/ILLMClient.h"
 
@@ -96,13 +97,11 @@ public:
 
     // ── 处理器策略 ──
     // 使用串行处理器——每轮 tool_call 逐一执行，等待 LLM 返回后再执行下一个。
-    void useSerialProcessor();
+    void useSerialProcessor() { parallel_mode_ = false; }
     // 使用并行处理器——多轮 tool_call 并发执行，通过编排器协调子 Agent。
     void useParallelProcessor(TemplateManager* templateMgr = nullptr);
-    // 自定义消息处理器，覆盖默认策略。
-    void setProcessor(std::unique_ptr<IMessageProcessor> processor);
-    // 当前是否启用了并行处理器模式。
-    bool isParallelEnabled() const;
+    // 当前是否启用了并行处理模式。
+    bool isParallelEnabled() const { return parallel_mode_; }
 
     // ── Fix #3: 可观测性 ──
     // 获取执行轨迹记录器（可变引用），用于在外部记录额外轨迹。
@@ -124,20 +123,38 @@ public:
     ToolRegistry& registry() { return registry_; }
 
 private:
-    llm::LLMClientFactory& factory_;                //  LLM 客户端工厂，供 useParallelProcessor 创建子 Agent 时传递给编排器
-    std::unique_ptr<llm::ILLMClient> client_;       //  Agent 自己的独立 LLMClient，通过 factory_ 创建，确保 HTTP 连接隔离
-    ToolRegistry& registry_;                        //  工具注册表，维护所有可用工具的定义和查找
-    llm::Conversation conversation_;                //  对话历史（Message 列表），每次 processUserMessage 自动追加
-    std::string system_prompt_;                     //  系统提示词，设定 Agent 行为边界和写作风格
-    int max_tool_rounds_ = 10;                      //  单次用户消息的最大工具调用轮数，防止无限循环
-    ContextManager* context_manager_ = nullptr;     //  上下文管理器（非拥有指针），管理知识库检索和动态上下文注入
-    int max_context_tokens_ = 131072;               //  每次请求的最大上下文 token 数（应用层预算上限），用于截断对话历史
-    std::unique_ptr<IMessageProcessor> processor_;  //  消息处理策略（串行/并行），决定多轮 tool_call 的执行模式
+    // 内部处理结果（包含最终文本 + 原始 LLM 响应）。
+    struct InternalResult {
+        std::string text;
+        llm::LLMResponse raw_response;
+    };
 
-    // Fix #3: 执行轨迹记录器 — 自动记录每次 LLM 调用、工具执行和状态转换的详细轨迹
+    // 串行处理路径 — 标准 tool_call 循环。
+    InternalResult processSerial(const std::string& input,
+                                 llm::Conversation& conversation,
+                                 llm::StreamCallbacks callbacks);
+    // 并行处理路径 — 子任务编排。
+    InternalResult processParallel(const std::string& input,
+                                   llm::Conversation& conversation,
+                                   llm::StreamCallbacks callbacks);
+    // 构建最终发给 LLM 的系统提示词。
+    std::string buildEffectivePrompt(llm::Conversation& conversation);
+
+    llm::LLMClientFactory& factory_;                //  LLM 客户端工厂，供并行模式创建子 Agent
+    std::unique_ptr<llm::ILLMClient> client_;       //  Agent 自己的独立 LLMClient
+    ToolRegistry& registry_;                        //  工具注册表
+    llm::Conversation conversation_;                //  对话历史
+    std::string system_prompt_;                     //  系统提示词
+    int max_tool_rounds_ = 10;                      //  最大工具调用轮数
+    ContextManager* context_manager_ = nullptr;     //  上下文管理器（非拥有指针）
+    int max_context_tokens_ = 131072;               //  最大上下文 token 数
+    bool parallel_mode_ = false;                    //  是否启用并行模式
+    std::unique_ptr<AgentOrchestrator> orchestrator_; //  并行编排器
+
+    // Fix #3: 执行轨迹记录器
     ExecutionTracer tracer_;
 
-    // Fix #6: 显式状态机 — 管理 Agent 生命周期状态（Idle/Processing/WaitingTool 等）
+    // Fix #6: 显式状态机
     StateMachine state_;
 };
 

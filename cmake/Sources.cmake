@@ -64,7 +64,6 @@ set(NOVELAGENT_AGENT
     src/agent/PromptSelector.h src/agent/PromptSelector.cpp
     src/agent/ThreadPool.h                                      # Issue 4: 固定线程池
     src/agent/ToolCallLoop.h src/agent/ToolCallLoop.cpp
-    src/agent/IMessageProcessor.h src/agent/IMessageProcessor.cpp
     src/agent/ISynthesisStrategy.h src/agent/ISynthesisStrategy.cpp
     src/agent/IIndexService.h                                   # Issue 6: 索引服务接口
     src/agent/SessionPersistence.h src/agent/SessionPersistence.cpp

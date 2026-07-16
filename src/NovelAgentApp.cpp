@@ -69,8 +69,7 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
         std::string vec_path = project_->path + "/.novelagent/vectors.json";
         vector_store_.init(vec_path);
     }
-    // 默认使用串行处理器（支持完整 ToolCallLoop + 工具集）。
-    // Agent 构造函数已调用 useSerialProcessor()，无需再次设置。
+    // 默认使用串行模式（parallel_mode_ = false，支持完整 ToolCallLoop + 工具集）。
     // 用户可通过 REPL 中 /parallel on 切换到并行编排模式。
 }
 

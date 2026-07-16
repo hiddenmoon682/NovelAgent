@@ -298,7 +298,7 @@ void test_state_machine_transitions() {
     conv.addUser("测试");
 
     g_read_calls = 0;
-    agent::ToolCallLoop loop(client, registry, nullptr, &state_machine);
+    agent::ToolCallLoop loop(client, registry, &state_machine);
     auto result = loop.run(conv, registry.getToolDefinitions(), "", {}, {});
     (void)result;
 

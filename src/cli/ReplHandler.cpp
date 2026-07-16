@@ -101,11 +101,6 @@ void ReplHandler::setupPhase5Commands() {
                 int w = std::stoi(args[1]);
                 if (w < 1024) { out_.write(Ansi::warning() + "至少需要 1024 tokens\n" + Ansi::reset()); return true; }
                 agent_.setMaxContextTokens(w);
-                // 同步更新 SerialProcessor
-                if (agent_.isParallelEnabled())
-                    agent_.useParallelProcessor();
-                else
-                    agent_.useSerialProcessor();
                 out_.write(Ansi::success() + "max_context_tokens → " + std::to_string(w) + "\n" + Ansi::reset());
             } else if (args[0] == "auto_compact") {
                 if (args[1] == "on") {

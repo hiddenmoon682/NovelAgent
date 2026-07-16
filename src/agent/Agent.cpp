@@ -1,4 +1,6 @@
-// Agent 实现 — Agent 最佳实践增强版 (Fix #3,#6) + Phase 4 线程安全 (LLMClientFactory)。
+// Agent 实现 — 统一处理串行与并行消息处理路径。
+// 串行路径：标准 tool_call 循环（ToolCallLoop）。
+// 并行路径：子任务编排（AgentOrchestrator + SubAgent）。
 
 #include "agent/Agent.h"
 #include "agent/AgentOrchestrator.h"
@@ -53,23 +55,19 @@ bool validateInput(const std::string& input, std::string& reason) {
 Agent::Agent(llm::LLMClientFactory& factory, ToolRegistry& registry)
     : factory_(factory), client_(factory.create()), registry_(registry)
 {
-    useSerialProcessor();
+    parallel_mode_ = false;  // 默认串行模式
 }
 
 Agent::~Agent() = default;
 
 void Agent::setSystemPrompt(std::string prompt) {
     system_prompt_ = std::move(prompt);
-    if (processor_) processor_->setSystemPrompt(system_prompt_);  // Fix #3
 }
 void Agent::setMaxToolRounds(int n) {
     max_tool_rounds_ = (n >= 1) ? n : 1;
-    // Issue 1 修复：通过 IMessageProcessor 统一接口传递配置，消除 dynamic_cast。
-    if (processor_) processor_->setMaxToolRounds(max_tool_rounds_);
 }
 void Agent::setContextManager(ContextManager* cm) {
     context_manager_ = cm;
-    if (processor_) processor_->setContextManager(cm);
     // 同步模型名和校准器到 ContextManager（用于按模型区分 Token 校准）
     if (cm) {
         cm->setModelName(client_->config().model);
@@ -77,13 +75,13 @@ void Agent::setContextManager(ContextManager* cm) {
 }
 void Agent::setMaxContextTokens(int tokens) {
     max_context_tokens_ = tokens;
-    if (processor_) processor_->setMaxContextTokens(tokens);
 }
 void Agent::clearConversation() { conversation_.clear(); }
 
 void Agent::resetSession() {
     conversation_.clear();
     tracer_.clear();
+    orchestrator_.reset();
     // 级联到 ContextManager：清空 token 统计、压缩摘要、警告缓存、向量脏标记
     if (context_manager_) context_manager_->resetSession();
 }
@@ -164,81 +162,264 @@ std::vector<size_t> Agent::checkpointIndices() const {
 
 void Agent::saveSessionState() {
     if (!context_manager_) return;
-    // 收集当前 preserved 索引（/pin 标记），通过 ContextManager 持久化
     auto pinned = conversation_.pinnedIndices();
-    // ContextManager::saveSessionState 负责：
-    //   1. 保存 conversation.json（完整对话）
-    //   2. 构建 SessionMeta（摘要/token/preserved/mtime/dirty）并调 saveMeta
     context_manager_->saveSessionState(conversation_, pinned);
 }
 
 void Agent::loadSessionState() {
     if (!context_manager_) return;
     conversation_.clear();
-    // ContextManager::loadSessionState 负责：
-    //   1. 加载 conversation.json → 写入 conversation_
-    //   2. 加载 session_meta.json → 恢复内部状态（摘要/token/脏标记等）
-    //   3. 恢复 preserved 标记到对应 Message 对象
     context_manager_->loadSessionState(conversation_);
 }
 
-void Agent::useSerialProcessor() {
-    auto sp = std::make_unique<SerialProcessor>(*client_, registry_, system_prompt_);
-    sp->setContextManager(context_manager_);
-    sp->setMaxContextTokens(max_context_tokens_);
-    sp->setMaxToolRounds(max_tool_rounds_);
-    // Fix #3: 传递 tracer 给 SerialProcessor
-    sp->setTracer(&tracer_);
-    // D1.1: 传递状态机
-    sp->setStateMachine(&state_);
-    processor_ = std::move(sp);
-}
-
 void Agent::useParallelProcessor(TemplateManager* tm) {
-    auto pp = std::make_unique<ParallelProcessor>(factory_, registry_, system_prompt_);
-    if (tm) pp->setTemplateManager(tm);
-    // A18.3: 并行模式也传递 ContextManager
-    pp->setContextManager(context_manager_);
-    // Issue 22 修复：传递全部配置，与 useSerialProcessor 对齐
-    pp->setMaxContextTokens(max_context_tokens_);
-    pp->setMaxToolRounds(max_tool_rounds_);
-    pp->setTracer(&tracer_);
-    pp->setStateMachine(&state_);
-    processor_ = std::move(pp);
+    parallel_mode_ = true;
+    if (!orchestrator_) {
+        orchestrator_ = std::make_unique<AgentOrchestrator>(factory_, registry_, system_prompt_);
+    }
+    if (tm) {
+        orchestrator_->setTemplateManager(tm);
+    }
     spdlog::info("[Agent] 切换到并行处理器");
 }
 
-void Agent::setProcessor(std::unique_ptr<IMessageProcessor> p) { processor_ = std::move(p); }
-bool Agent::isParallelEnabled() const {
-    return processor_ && processor_->isParallel();
+// ============================================================================
+// buildEffectivePrompt — 构建最终发给 LLM 的系统提示词
+//
+// 职责：
+//   将固定 system_prompt_ 与 ContextManager 提供的动态上下文（项目上下文、
+//   工具使用指南）拼接成最终的系统提示词。
+//
+// 两条路径：
+//
+//   路径 A：无 ContextManager（context_manager_ == nullptr）
+//     └─ 返回原始的 system_prompt_。
+//
+//   路径 B：有 ContextManager
+//     ├─ context_manager_->assemble() 执行动态上下文策略：
+//     │   ├─ 构建项目级 system prompt
+//     │   ├─ 计算实时 token 用量
+//     │   ├─ 若启用自动压缩且用量超阈值 → 触发 compact() 修改 conversation
+//     │   └─ 用量告警
+//     └─ PromptComposer::compose() 将 personality 与 context 拼接
+// ===========================================================================
+std::string Agent::buildEffectivePrompt(llm::Conversation& conversation)
+{
+    // ── 路径 A：无 ContextManager（直通模式） ──
+    if (!context_manager_) {
+        return system_prompt_;
+    }
+
+    // ── 路径 B：有 ContextManager（动态上下文模式） ──
+    auto assembly = context_manager_->assemble(conversation, max_context_tokens_, &*client_);
+
+    PromptComponents pc;
+    pc.personality = system_prompt_;
+    pc.context = assembly.system_prompt;
+    return PromptComposer::compose(pc);
+}
+
+// ===========================================================================
+// processSerial — 串行 LLM tool_call 循环处理
+//
+// 完整流程：
+//   1. 追加用户消息     — conversation.addUser(input)
+//   2. 准备工具列表     — registry_.getToolDefinitions()
+//   3. 构建最终提示词   — buildEffectivePrompt()
+//   4. 配置 ToolCallLoop — max_rounds / streaming / 重复检测
+//   5. 执行 ToolCallLoop — loop.run() 驱动 LLM ↔ 工具的多轮交互
+//   6. Token 校准回传   — 对比估算值 vs API 返回值，更新 EMA 修正因子
+//   7. 记录 token 消耗  — recordUsage()
+//   8. 返回结果         — InternalResult {text, raw_response}
+// ===========================================================================
+Agent::InternalResult Agent::processSerial(
+    const std::string& input,
+    llm::Conversation& conversation,
+    llm::StreamCallbacks callbacks)
+{
+    // ── 步骤 2: 追加用户消息 ──
+    conversation.addUser(input);
+
+    // ── 步骤 3: 准备工具列表 ──
+    auto tools = registry_.getToolDefinitions();
+
+    // ── 步骤 4: 构建最终提示词 ──
+    auto effective_system_prompt = buildEffectivePrompt(conversation);
+
+    // ── 步骤 5: 配置 ToolCallLoop ──
+    ToolCallLoop loop(*client_, registry_, &state_);
+    ToolCallLoopConfig config;
+    config.max_rounds = max_tool_rounds_;
+    config.all_rounds_streaming = false;
+    config.max_repeated_calls = 3;
+    config.timeout = std::chrono::seconds(0);
+    config.token_warning_threshold = 0;
+
+    // ── 步骤 6: 执行 ToolCallLoop ──
+    auto result = loop.run(conversation, tools, effective_system_prompt,
+                           std::move(callbacks), config);
+
+    // ── 步骤 7: Token 校准回传 ──
+    if (context_manager_ && context_manager_->hasCalibrator()) {
+        int estimated = context_manager_->tracker().currentTotalTokens();
+        if (estimated > 0 && result.input_tokens > 0) {
+            context_manager_->calibrator()->calibrate(
+                client_->config().model, estimated, result.input_tokens);
+            spdlog::debug("[Agent] Token 校准: model={}, estimated={}, actual={}, correction={:.3f}",
+                          client_->config().model, estimated, result.input_tokens,
+                          context_manager_->calibrator()->getCorrection(client_->config().model));
+        }
+    }
+
+    // ── 步骤 8: 记录 token 消耗 ──
+    if (context_manager_) {
+        context_manager_->recordUsage(result.input_tokens, result.output_tokens);
+    }
+
+    // ── 步骤 9: 返回结果 ──
+    InternalResult r;
+    r.raw_response = result.response;
+    if (!result.response.content.empty() || !result.response.tool_calls.empty()) {
+        llm::Message assistant;
+        assistant.role = llm::MessageRole::Assistant;
+        assistant.content = result.response.content;
+        assistant.tool_calls = result.response.tool_calls;
+        conversation.add(std::move(assistant));
+        r.text = result.response.content;
+    }
+    return r;
+}
+
+// ===========================================================================
+// processParallel — 并行编排处理入口
+//
+// 通过 AgentOrchestrator 分解任务 → 多子 Agent 并行执行 → 汇总结果。
+// ===========================================================================
+Agent::InternalResult Agent::processParallel(
+    const std::string& input,
+    llm::Conversation& conversation,
+    llm::StreamCallbacks callbacks)
+{
+    InternalResult r;
+
+    // 惰性创建编排器
+    if (!orchestrator_) {
+        orchestrator_ = std::make_unique<AgentOrchestrator>(factory_, registry_, system_prompt_);
+    }
+
+    // ── 上下文组装 ──
+    try {
+        std::string effective_system_prompt = system_prompt_;
+        if (context_manager_) {
+            auto assembly = context_manager_->assemble(conversation, max_context_tokens_, nullptr);
+            if (!assembly.system_prompt.empty())
+                effective_system_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
+        }
+        orchestrator_->setMainPrompt(effective_system_prompt);
+    } catch (const std::exception& e) {
+        spdlog::warn("[Agent] 并行路径上下文组装失败，使用原始 prompt: {}", e.what());
+    }
+
+    // ── 核心处理 ──
+    try {
+        tracer_.record("parallel_start", 0, 0,
+            ParallelStartPayload{.input = input.substr(0, 200)});
+
+        auto text = orchestrator_->processMessage(input);
+        conversation.addUser(input);
+        conversation.addAssistant(text);
+
+        // 注入子任务工具调用详情
+        {
+            const auto& sub_tasks = orchestrator_->lastSubTasks();
+            if (!sub_tasks.empty()) {
+                std::string sub_detail;
+                for (const auto& st : sub_tasks) {
+                    sub_detail += "[" + st.id + ":" + st.status + "] " + st.description + "\n";
+                    if (!st.result.empty()) {
+                        sub_detail += "  结果: " + st.result.substr(0, 300);
+                        if (st.result.size() > 300) sub_detail += "...";
+                        sub_detail += "\n";
+                    }
+                    if (!st.error.empty()) {
+                        sub_detail += "  错误: " + st.error + "\n";
+                    }
+                }
+                if (!sub_detail.empty()) {
+                    llm::Message ass = llm::Message::assistant(
+                        "(并行分析完成，子任务详情:)\n" + sub_detail);
+                    conversation.add(std::move(ass));
+                }
+            }
+        }
+
+        r.text = text;
+        r.raw_response.content = text;
+        r.raw_response.finish_reason = "stop";
+
+        // Token 校准回传
+        if (context_manager_ && context_manager_->hasCalibrator()) {
+            int estimated = context_manager_->tracker().currentTotalTokens();
+            int actual = orchestrator_->lastInputTokens();
+            if (estimated > 0 && actual > 0) {
+                context_manager_->calibrator()->calibrate(
+                    factory_.config().model, estimated, actual);
+            }
+        }
+
+        if (context_manager_) {
+            context_manager_->recordUsage(
+                orchestrator_->lastInputTokens(),
+                orchestrator_->lastOutputTokens());
+        }
+
+        // 收集子任务 token 统计
+        if (context_manager_) {
+            int sub_input = orchestrator_->lastSubInputTokens();
+            int sub_output = orchestrator_->lastSubOutputTokens();
+            if (sub_input > 0 || sub_output > 0) {
+                context_manager_->recordUsage(sub_input, sub_output);
+            }
+        }
+
+        tracer_.record("parallel_done", r.raw_response.total_tokens, 0);
+
+        if (callbacks.on_complete) {
+            callbacks.on_complete(r.raw_response);
+        }
+    } catch (const std::exception& e) {
+        spdlog::error("[Agent] 并行路径处理异常: {}", e.what());
+        r.raw_response.finish_reason = "error";
+        tracer_.record("error", 0, 0,
+            ErrorPayload{.reason = "并行处理异常: " + std::string(e.what())});
+        if (callbacks.on_error) {
+            callbacks.on_error(e.what());
+        }
+    }
+
+    return r;
 }
 
 // ============================================================================
 // processUserMessage — Agent 核心入口
 //
-// 职责：接收用户自然语言输入，驱动 LLM 多轮 tool_call 循环，返回最终回复。
+// 职责：接收用户自然语言输入，根据并行标志选择处理路径，返回最终回复。
 //
 // 完整流程:
 //   1. 输入守卫   — 拒绝空输入（fail-fast）
 //   2. 状态守卫   — 检查 StateMachine 是否可接受输入；尝试从 Error 自动恢复
-//   3. 轨迹记录   — ExecutionTracer 记录用户输入（Fix #3）
-//   4. 状态转换   — Idle → Thinking（Fix #6）
-//   5. 核心处理   — 委托 IMessageProcessor::process() 执行 LLM 多轮调用
+//   3. 轨迹记录   — ExecutionTracer 记录用户输入
+//   4. 状态转换   — Idle → Thinking
+//   5. 核心处理   — 串行路径（processSerial）或并行路径（processParallel）
 //   6. 状态恢复   — Thinking → Idle
 //   7. 轨迹记录   — 记录完成信息（token 消耗等）
 //   8. 返回结果   — LLMResponse（含文本、token 计数、tool_call 详情）
-//
-// 注意：
-//   - conversation_ 以引用传入 processor_，processor_ 内部会自动追加对话历史
-//   - 此方法不抛异常，错误通过空 LLMResponse 或日志方式上报
 // ============================================================================
 
 llm::LLMResponse Agent::processUserMessage(const std::string& input,
                                             llm::StreamCallbacks callbacks)
 {
     // ── 步骤 1: 输入守卫 ──
-    // 拒绝空字符串输入，避免无效请求进入 LLM 调用流程。
-    // 符合 fail-fast 原则：尽早发现无效输入，减少资源浪费。
     if (input.empty()) {
         spdlog::warn("[Agent] 收到空输入，已忽略");
         tracer_.record("error", 0, 0, ErrorPayload{.reason = "空输入被拒绝"});
@@ -256,8 +437,6 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
     }
 
     // ── 步骤 2: 状态守卫 ──
-    // StateMachine 确保 Agent 只在合法状态（Idle / WaitingUser）接收输入。
-    // 若处于 Error 状态则自动尝试恢复；若处于 Fatal / Thinking 等非法状态则拒绝。
     if (!state_.canAcceptInput()) {
         spdlog::warn("[Agent] 当前状态 [{}] 不接受新输入", agentStateName(state_.current()));
         tracer_.record("error", 0, 0, ErrorPayload{
@@ -272,32 +451,28 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
         }
     }
 
-    // ── 步骤 3: 轨迹记录（Fix #3）──
-    // 记录用户输入的前 200 字符到 ExecutionTracer，
-    // 供后续调试、日志审计和可观测性面板使用。
+    // ── 步骤 3: 轨迹记录 ──
     tracer_.record("user_input", 0, 0, UserInputPayload{.input = input.substr(0, 200)});
 
-    // ── 步骤 4: 状态转换 Idle → Thinking（Fix #6）──
-    // 通知状态机 Agent 进入思考阶段。
-    // 外部组件（如 StreamDisplay）可据此切换 UI 提示状态。
+    // ── 步骤 4: 状态转换 Idle → Thinking ──
     state_.transition(AgentState::Thinking);
 
     // ── 步骤 5-6.5: 核心处理 + 轨迹记录 + 增量保存 ──
-    // 整体以 try-catch 包裹（B8 修复）：若 processor_->process() 或后续
-    // 步骤抛异常（LLM 超时、工具异常等），异常不再穿透到 ReplHandler 导致
-    // state_ 卡在 Thinking 永久拒输入。捕获后强制恢复：Thinking → Error → Idle。
     try {
         auto t_start = std::chrono::steady_clock::now();
-        auto result = processor_->process(input, conversation_, std::move(callbacks));
+
+        // 根据并行标志选择处理路径
+        InternalResult result;
+        if (parallel_mode_)
+            result = processParallel(input, conversation_, std::move(callbacks));
+        else
+            result = processSerial(input, conversation_, std::move(callbacks));
+
         auto t_end = std::chrono::steady_clock::now();
         int total_ms = static_cast<int>(
             std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count());
 
-        // ── 步骤 6: 状态恢复 Thinking → Idle（Fix #6）──
-        // 无论处理成功或失败，都将状态机恢复到 Idle，准备接收下一条输入。
-        // 若过程中发生了可恢复错误（如 LLM 超时、工具执行异常），
-        // state_.isError() 在 processor_->process() 内部被置位，
-        // 但此处统一过渡到 Idle，等待下一次用户输入重新触发。
+        // ── 步骤 6: 状态恢复 Thinking → Idle ──
         if (state_.isError()) {
             spdlog::info("[Agent] 处理完成（含可恢复错误），状态重置为 Idle");
             state_.transition(AgentState::Idle);
@@ -305,15 +480,10 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
             state_.transition(AgentState::Idle);
         }
 
-        // ── 步骤 7: 轨迹记录（Fix #3）──
-        // 记录最终响应的 token 消耗，用于统计和使用量监控。
+        // ── 步骤 7: 轨迹记录 ──
         tracer_.record("done", result.raw_response.total_tokens, total_ms);
 
-        // ── 步骤 7.5: 会话增量保存（B2 修复）──
-        // 每轮对话结束后立即持久化 conversation.json + session_meta.json，
-        // 避免运行中途崩溃（断电、进程被杀）丢失本轮全部对话与创作上下文。
-        // 此前仅在 REPL 退出时保存一次，长会话写作中途崩溃会丢失数千字生成内容。
-        // 写入失败不阻断主流程（符合项目错误处理策略：单点失败友好降级）。
+        // ── 步骤 7.5: 会话增量保存 ──
         try {
             saveSessionState();
         } catch (const std::exception& e) {
@@ -323,8 +493,6 @@ llm::LLMResponse Agent::processUserMessage(const std::string& input,
         // ── 步骤 8: 返回结果 ──
         return result.raw_response;
     } catch (const std::exception& e) {
-        // B8 修复：核心处理异常强制状态恢复，防止卡在 Thinking 永久拒输入。
-        // Thinking → Error（合法转换）→ Idle（recover），返回空响应用户可继续。
         spdlog::error("[Agent] 处理异常，强制状态恢复: {}", e.what());
         tracer_.record("error", 0, 0, ErrorPayload{.reason = "处理异常: " + std::string(e.what())});
         state_.transition(AgentState::Error);
@@ -362,8 +530,6 @@ llm::LLMResponse Agent::execute(const std::string& command,
             effective_system_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
     }
 
-    // B8 补充：execute() 异常恢复，防止 LLM API 异常（网络超时、HTTP 错误）
-    // 导致状态机卡在 Thinking 永久拒输入。与 processUserMessage() 的异常处理对齐。
     try {
         auto response = client_->chat(messages, tools, effective_system_prompt, std::move(callbacks));
         state_.transition(AgentState::Idle);
