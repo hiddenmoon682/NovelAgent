@@ -1,6 +1,6 @@
 # NovelAgent 审查状态总览
 
-> 最后更新：2026-07-16（追加 §八 initial_messages 审查 + §九 命名问题）
+> 最后更新：2026-07-16（追加 §十 TokenTracker 审查）
 
 ---
 

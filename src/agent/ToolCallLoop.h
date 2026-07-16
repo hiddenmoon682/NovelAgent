@@ -21,8 +21,9 @@ namespace agent {
 // SubAgent 不传 hooks，不影响轻量路径。
 struct ToolCallLoopHooks {
     // 每轮 LLM 调用完成后触发（含首轮、后续轮次、反思路径）。
-    // input_tokens / output_tokens 为当前轮次的 token 数（非累计）。
-    std::function<void(int input_tokens, int output_tokens)> on_round_complete;
+    // input_tokens/output_tokens 为 API 返回的当前轮次实际值。
+    // estimated_tokens 为 LLM 调用前对 conversation 的原始估算值。
+    std::function<void(int input_tokens, int output_tokens, int estimated_tokens)> on_round_complete;
 };
 
 struct ToolCallLoopConfig {

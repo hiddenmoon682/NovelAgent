@@ -253,10 +253,15 @@ Agent::InternalResult Agent::processSerial(
           .setMaxRepeatedCalls(3)
           .setTimeout(std::chrono::seconds(0))
           .setTokenWarningThreshold(0);
-    // 每轮完成后实时更新 TokenTracker，接近上限时自动压缩旧历史
-    config.hooks.on_round_complete = [this](int input, int output) {
+    // 每轮完成后实时更新 TokenTracker + 校准 + 接近上限时自动压缩
+    config.hooks.on_round_complete = [this](int input, int output, int estimated) {
         if (!context_manager_) return;
         context_manager_->recordUsage(input, output);
+        // 每轮校准：estimated 是调 LLM 前对 conversation 的原始估算，input 是 API 返回的 prompt_tokens
+        if (context_manager_->hasCalibrator() && estimated > 0 && input > 0) {
+            context_manager_->calibrator()->calibrate(
+                client_->config().model, estimated, input);
+        }
         auto status = context_manager_->checkThresholds();
         if (status.status >= ContextStatus::AutoCompact && status.status != ContextStatus::Error) {
             spdlog::info("[Agent] 工具循环中上下文较高 ({}%), 自动压缩旧历史",
@@ -269,18 +274,6 @@ Agent::InternalResult Agent::processSerial(
     // ── 步骤 6: 执行 ToolCallLoop ──
     auto result = loop.run(conversation, tools, effective_system_prompt,
                            std::move(callbacks), config);
-
-    // ── 步骤 7: Token 校准回传 ──
-    if (context_manager_ && context_manager_->hasCalibrator()) {
-        int estimated = context_manager_->tracker().currentTotalTokens();
-        if (estimated > 0 && result.input_tokens > 0) {
-            context_manager_->calibrator()->calibrate(
-                client_->config().model, estimated, result.input_tokens);
-            spdlog::debug("[Agent] Token 校准: model={}, estimated={}, actual={}, correction={:.3f}",
-                          client_->config().model, estimated, result.input_tokens,
-                          context_manager_->calibrator()->getCorrection(client_->config().model));
-        }
-    }
 
     // ── 步骤 8: 返回结果 ──
     InternalResult r;
@@ -363,29 +356,14 @@ Agent::InternalResult Agent::processParallel(
         r.raw_response.content = text;
         r.raw_response.finish_reason = "stop";
 
-        // Token 校准回传
-        if (context_manager_ && context_manager_->hasCalibrator()) {
-            int estimated = context_manager_->tracker().currentTotalTokens();
-            int actual = orchestrator_->lastInputTokens();
-            if (estimated > 0 && actual > 0) {
-                context_manager_->calibrator()->calibrate(
-                    factory_.config().model, estimated, actual);
-            }
-        }
-
         if (context_manager_) {
-            context_manager_->recordUsage(
-                orchestrator_->lastInputTokens(),
-                orchestrator_->lastOutputTokens());
-        }
-
-        // 收集子任务 token 统计
-        if (context_manager_) {
+            int main_input = orchestrator_->lastInputTokens();
+            int main_output = orchestrator_->lastOutputTokens();
             int sub_input = orchestrator_->lastSubInputTokens();
             int sub_output = orchestrator_->lastSubOutputTokens();
-            if (sub_input > 0 || sub_output > 0) {
-                context_manager_->recordUsage(sub_input, sub_output);
-            }
+            context_manager_->recordUsage(
+                main_input + sub_input,
+                main_output + sub_output);
         }
 
         tracer_.record("parallel_done", r.raw_response.total_tokens, 0);
