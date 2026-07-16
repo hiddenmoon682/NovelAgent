@@ -83,8 +83,7 @@ SerialProcessor::Result SerialProcessor::process(
     auto tools = registry_.getToolDefinitions();
 
     // ── 步骤 4: 构建最终提示词 ──
-    std::vector<llm::Message> effective_messages;
-    auto effective_prompt = buildEffectivePrompt(conversation, effective_messages);
+    auto effective_prompt = buildEffectivePrompt(conversation);
 
     // ── 步骤 5: 配置 ToolCallLoop ──
     // 创建 ToolCallLoop 实例并设置运行参数。
@@ -104,7 +103,7 @@ SerialProcessor::Result SerialProcessor::process(
     //   若返回 tool_call → 执行工具 → 结果追加到 conversation → 再次调用 LLM
     //   重复直到 LLM 返回纯文本回复或达到 max_rounds
     auto result = loop.run(conversation, tools, effective_prompt,
-                           std::move(callbacks), config, &effective_messages);
+                           std::move(callbacks), config);
 
     // ── 步骤 6.5: Token 校准回传 ──
     // 将 assemble() 算出的估算值与 API 返回的真实 prompt_tokens 对比，
@@ -152,17 +151,15 @@ SerialProcessor::Result SerialProcessor::process(
 //
 // 职责：
 //   将固定 system_prompt_ 与 ContextManager 提供的动态上下文（项目上下文、
-//   工具使用指南）拼接成最终的系统提示词，并输出处理后的消息列表。
+//   工具使用指南）拼接成最终的系统提示词。
 //
-// 两个输出：
-//   1. 返回值（string）— 最终系统提示词，发给 LLM 的 system 角色消息
-//   2. out_messages   — 有效消息列表（传出参数），发给 LLM 的 messages 数组
+// 返回值：
+//   最终系统提示词，发给 LLM 的 system 角色消息。
 //
 // 两条路径：
 //
 //   路径 A：无 ContextManager（context_manager_ == nullptr）
-//     └─ 直接将原始 conversation 的全部消息作为 out_messages，
-//        返回原始的 system_prompt_。
+//     └─ 返回原始的 system_prompt_。
 //        适用于简单场景或测试环境，不进行任何上下文处理。
 //
 //   路径 B：有 ContextManager
@@ -171,7 +168,6 @@ SerialProcessor::Result SerialProcessor::process(
 //     │   ├─ 计算实时 token 用量（含本轮新用户输入）
 //     │   ├─ 若启用自动压缩且用量超阈值 → 触发 compact() 修改 conversation
 //     │   └─ 用量告警
-//     ├─ assembly.messages     → 处理后的消息列表（传出）
 //     ├─ assembly.system_prompt → 动态生成的附加系统提示（项目上下文）
 //     └─ 最后通过 PromptComposer::compose() 将 personality（固定角色设定）
 //        与 context（动态上下文）拼接为最终系统提示词。
@@ -183,14 +179,12 @@ SerialProcessor::Result SerialProcessor::process(
 //   3. 兼容性 — 无 ContextManager 时退化为简单直通模式，不影响已有功能
 // ===========================================================================
 std::string SerialProcessor::buildEffectivePrompt(
-    llm::Conversation& conversation,
-    std::vector<llm::Message>& out_messages)
+    llm::Conversation& conversation)
 {
     // ── 路径 A：无 ContextManager（直通模式） ──
-    // 不进行任何动态上下文处理，直接返回原始 system_prompt_ 和完整对话历史。
+    // 不进行任何动态上下文处理，直接返回原始 system_prompt_。
     // 适用于单元测试或未配置上下文管理器的简单场景。
     if (!context_manager_) {
-        out_messages = conversation.messages();
         return system_prompt_;
     }
 
@@ -199,7 +193,6 @@ std::string SerialProcessor::buildEffectivePrompt(
     // 并在启用自动压缩且超阈值时触发 compact()。
     // 警告通过 ContextManager::lastWarnings() 传递到 Agent → REPL 展示。
     auto assembly = context_manager_->assemble(conversation, max_context_tokens_, &client_);
-    out_messages = std::move(assembly.messages);
 
     // 通过 PromptComposer 将 personality（固定角色）和 context（动态上下文）拼接。
     // 例如最终结果可能是：

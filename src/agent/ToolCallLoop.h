@@ -63,19 +63,12 @@ public:
     void setCancelled(std::atomic<bool>* cancelled) { cancelled_ = cancelled; }
 
     // 执行 tool_call 循环。
-    //
-    // initial_messages 可选的外部消息列表（通常为 ContextManager 截断后的消息）。
-    //   首轮 LLM 调用优先使用此列表而非 conversation.messages()，
-    //   确保 token 截断策略真正生效（否则截断后的消息从未被使用）。
-    //   后续轮次（tool_call → tool_result 往返）仍使用 conversation.messages()
-    //   以携带完整的工具执行链。传 nullptr 或空 vector 退化为使用原始对话。
     ToolCallLoopResult run(
         llm::Conversation& conversation,
         const std::vector<llm::ToolDefinition>& tools,
         const std::string& system_prompt,
         llm::StreamCallbacks callbacks,
-        const ToolCallLoopConfig& config = {},
-        const std::vector<llm::Message>* initial_messages = nullptr);
+        const ToolCallLoopConfig& config = {});
 
 private:
     llm::ILLMClient& client_;

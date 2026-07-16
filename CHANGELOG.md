@@ -1,5 +1,15 @@
 # Changelog
 
+## [2026-07-16] 移除 `initial_messages` 参数
+
+> 删除 `ToolCallLoop::run()` 的 `initial_messages` 参数及相关代码，此功能已因预思考代码清理和 ContextManager 直接修改 conversation 而不再需要。
+
+### 源码清理
+- `ToolCallLoop.h`：从 `run()` 签名中移除 `initial_messages` 参数
+- `ToolCallLoop.cpp`：删除三元表达式，首轮直接使用 `conversation.messages()`
+- `IMessageProcessor.h`：`buildEffectivePrompt()` 移除 `out_messages` 传出参数
+- `IMessageProcessor.cpp`：删除 `effective_messages` 局部变量，重构 `buildEffectivePrompt()` 签名
+
 ## [2026-07-16] 清理预思考代码（A4 use_thinking_step）
 
 > 删除 `use_thinking_step` 字段及相关代码块，清理关联 review 文档，为 Plan Mode 从零设计扫清障碍。

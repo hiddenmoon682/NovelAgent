@@ -58,8 +58,7 @@ ToolCallLoopResult ToolCallLoop::run(
     const std::vector<llm::ToolDefinition>& tools,
     const std::string& system_prompt,
     llm::StreamCallbacks callbacks,
-    const ToolCallLoopConfig& config,
-    const std::vector<llm::Message>* initial_messages)
+    const ToolCallLoopConfig& config)
 {
     ToolCallLoopResult result;                            // 最终结果（含 LLM 回复、token 统计、超时/取消标志）
     ToolPipeline pipeline(tools_, conversation);          // 工具执行管线：校验参数 → 执行 → 截断结果 → 生成 diff
@@ -74,8 +73,7 @@ ToolCallLoopResult ToolCallLoop::run(
         ToolCallLoopResult r;
 
         // ── 首轮（带工具）──
-        const auto& first_msgs = (initial_messages && !initial_messages->empty())
-            ? *initial_messages : conversation.messages();
+        const auto& first_msgs = conversation.messages();
         auto t1 = std::chrono::steady_clock::now();
         llm::LLMResponse response;
         if (config.first_round_streaming || config.all_rounds_streaming)

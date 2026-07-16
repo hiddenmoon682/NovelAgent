@@ -113,12 +113,10 @@ private:
     class StateMachine* state_ = nullptr;       // D1.1
 
     // 构建最终发给 LLM 的系统提示词。
-    // 将固定 system_prompt_ 与 ContextManager 提供的动态上下文拼接，
-    // 同时将处理后的消息列表填充到 out_messages 中一并发送。
+    // 将固定 system_prompt_ 与 ContextManager 提供的动态上下文拼接。
     // conversation 非 const — assemble() 可能在自动压缩时修改对话（删除旧消息、插入摘要）。
     std::string buildEffectivePrompt(
-        llm::Conversation& conversation,
-        std::vector<llm::Message>& out_messages);
+        llm::Conversation& conversation);
 };
 
 // 并行处理器 — 委托 AgentOrchestrator 做并行编排。
