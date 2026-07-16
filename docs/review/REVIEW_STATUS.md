@@ -1,6 +1,6 @@
 # NovelAgent 审查状态总览
 
-> 最后更新：2026-07-15
+> 最后更新：2026-07-16
 
 ---
 
@@ -154,7 +154,7 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 | A1 | 串行线程创建（超时机制） | 设置 ToolCallLoop timeout=300s 防止主线程永久阻塞，后改为 0s 依赖 HTTP read_timeout |
 | A2 | 持久化问题 | 已验证安全的现有行为 |
 | A3 | SubAgent 轨迹可见性 | 补充轨迹冒泡 |
-| A4 | ReAct 预思考步骤 | ~~完善预思考逻辑~~ → 已清理，待 Plan Mode 从零设计 |
+| A4 | ReAct 预思考步骤 | ~~完善预思考逻辑~~ → 已清理（`use_thinking_step` 字段及代码块删除，`plan_mode.md` 标记 obsolete），待 Plan Mode 从零设计 |
 
 **B 批**
 
