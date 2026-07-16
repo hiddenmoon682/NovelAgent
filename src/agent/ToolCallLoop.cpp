@@ -72,13 +72,12 @@ ToolCallLoopResult ToolCallLoop::run(
         // ── 首轮（带工具）──
         const auto& first_msgs = conversation.messages();
         llm::LLMResponse response;
-        if (config.first_round_streaming || config.all_rounds_streaming)
-            response = client_.chat(first_msgs, tools, system_prompt, callbacks);
-        else
-            response = client_.chatNonStreaming(first_msgs, tools, system_prompt);
+        response = client_.chat(first_msgs, tools, system_prompt, callbacks);
         r.total_tokens_used += response.total_tokens;
         r.input_tokens += response.prompt_tokens;
         r.output_tokens += response.completion_tokens;
+        if (config.hooks.on_round_complete)
+            config.hooks.on_round_complete(response.prompt_tokens, response.completion_tokens);
 
         if (config.token_warning_threshold > 0 &&
             r.total_tokens_used > config.token_warning_threshold) {
@@ -133,11 +132,13 @@ ToolCallLoopResult ToolCallLoop::run(
                     conversation.add(std::move(reflection));
 
                     // 跳过工具执行，直接调 LLM
-                    response = client_.chatNonStreaming(
-                        conversation.messages(), tools, system_prompt);
+                    response = client_.chat(
+                        conversation.messages(), tools, system_prompt, callbacks);
                     r.total_tokens_used += response.total_tokens;
                     r.input_tokens += response.prompt_tokens;
                     r.output_tokens += response.completion_tokens;
+                    if (config.hooks.on_round_complete)
+                        config.hooks.on_round_complete(response.prompt_tokens, response.completion_tokens);
                     continue;
                 }
 
@@ -167,14 +168,13 @@ ToolCallLoopResult ToolCallLoop::run(
 
             if (state_) state_->transition(AgentState::Thinking);
 
-            // 后续 LLM 调用
-            if (config.all_rounds_streaming)
-                response = client_.chat(conversation.messages(), tools, system_prompt, {});
-            else
-                response = client_.chatNonStreaming(conversation.messages(), tools, system_prompt);
+            // 后续 LLM 调用（流式，复用 callbacks 转发输出到用户）
+            response = client_.chat(conversation.messages(), tools, system_prompt, callbacks);
             r.total_tokens_used += response.total_tokens;
             r.input_tokens += response.prompt_tokens;
             r.output_tokens += response.completion_tokens;
+        if (config.hooks.on_round_complete)
+            config.hooks.on_round_complete(response.prompt_tokens, response.completion_tokens);
 
             if (config.token_warning_threshold > 0 &&
                 r.total_tokens_used > config.token_warning_threshold) {

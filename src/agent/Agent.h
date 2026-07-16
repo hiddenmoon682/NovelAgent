@@ -48,8 +48,8 @@ public:
 
     // 处理用户输入——核心入口。自动追加对话历史、调用 LLM、执行工具，
     // 并在多轮 tool_call 循环后返回最终 LLMResponse。
-    llm::LLMResponse processUserMessage(const std::string& input,
-                                         llm::StreamCallbacks callbacks = {});
+    llm::LLMResponse process(const std::string& input,
+                              llm::StreamCallbacks callbacks = {});
     // 执行单条命令（单次非工具模式），直接调用 LLM 并返回响应，不维护历史。
     // 无工具调用能力，适用于 REST API 或简单问答场景。
     llm::LLMResponse execute(const std::string& command,
@@ -140,11 +140,12 @@ private:
     // 构建最终发给 LLM 的系统提示词。
     std::string buildEffectivePrompt(llm::Conversation& conversation);
 
+private:
+
     llm::LLMClientFactory& factory_;                //  LLM 客户端工厂，供并行模式创建子 Agent
     std::unique_ptr<llm::ILLMClient> client_;       //  Agent 自己的独立 LLMClient
     ToolRegistry& registry_;                        //  工具注册表
-    llm::Conversation conversation_;                //  对话历史
-    std::string system_prompt_;                     //  系统提示词
+    llm::Conversation conversation_;                //  对话历史（含 system prompt）
     int max_tool_rounds_ = 10;                      //  最大工具调用轮数
     ContextManager* context_manager_ = nullptr;     //  上下文管理器（非拥有指针）
     int max_context_tokens_ = 131072;               //  最大上下文 token 数

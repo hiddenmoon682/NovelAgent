@@ -50,9 +50,8 @@ SubAgentResult SubAgent::execute(const SubAgentConfig& config)
             ToolCallLoop loop(*client_, tools_);
             loop.setCancelled(&cancelled_);
             ToolCallLoopConfig cfg;
-            cfg.max_rounds = config.max_tool_rounds;
-            cfg.first_round_streaming = false;  // SubAgent 无需流式输出
-            cfg.max_repeated_calls = 3;
+            cfg.setMaxRounds(config.max_tool_rounds)
+               .setMaxRepeatedCalls(3);
 
             auto loop_result = loop.run(
                 localConv, tool_defs, config.system_prompt, {}, cfg);

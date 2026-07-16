@@ -460,7 +460,7 @@ void ReplHandler::run() {
         try {
             gui_.startSpinner("思考");
             auto callbacks = StreamDisplay::create(out_);
-            auto response = agent_.processUserMessage(input, callbacks);
+            auto response = agent_.process(input, callbacks);
             gui_.stopSpinner();
             if (response.finish_reason == "length") gui_.writeWarning("回复较长，部分被截断。输入[继续]可续写。");
             else if (response.finish_reason == "content_filter") gui_.writeWarning("部分内容因安全策略被过滤。");

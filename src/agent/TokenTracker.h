@@ -143,7 +143,7 @@ public:
 
 private:
     SessionTokenState state_;
-    int current_context_size_ = 0;       //  record() 写入的上次请求 input_tokens，check() 无参版用量检查用
+    int current_context_size_ = 0;       //  record() 写入的上次 API 请求的 prompt_tokens（含全量上下文），check() 无参版用量检查用
     int last_output_tokens_ = 0;         //  record() 写入的上次请求 output_tokens
     int current_total_tokens_ = 0;       //  setCurrentTotalTokens() 写入，调用方（assemble）刚算出的 sys+msg 总和，供校准回传和 usagePercent()
     int accumulated_raw_tokens_ = 0;     //  updateMessageTokens() 增量累计的原始消息 token 数（纯启发式，未校准），查询时统一乘当前校正因子

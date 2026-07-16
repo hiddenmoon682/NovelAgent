@@ -61,7 +61,7 @@ Agent::Agent(llm::LLMClientFactory& factory, ToolRegistry& registry)
 Agent::~Agent() = default;
 
 void Agent::setSystemPrompt(std::string prompt) {
-    system_prompt_ = std::move(prompt);
+    conversation_.setSystemPrompt(std::move(prompt));
 }
 void Agent::setMaxToolRounds(int n) {
     max_tool_rounds_ = (n >= 1) ? n : 1;
@@ -175,7 +175,7 @@ void Agent::loadSessionState() {
 void Agent::useParallelProcessor(TemplateManager* tm) {
     parallel_mode_ = true;
     if (!orchestrator_) {
-        orchestrator_ = std::make_unique<AgentOrchestrator>(factory_, registry_, system_prompt_);
+        orchestrator_ = std::make_unique<AgentOrchestrator>(factory_, registry_, conversation_.systemPrompt());
     }
     if (tm) {
         orchestrator_->setTemplateManager(tm);
@@ -207,14 +207,14 @@ std::string Agent::buildEffectivePrompt(llm::Conversation& conversation)
 {
     // ── 路径 A：无 ContextManager（直通模式） ──
     if (!context_manager_) {
-        return system_prompt_;
+        return conversation_.systemPrompt();
     }
 
     // ── 路径 B：有 ContextManager（动态上下文模式） ──
     auto assembly = context_manager_->assemble(conversation, max_context_tokens_, &*client_);
 
     PromptComponents pc;
-    pc.personality = system_prompt_;
+    pc.personality = conversation_.systemPrompt();
     pc.context = assembly.system_prompt;
     return PromptComposer::compose(pc);
 }
@@ -249,11 +249,22 @@ Agent::InternalResult Agent::processSerial(
     // ── 步骤 5: 配置 ToolCallLoop ──
     ToolCallLoop loop(*client_, registry_, &state_);
     ToolCallLoopConfig config;
-    config.max_rounds = max_tool_rounds_;
-    config.all_rounds_streaming = false;
-    config.max_repeated_calls = 3;
-    config.timeout = std::chrono::seconds(0);
-    config.token_warning_threshold = 0;
+    config.setMaxRounds(max_tool_rounds_)
+          .setMaxRepeatedCalls(3)
+          .setTimeout(std::chrono::seconds(0))
+          .setTokenWarningThreshold(0);
+    // 每轮完成后实时更新 TokenTracker，接近上限时自动压缩旧历史
+    config.hooks.on_round_complete = [this](int input, int output) {
+        if (!context_manager_) return;
+        context_manager_->recordUsage(input, output);
+        auto status = context_manager_->checkThresholds();
+        if (status.status >= ContextStatus::AutoCompact && status.status != ContextStatus::Error) {
+            spdlog::info("[Agent] 工具循环中上下文较高 ({}%), 自动压缩旧历史",
+                         status.usage_percent);
+            context_manager_->compact(conversation_, *client_,
+                "自动压缩：工具调用循环中上下文不足");
+        }
+    };
 
     // ── 步骤 6: 执行 ToolCallLoop ──
     auto result = loop.run(conversation, tools, effective_system_prompt,
@@ -271,12 +282,7 @@ Agent::InternalResult Agent::processSerial(
         }
     }
 
-    // ── 步骤 8: 记录 token 消耗 ──
-    if (context_manager_) {
-        context_manager_->recordUsage(result.input_tokens, result.output_tokens);
-    }
-
-    // ── 步骤 9: 返回结果 ──
+    // ── 步骤 8: 返回结果 ──
     InternalResult r;
     r.raw_response = result.response;
     if (!result.response.content.empty() || !result.response.tool_calls.empty()) {
@@ -304,16 +310,16 @@ Agent::InternalResult Agent::processParallel(
 
     // 惰性创建编排器
     if (!orchestrator_) {
-        orchestrator_ = std::make_unique<AgentOrchestrator>(factory_, registry_, system_prompt_);
+        orchestrator_ = std::make_unique<AgentOrchestrator>(factory_, registry_, conversation_.systemPrompt());
     }
 
     // ── 上下文组装 ──
     try {
-        std::string effective_system_prompt = system_prompt_;
+        std::string effective_system_prompt = conversation_.systemPrompt();
         if (context_manager_) {
             auto assembly = context_manager_->assemble(conversation, max_context_tokens_, nullptr);
             if (!assembly.system_prompt.empty())
-                effective_system_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
+                effective_system_prompt = conversation_.systemPrompt() + "\n\n" + assembly.system_prompt;
         }
         orchestrator_->setMainPrompt(effective_system_prompt);
     } catch (const std::exception& e) {
@@ -401,7 +407,7 @@ Agent::InternalResult Agent::processParallel(
 }
 
 // ============================================================================
-// processUserMessage — Agent 核心入口
+// process — Agent 核心入口
 //
 // 职责：接收用户自然语言输入，根据并行标志选择处理路径，返回最终回复。
 //
@@ -416,7 +422,7 @@ Agent::InternalResult Agent::processParallel(
 //   8. 返回结果   — LLMResponse（含文本、token 计数、tool_call 详情）
 // ============================================================================
 
-llm::LLMResponse Agent::processUserMessage(const std::string& input,
+llm::LLMResponse Agent::process(const std::string& input,
                                             llm::StreamCallbacks callbacks)
 {
     // ── 步骤 1: 输入守卫 ──
@@ -521,13 +527,13 @@ llm::LLMResponse Agent::execute(const std::string& command,
 
     std::vector<llm::Message> messages = { llm::Message::user(command) };
     auto tools = registry_.getToolDefinitions();
-    std::string effective_system_prompt = system_prompt_;
+    std::string effective_system_prompt = conversation_.systemPrompt();
     if (context_manager_) {
         llm::Conversation tempConv;
         tempConv.addUser(command);
         auto assembly = context_manager_->assemble(tempConv, max_context_tokens_);
         if (!assembly.system_prompt.empty())
-            effective_system_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
+            effective_system_prompt = conversation_.systemPrompt() + "\n\n" + assembly.system_prompt;
     }
 
     try {

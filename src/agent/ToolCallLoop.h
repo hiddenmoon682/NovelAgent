@@ -17,23 +17,34 @@
 
 namespace agent {
 
+// 工具调用循环每轮完成后的回调集合（可选）。
+// SubAgent 不传 hooks，不影响轻量路径。
+struct ToolCallLoopHooks {
+    // 每轮 LLM 调用完成后触发（含首轮、后续轮次、反思路径）。
+    // input_tokens / output_tokens 为当前轮次的 token 数（非累计）。
+    std::function<void(int input_tokens, int output_tokens)> on_round_complete;
+};
+
 struct ToolCallLoopConfig {
     int max_rounds = 10;
-    // 首轮 LLM 调用是否启用流式输出（用户可见实时打字效果）。
-    // 默认 true：首轮流式，用户体验好。
-    bool first_round_streaming = true;
-    // 后续 tool_call 轮次是否也启用流式输出。
-    // 默认 false：减少 SSE 连接开销。设为 true 可让用户在中间轮次也看到 LLM 输出，
-    // 但会增加网络流量和 API 调用延迟。
-    // 注意：即使设为 true，后续轮次也会通过 SSE 连接发送数据，
-    // 流式连接与回调触发是不同机制；仅在首轮触发用户回调。
-    bool all_rounds_streaming = false;
+    // 是否启用流式输出（未使用——run() 中始终流式）。
+    bool streaming = true;
     std::chrono::seconds timeout{0};
     int max_repeated_calls = 3;
     int token_warning_threshold = 0;
     // CRIT-2: 最大反思轮数。检测到重复工具调用后，注入反思 prompt 让 LLM 自修正，
     // 达到此上限后仍未解决则终止（默认 3 轮）。0=不启用反思直接终止。
     int max_reflection_rounds = 3;
+    // 可选回调，用于每轮完成后的 token 跟踪和上下文管理。
+    ToolCallLoopHooks hooks;
+
+    // ── 流式 setter（支持链式调用）──
+    ToolCallLoopConfig& setMaxRounds(int n) { max_rounds = n; return *this; }
+    ToolCallLoopConfig& setStreaming(bool v) { streaming = v; return *this; }
+    ToolCallLoopConfig& setTimeout(std::chrono::seconds t) { timeout = t; return *this; }
+    ToolCallLoopConfig& setMaxRepeatedCalls(int n) { max_repeated_calls = n; return *this; }
+    ToolCallLoopConfig& setTokenWarningThreshold(int t) { token_warning_threshold = t; return *this; }
+    ToolCallLoopConfig& setMaxReflectionRounds(int n) { max_reflection_rounds = n; return *this; }
 };
 
 struct ToolCallLoopResult {

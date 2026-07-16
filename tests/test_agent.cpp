@@ -113,7 +113,7 @@ void test_simple_conversation() {
     agent::ToolRegistry registry;
     agent::Agent agent(factory, registry);
 
-    auto response = agent.processUserMessage("Hi");
+    auto response = agent.process("Hi");
 
     CHECK(response.content == "你好，我是助手");
     CHECK(response.finish_reason == "stop");
@@ -157,8 +157,11 @@ void test_tool_call_loop() {
                 llm::test::sseDone;
             res.set_content(body, "text/event-stream");
         } else {
-            // 第二次：非流式，返回最终文本
-            res.set_content(nonStreamJson("工具已执行完毕"), "application/json");
+            // 第二次：流式，返回最终文本
+            std::string body = llm::test::sseContentChunk("工具已执行完毕") +
+                               llm::test::sseFinishChunk("stop") +
+                               llm::test::sseDone;
+            res.set_content(body, "text/event-stream");
         }
     });
     server.start();
@@ -179,7 +182,7 @@ void test_tool_call_loop() {
     );
 
     agent::Agent agent(factory, registry);
-    auto response = agent.processUserMessage("echo test");
+    auto response = agent.process("echo test");
 
     CHECK(response.content == "工具已执行完毕");
     CHECK(call_count == 2);
@@ -258,11 +261,11 @@ void test_conversation_management() {
     agent::Agent agent(factory, registry);
 
     // 第一轮
-    agent.processUserMessage("第一句话");
+    agent.process("第一句话");
     CHECK(agent.conversation().size() == 2);
 
     // 第二轮
-    agent.processUserMessage("第二句话");
+    agent.process("第二句话");
     CHECK(agent.conversation().size() == 4);
 
     // 清空
@@ -291,7 +294,7 @@ void test_empty_input() {
     agent::ToolRegistry registry;
     agent::Agent agent(factory, registry);
 
-    auto response = agent.processUserMessage("");
+    auto response = agent.process("");
     CHECK(response.content.empty());
     CHECK(agent.conversation().empty());
 
@@ -326,7 +329,7 @@ void test_exception_recovery() {
     CHECK(agent.canAcceptInput());
 
     // 调用 processUserMessage — 内部应捕获异常并恢复
-    auto response = agent.processUserMessage("应该不崩溃");
+    auto response = agent.process("应该不崩溃");
     // 异常恢复后返回空响应
     CHECK(response.content.empty());
 
@@ -380,7 +383,7 @@ void test_session_persisted_after_message() {
     json before = json::parse(utils::file::readText(convPath));
     CHECK(before.is_array() && before.empty());
 
-    auto response = agent.processUserMessage("帮我写第二章开头");
+    auto response = agent.process("帮我写第二章开头");
     CHECK(response.content == "第二章开头");
 
     // 处理后：conversation.json 应已被增量保存，含本轮 user + assistant 两条消息

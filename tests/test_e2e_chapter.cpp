@@ -1,7 +1,7 @@
 // 端到端集成测试 — Agent + Chapter 工具 + DeepSeek API。
 //
 // 验证完整闭环：
-//   用户输入 → Agent.processUserMessage()
+//   用户输入 → Agent.process()
 //            → ContextManager.assemble()
 //            → LLMClient.chat() [DeepSeek API]
 //            → ToolRegistry.executeTool() [Chapter 工具]
@@ -147,7 +147,7 @@ int main() {
         };
 
         try {
-            auto response = agent.processUserMessage(
+            auto response = agent.process(
                 "请列出当前项目的所有章节", cb);
             std::cout << "\n\n  ── 响应摘要 ──\n";
             std::cout << "  Model: " << response.model << "\n";
@@ -174,7 +174,7 @@ int main() {
         };
 
         try {
-            auto response = agent.processUserMessage(
+            auto response = agent.process(
                 "请读取第一章（ch-001 序幕）的内容，并用一句话总结", cb);
             std::cout << "\n\n  ── 响应摘要 ──\n";
             std::cout << "  Model: " << response.model << "\n";

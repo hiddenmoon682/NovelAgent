@@ -73,7 +73,7 @@ constexpr const char* kCompactSystemPrompt =
     "避免过度概括或丢失已有摘要中的细节。";
 
 // Compaction 时保留的最近消息对数。
-constexpr int kCompactKeepExchanges = 10;   // 保留最近 10 对 = ~20 条消息
+constexpr int kCompactKeepExchanges = 3;   // 保留最近 10 对 = ~20 条消息
 constexpr int kMinKeepExchanges = 2;        // 最少保留 2 对 = 4 条消息
 } // namespace
 
