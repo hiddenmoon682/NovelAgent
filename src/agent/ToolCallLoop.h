@@ -3,7 +3,6 @@
 // Tool Call 循环引擎 — Fix #1: 依赖 IToolProvider& 替代 ToolRegistry&。
 // Agent 和 SubAgent 均可使用（SubAgent 传入 RestrictedToolProvider）。
 
-#include "agent/ExecutionTracer.h"
 #include "agent/IToolProvider.h"
 #include "llm/Conversation.h"
 #include "llm/ILLMClient.h"
@@ -55,7 +54,6 @@ class ToolCallLoop {
 public:
     // state 可选状态机指针（D1.1：工具执行前后触发状态转换，nullptr=不触发）
     ToolCallLoop(llm::ILLMClient& client, IToolProvider& tools,
-                 ExecutionTracer* tracer = nullptr,
                  StateMachine* state = nullptr);
 
     // Issue 21+26: 设置外部取消标志（SubAgent 的超时取消信号）。
@@ -73,7 +71,6 @@ public:
 private:
     llm::ILLMClient& client_;
     IToolProvider& tools_;  // Fix #1: IToolProvider& 替代 ToolRegistry&
-    ExecutionTracer* tracer_;
     StateMachine* state_;   // D1.1
     std::atomic<bool>* cancelled_ = nullptr;  // Issue 21+26: 外部取消信号
 

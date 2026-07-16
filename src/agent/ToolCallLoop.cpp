@@ -12,8 +12,8 @@
 namespace agent {
 
 ToolCallLoop::ToolCallLoop(llm::ILLMClient& client, IToolProvider& tools,
-                           ExecutionTracer* tracer, StateMachine* state)
-    : client_(client), tools_(tools), tracer_(tracer), state_(state)
+                           StateMachine* state)
+    : client_(client), tools_(tools), state_(state)
 {}
 
 bool ToolCallLoop::isRepeatedCall(
@@ -66,8 +66,6 @@ ToolCallLoopResult ToolCallLoop::run(
     // CRIT-2: 重置反思计数器
     reflection_rounds_ = 0;
 
-    if (tracer_) tracer_->record("llm_call", 0, 0);
-
     auto executeLoop = [&]() -> ToolCallLoopResult {
         ToolCallLoopResult r;
 
@@ -81,7 +79,6 @@ ToolCallLoopResult ToolCallLoop::run(
         r.total_tokens_used += response.total_tokens;
         r.input_tokens += response.prompt_tokens;
         r.output_tokens += response.completion_tokens;
-        if (tracer_) tracer_->record("llm_response", response.total_tokens, 0);
 
         if (config.token_warning_threshold > 0 &&
             r.total_tokens_used > config.token_warning_threshold) {
@@ -94,8 +91,6 @@ ToolCallLoopResult ToolCallLoop::run(
             if (cancelled_ && *cancelled_) {
                 r.cancelled = true;
                 r.error = "任务已取消";
-                if (tracer_) tracer_->record("error", r.total_tokens_used, 0,
-                    ErrorPayload{.reason = "外部取消信号", .round = round});
                 return r;
             }
 
@@ -137,16 +132,12 @@ ToolCallLoopResult ToolCallLoop::run(
                         repeated_tool_name, repeated_args, reflection_rounds_);
                     conversation.add(std::move(reflection));
 
-                    if (tracer_) tracer_->record("reflection", 0, 0,
-                        ReflectionPayload{.tool = repeated_tool_name, .round = reflection_rounds_});
-
                     // 跳过工具执行，直接调 LLM
                     response = client_.chatNonStreaming(
                         conversation.messages(), tools, system_prompt);
                     r.total_tokens_used += response.total_tokens;
                     r.input_tokens += response.prompt_tokens;
                     r.output_tokens += response.completion_tokens;
-                    if (tracer_) tracer_->record("llm_response", response.total_tokens, 0);
                     continue;
                 }
 
@@ -154,8 +145,6 @@ ToolCallLoopResult ToolCallLoop::run(
                 r.loop_detected = true;
                 r.error = "检测到重复工具调用循环，已自动终止（反思" +
                           std::to_string(reflection_rounds_) + "轮后未解决）";
-                if (tracer_) tracer_->record("error", r.total_tokens_used, 0,
-                    ErrorPayload{.reason = "重复工具调用循环（反思耗尽）", .round = round});
                 llm::Message err_msg;
                 err_msg.role = llm::MessageRole::Tool;
                 err_msg.content = "{\"error\":\"已经尝试了多种方法但陷入重复调用，请告知用户当前进度和遇到的问题。\"}";
@@ -168,14 +157,8 @@ ToolCallLoopResult ToolCallLoop::run(
             assistant.role = llm::MessageRole::Assistant;
             assistant.content = std::move(response.content);
             assistant.reasoning_content = std::move(response.reasoning_content);
-            assistant.tool_calls = response.tool_calls;  // 仍被后续 tracer 和 pipeline 使用
+            assistant.tool_calls = response.tool_calls;  // 仍被后续 pipeline 使用
             conversation.add(std::move(assistant));
-
-            if (tracer_) {
-                for (const auto& tc : response.tool_calls)
-                    tracer_->record("tool_call", 0, 0,
-                        ToolCallPayload{.name = tc.function_name, .args = tc.arguments});
-            }
 
             if (state_) state_->transition(AgentState::AwaitingTool);
 
@@ -183,8 +166,6 @@ ToolCallLoopResult ToolCallLoop::run(
             conversation.apply(diff);
 
             if (state_) state_->transition(AgentState::Thinking);
-
-            if (tracer_) tracer_->record("tool_result", 0, 0);
 
             // 后续 LLM 调用
             if (config.all_rounds_streaming)
@@ -194,8 +175,6 @@ ToolCallLoopResult ToolCallLoop::run(
             r.total_tokens_used += response.total_tokens;
             r.input_tokens += response.prompt_tokens;
             r.output_tokens += response.completion_tokens;
-
-            if (tracer_) tracer_->record("llm_response", response.total_tokens, 0);
 
             if (config.token_warning_threshold > 0 &&
                 r.total_tokens_used > config.token_warning_threshold) {
@@ -207,8 +186,6 @@ ToolCallLoopResult ToolCallLoop::run(
         r.response = response;
         r.rounds_executed = config.max_rounds;
         spdlog::warn("[ToolCallLoop] 达到最大轮数 ({})", config.max_rounds);
-        if (tracer_) tracer_->record("error", r.total_tokens_used, 0,
-            ErrorPayload{.reason = "达到最大工具调用轮数", .max_rounds = config.max_rounds});
         return r;
     };
 
@@ -217,8 +194,6 @@ ToolCallLoopResult ToolCallLoop::run(
         if (future.wait_for(config.timeout) == std::future_status::timeout) {
             result.timed_out = true;
             result.error = "工具调用循环超时 (" + std::to_string(config.timeout.count()) + "s)";
-            if (tracer_) tracer_->record("error", 0, static_cast<int>(config.timeout.count()) * 1000,
-                ErrorPayload{.reason = "工具调用循环超时", .timeout_s = config.timeout.count()});
             return result;
         }
         return future.get();

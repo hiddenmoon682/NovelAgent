@@ -87,7 +87,7 @@ SerialProcessor::Result SerialProcessor::process(
 
     // ── 步骤 5: 配置 ToolCallLoop ──
     // 创建 ToolCallLoop 实例并设置运行参数。
-    ToolCallLoop loop(client_, registry_, tracer_, state_); // 传递 StateMachine 用于工具执行状态转换
+    ToolCallLoop loop(client_, registry_, state_); // 传递 StateMachine 用于工具执行状态转换
     ToolCallLoopConfig config;
     config.max_rounds = max_tool_rounds_;              // 最大 tool_call 轮数
     config.all_rounds_streaming = false;               // 首轮流式 + 后续非流式

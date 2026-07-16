@@ -47,7 +47,7 @@ SubAgentResult SubAgent::execute(const SubAgentConfig& config)
 
             // 步骤 2: 在本地 Conversation 上执行 tool_call 循环（无锁）
             tracer_.clear();
-            ToolCallLoop loop(*client_, tools_, &tracer_);
+            ToolCallLoop loop(*client_, tools_);
             loop.setCancelled(&cancelled_);
             ToolCallLoopConfig cfg;
             cfg.max_rounds = config.max_tool_rounds;

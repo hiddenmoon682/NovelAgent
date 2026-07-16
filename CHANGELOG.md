@@ -1,5 +1,16 @@
 # Changelog
 
+## [2026-07-16] 删除 ToolCallLoop 中所有 tracer 记录
+
+> 删除 ToolCallLoop 中全部的 tracer_->record() 调用、tracer_ 成员变量、
+> 构造函数参数，以及相关的 ErrorPayload/ReflectionPayload/ToolCallPayload 引用。
+
+### 源码清理
+- `ToolCallLoop.h`：删除 `#include ExecutionTracer.h`、tracer 构造函数参数、tracer_ 成员
+- `ToolCallLoop.cpp`：删除全部 10 处 tracer_->record() 调用
+- `IMessageProcessor.cpp`：更新 ToolCallLoop 构造调用（去掉 tracer 参数）
+- `SubAgent.cpp`：更新 ToolCallLoop 构造调用（去掉 tracer 参数）
+
 ## [2026-07-16] 删除 ToolCallLoop 中不必要的计时代码
 
 > 移除 `ToolCallLoop::run()` 内部全部 8 次 `steady_clock::now()` 调用，
