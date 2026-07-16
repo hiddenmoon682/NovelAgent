@@ -42,7 +42,7 @@ response = client_.chat(conversation.messages(), tools, system_prompt, {});
 
 ### 1. 陈旧快照问题（Bug）
 
-`initial_messages` 是在 `run()` 调用前从 `conversation` 拷贝的快照。如果 `run()` 内部修改了 `conversation`（例如预思考步骤 `use_thinking_step` 通过 `conversation.addAssistant()` 注入推理结果），首轮 LLM 调用看不到这些变化：
+`initial_messages` 是在 `run()` 调用前从 `conversation` 拷贝的快照。如果 `run()` 内部修改了 `conversation`（旧版预思考步骤曾通过 `conversation.addAssistant()` 注入推理结果），首轮 LLM 调用看不到这些变化。**注：预思考代码已于 2026-07-16 清理，此处仅为历史记录。**
 
 ```
 SerialProcessor::process()
@@ -50,7 +50,7 @@ SerialProcessor::process()
     │     └── effective_messages = conversation.messages()  // 快照 A
     │
     └── loop.run(conversation, ..., &effective_messages)
-          ├── thinking_step:
+          ├── [旧] thinking_step（已清理）:
           │     conversation.addAssistant(推理结果)          // conversation → 快照 B
           │
           └── 首轮:

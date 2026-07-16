@@ -1,5 +1,18 @@
 # Changelog
 
+## [2026-07-16] 清理预思考代码（A4 use_thinking_step）
+
+> 按 PLAN_MODE_CLEANUP_PLAN.md 执行：删除 `use_thinking_step` 字段及相关代码块，为 Plan Mode 从零设计扫清障碍。
+
+### 源码清理
+- `ToolCallLoop.h`：删除 `use_thinking_step` 字段及注释
+- `ToolCallLoop.cpp`：删除预思考步骤代码块（A4 ReAct 思考阶段）
+
+### 文档同步
+- `docs/design/plan_mode.md`：标记为 obsolete（旧代码已清理，待重写）
+- `docs/review/REVIEW_STATUS.md`：A4 行更新为"已清理"
+- `docs/review/INITIAL_MESSAGES_REVIEW_2026-07-16.md`：更新预思考相关引用
+
 ## [2026-07-16] 架构审查文档整理 + 注释修正
 
 > 系统提示词所有权审查、initial_messages 参数审查、命名问题审查等三份文档写入 `docs/review/`。

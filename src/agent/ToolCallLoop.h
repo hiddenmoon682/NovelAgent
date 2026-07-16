@@ -35,10 +35,6 @@ struct ToolCallLoopConfig {
     // CRIT-2: 最大反思轮数。检测到重复工具调用后，注入反思 prompt 让 LLM 自修正，
     // 达到此上限后仍未解决则终止（默认 3 轮）。0=不启用反思直接终止。
     int max_reflection_rounds = 3;
-    // A4: 启用预思考步骤。开启后在工具调用循环前额外做一轮无工具的 LLM 调用，
-    // 让 LLM 先推理再行动（ReAct 模式：思考→行动→观察）。
-    // 默认 false 以节省 token。对复杂创作任务（规划章节、分析角色弧光）建议开启。
-    bool use_thinking_step = false;
 };
 
 struct ToolCallLoopResult {

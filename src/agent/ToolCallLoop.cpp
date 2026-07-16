@@ -73,28 +73,6 @@ ToolCallLoopResult ToolCallLoop::run(
     auto executeLoop = [&]() -> ToolCallLoopResult {
         ToolCallLoopResult r;
 
-        // ── A4: 预思考步骤（可选）—— ReAct 模式的"思考"阶段 ──
-        // 在暴露工具之前让 LLM 先推理任务目标和信息需求。
-        // 此步骤不提供工具定义，LLM 只能输出文本推理，不能调用工具。
-        // 推理文本作为 assistant 消息注入对话，后续工具循环可以引用。
-        if (config.use_thinking_step) {
-            std::string thinking_prompt = system_prompt + "\n\n"
-                "在调用任何工具之前，请先分析当前任务：\n"
-                "1. 用户想要什么？\n"
-                "2. 我已经知道哪些信息？\n"
-                "3. 我还需要获取哪些信息？需要调用什么工具？\n"
-                "4. 我的计划是什么？\n\n"
-                "请先输出你的分析，然后我会让你调用工具来执行计划。";
-                
-            const auto& think_msgs = (initial_messages && !initial_messages->empty())
-                ? *initial_messages : conversation.messages();
-            auto think_response = client_.chatNonStreaming(think_msgs, {}, thinking_prompt);
-            if (!think_response.content.empty()) {
-                conversation.addAssistant(think_response.content);
-                if (tracer_) tracer_->record("thinking_step", think_response.total_tokens, 0);
-            }
-        }
-
         // ── 首轮（带工具）──
         const auto& first_msgs = (initial_messages && !initial_messages->empty())
             ? *initial_messages : conversation.messages();
