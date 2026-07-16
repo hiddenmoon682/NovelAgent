@@ -61,9 +61,9 @@ ToolCallLoopResult ToolCallLoop::run(
     const ToolCallLoopConfig& config,
     const std::vector<llm::Message>* initial_messages)
 {
-    ToolCallLoopResult result;                                      // 最终结果（含 LLM 回复、token 统计、超时/取消标志）
-    ToolPipeline pipeline(tools_, conversation);                    // 工具执行管线：校验参数 → 执行 → 截断结果 → 生成 diff
-    std::unordered_map<std::string, int> call_history;              // 调用历史：tool_name:args_json → 调用次数，用于重复检测
+    ToolCallLoopResult result;                            // 最终结果（含 LLM 回复、token 统计、超时/取消标志）
+    ToolPipeline pipeline(tools_, conversation);          // 工具执行管线：校验参数 → 执行 → 截断结果 → 生成 diff
+    std::unordered_map<std::string, int> call_history;    // 调用历史：tool_name:args_json → 调用次数，用于重复检测
 
     // CRIT-2: 重置反思计数器
     reflection_rounds_ = 0;

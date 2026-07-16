@@ -1,6 +1,6 @@
 # NovelAgent 审查状态总览
 
-> 最后更新：2026-07-14
+> 最后更新：2026-07-15
 
 ---
 
@@ -133,3 +133,62 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 ## 最终结论
 
 **当前无待修 bug。** 所有剩余标记均为中/低严重度的设计偏好或边缘场景。
+
+---
+
+## 六、架构审查（ARCHITECTURE_REVIEW_2026-06-30.md）— 11 项
+
+### 已修复/已关闭（8 项）
+
+**已即时修复（首批）**
+
+| # | 问题 | 修复方式 |
+|---|------|---------|
+| — | 反射消息角色伪造 | 增加角色校验 |
+| — | ParallelProcessor 上下文盲区 | 补充上下文传递 |
+
+**A 批**
+
+| # | 问题 | 修复方式 |
+|---|------|---------|
+| A1 | 串行线程创建（超时机制） | 设置 ToolCallLoop timeout=300s 防止主线程永久阻塞，后改为 0s 依赖 HTTP read_timeout |
+| A2 | 持久化问题 | 已验证安全的现有行为 |
+| A3 | SubAgent 轨迹可见性 | 补充轨迹冒泡 |
+| A4 | ReAct 预思考步骤 | 完善预思考逻辑 |
+
+**B 批**
+
+| # | 问题 | 修复方式 |
+|---|------|---------|
+| B1 | `isParallelEnabled()` 用 `dynamic_cast` | 改为 `IMessageProcessor::isParallel()` 虚方法 |
+| B3 | `TokenTracker::record()` 只记 input_tokens | 新增 `last_output_tokens_` 追踪输出 token |
+| B4 | `Conversation::messages()` 每次深度复制 | 改为返回 `const std::vector<Message>&` 零拷贝 |
+| B6 | `ExecutionTracer` payload 非强类型 | 改用 `TracePayload` variant 结构化类型 |
+
+**C 批**
+
+| # | 问题 | 关闭原因 |
+|---|------|---------|
+| C2 | `REGISTER_TOOL` 静态初始化器膨胀 | 自注册的 DX 收益大于静态初始化的开销，工具数达到 50+ 前无需处理 |
+| C3 | `ConversationDiff::pinned_indices` 偏移风险 | 注释已修正为 `diff.added` 内部索引 |
+| C5 | ShellTools 别名覆盖不全 | false negative 不影响安全性，后续工具数稳定后再考虑补全 |
+| C6 | ThreadPool.h 注释是英文 | 注释已完整汉化 |
+
+### 待处理（3 项）
+
+见 `ARCHITECTURE_REVIEW_2026-06-30.md`：B2（无模板并行降级）、C1（硬编码超时）、C4（RewindTo 丢弃 pinned 消息）。
+
+---
+
+## 七、工具注册缺失（TOOL_REGISTRATION_GAP.md）— 4 项，已修复
+
+> 发现日期：2026-07-14 · 修复日期：2026-07-15
+
+| # | 工具名 | 类名 | 文件 | 状态 |
+|---|--------|------|------|------|
+| 1 | `get_chapter_context` | `GetChapterContextTool` | `ChapterContextTools.cpp` | ✅ 已补充 `REGISTER_TOOL` |
+| 2 | `get_relevant_characters` | `GetRelevantCharactersTool` | `RelevantCharacterTools.cpp` | ✅ 已补充 `REGISTER_TOOL` |
+| 3 | `get_relevant_settings` | `GetRelevantSettingsTool` | `RelevantSettingTools.cpp` | ✅ 已补充 `REGISTER_TOOL` |
+| 4 | `get_relevant_world_rules` | `GetRelevantWorldRulesTool` | `RelevantWorldRuleTools.cpp` | ✅ 已补充 `REGISTER_TOOL` |
+
+> 这 4 个工具已在编译中但缺少注册宏，LLM 在提示词中被指导使用它们却永远收到"工具未找到"——静默失效已修复。

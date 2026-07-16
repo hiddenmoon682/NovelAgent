@@ -10,7 +10,7 @@ namespace llm {
 // 生产者（ToolPipeline/SubAgent）返回 diff，消费者（Conversation）统一 apply。
 struct ConversationDiff {
     std::vector<Message> added;          //  按顺序追加的消息
-    std::vector<size_t> pinned_indices;  //  需 pin 的消息索引（相对于 apply 前状态）
+    std::vector<size_t> pinned_indices;  //  需 pin 的消息在 diff.added 中的索引，非全局索引。apply() 自动加 base_offset
     bool retryable = false;              //  错误是否可重试（由 ToolPipeline 设置）
 };
 

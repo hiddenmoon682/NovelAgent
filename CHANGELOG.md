@@ -1,5 +1,29 @@
 # Changelog
 
+## [2026-07-16] 修复工具注册缺失 + 清理架构审查文档
+
+> 修复 4 个工具缺少 REGISTER_TOOL 宏导致的静默失效（LLM 被指导使用却永远收到"工具未找到"）。
+> 更新架构审查文档，已修复项移至新文件 ARCHITECTURE_REVIEW_RESOLVED.md，仅保留 3 项待处理。
+> 删除过时分析文档：MAYBE_AUTO_COMPACT.md（全索引模式已解决）、TOOL_REGISTRATION_GAP.md（已修复）。
+> 新增设计文档：Plan Mode 用户可控预思考步骤、A4 条件化 Thinking Step Detector。
+
+### Bug 修复
+- `ChapterContextTools.cpp` / `RelevantCharacterTools.cpp` / `RelevantSettingTools.cpp` / `RelevantWorldRuleTools.cpp`：4 个工具补充 `REGISTER_TOOL` 宏，消除编译有定义但运行时不可用的静默失效
+
+### 文档清理
+- `ARCHITECTURE_REVIEW_2026-06-30.md`：精简为仅含 B2/C1/C4 三项待处理问题，其余已修复/已关闭
+- `REVIEW_STATUS.md`：新增第六节（架构审查 11 项分类统计）、第七节（工具注册缺失审查结论）
+- 删除 `MAYBE_AUTO_COMPACT.md`（章节切换自动压缩设计问题，已通过全索引模式解决）
+- 删除 `TOOL_REGISTRATION_GAP.md`（工具注册缺失记录，已修复）
+
+### 代码微调
+- `ToolCallLoop.cpp`：注释缩进对齐
+- `Conversation.h`：`pinned_indices` 注释修正为明确索引范围为 `diff.added` 内部
+
+### 新增设计文档
+- `docs/design/plan_mode.md`：Plan Mode 用户可控预思考步骤设计（状态：待审查）
+- `docs/design/thinking_step_detector.md`：A4 条件化 Thinking Step Detector 重构设计（状态：待审查）
+
 ## [2026-07-15] 修复 DeepSeek reasoning_content 丢失问题 + 可配置 Thinking 模式
 
 > 修复了三处 reasoning_content 丢失问题：(1) Message 结构体缺少字段，

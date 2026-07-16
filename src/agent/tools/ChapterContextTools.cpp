@@ -64,3 +64,5 @@ json GetChapterContextTool::execute(const json& args) {
 }
 
 } // namespace agent
+
+REGISTER_TOOL(agent::GetChapterContextTool, "get_chapter_context", get_chapter_context)

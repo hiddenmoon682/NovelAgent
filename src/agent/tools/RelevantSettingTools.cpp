@@ -58,3 +58,5 @@ json GetRelevantSettingsTool::execute(const json& args) {
 }
 
 } // namespace agent
+
+REGISTER_TOOL(agent::GetRelevantSettingsTool, "get_relevant_settings", get_relevant_settings)

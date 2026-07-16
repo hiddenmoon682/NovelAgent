@@ -59,3 +59,5 @@ json GetRelevantCharactersTool::execute(const json& args) {
 }
 
 } // namespace agent
+
+REGISTER_TOOL(agent::GetRelevantCharactersTool, "get_relevant_characters", get_relevant_characters)

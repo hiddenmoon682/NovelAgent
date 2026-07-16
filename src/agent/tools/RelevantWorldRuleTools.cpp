@@ -61,3 +61,5 @@ json GetRelevantWorldRulesTool::execute(const json& args) {
 }
 
 } // namespace agent
+
+REGISTER_TOOL(agent::GetRelevantWorldRulesTool, "get_relevant_world_rules", get_relevant_world_rules)
