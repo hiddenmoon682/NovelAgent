@@ -1,6 +1,6 @@
 # NovelAgent 审查状态总览
 
-> 最后更新：2026-07-16
+> 最后更新：2026-07-16（追加 §八 initial_messages 审查）
 
 ---
 
@@ -192,3 +192,20 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 | 4 | `get_relevant_world_rules` | `GetRelevantWorldRulesTool` | `RelevantWorldRuleTools.cpp` | ✅ 已补充 `REGISTER_TOOL` |
 
 > 这 4 个工具已在编译中但缺少注册宏，LLM 在提示词中被指导使用它们却永远收到"工具未找到"——静默失效已修复。
+
+---
+
+## 八、`initial_messages` 参数审查（INITIAL_MESSAGES_REVIEW_2026-07-16）— 5+1 项，已清零
+
+> 发现日期：2026-07-16 · 修复日期：2026-07-16（`initial_messages` 移除 + 计时删除 + tracer 删除）
+
+| # | 问题 | 修复方式 |
+|---|------|---------|
+| 1 | 陈旧快照问题：`initial_messages` 与 `conversation` 不同步 | 移除参数，首轮统一使用 `conversation.messages()` |
+| 2 | 首轮与后续轮次数据源不一致 | 同上，两阶段统一数据源 |
+| 3 | `conversation.messages()` fallback 死代码 | 删除三元表达式 |
+| 4 | `const auto&` 跨栈帧引用风险 | 移除参数 → 无跨栈引用 |
+| 5 | 设计冗余：`initial_messages` 已无实际用途 | `buildEffectivePrompt` 同步移除 `out_messages` 传出参数 |
+| 6 | 不必要计时：`steady_clock::now()` + `tracer_->record()` 全部无消费者 | 删除全部 8 次时钟调用 + 10 处 `tracer_->record()` 调用 |
+
+**涉及文件**：`ToolCallLoop.h` / `ToolCallLoop.cpp` / `IMessageProcessor.{h,cpp}` / `SubAgent.cpp`
