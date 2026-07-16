@@ -1,6 +1,6 @@
 # NovelAgent 审查状态总览
 
-> 最后更新：2026-07-16（追加 §八 initial_messages 审查）
+> 最后更新：2026-07-16（追加 §八 initial_messages 审查 + §九 命名问题）
 
 ---
 
@@ -209,3 +209,15 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 | 6 | 不必要计时：`steady_clock::now()` + `tracer_->record()` 全部无消费者 | 删除全部 8 次时钟调用 + 10 处 `tracer_->record()` 调用 |
 
 **涉及文件**：`ToolCallLoop.h` / `ToolCallLoop.cpp` / `IMessageProcessor.{h,cpp}` / `SubAgent.cpp`
+
+---
+
+## 九、命名问题审查（NAMING_ISSUES_REVIEW_2026-07-16）— 1 项，已清零
+
+> 发现日期：2026-07-16 · 修复日期：2026-07-16
+
+| # | 问题 | 修复方式 |
+|---|------|---------|
+| 1 | `effective_prompt` 命名歧义：变量名为"prompt"但实际存储系统提示词，与 `effective_messages` 形成误导性对仗 | 重命名为 `effective_system_prompt`，涉及 `SerialProcessor::process()`、`ParallelProcessor::process()`、`Agent::execute()` 三处 |
+
+**涉及文件**：`IMessageProcessor.cpp` / `Agent.cpp`

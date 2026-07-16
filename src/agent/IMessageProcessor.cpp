@@ -83,7 +83,7 @@ SerialProcessor::Result SerialProcessor::process(
     auto tools = registry_.getToolDefinitions();
 
     // ── 步骤 4: 构建最终提示词 ──
-    auto effective_prompt = buildEffectivePrompt(conversation);
+    auto effective_system_prompt = buildEffectivePrompt(conversation);
 
     // ── 步骤 5: 配置 ToolCallLoop ──
     // 创建 ToolCallLoop 实例并设置运行参数。
@@ -102,7 +102,7 @@ SerialProcessor::Result SerialProcessor::process(
     //   第 1 轮：将 system_prompt + 消息列表 + 工具定义 发给 LLM
     //   若返回 tool_call → 执行工具 → 结果追加到 conversation → 再次调用 LLM
     //   重复直到 LLM 返回纯文本回复或达到 max_rounds
-    auto result = loop.run(conversation, tools, effective_prompt,
+    auto result = loop.run(conversation, tools, effective_system_prompt,
                            std::move(callbacks), config);
 
     // ── 步骤 6.5: Token 校准回传 ──
@@ -240,15 +240,15 @@ ParallelProcessor::Result ParallelProcessor::process(
 
     // 并行模式补 ContextManager — 与 SerialProcessor 一样注入动态上下文
     try {
-        std::string effective_prompt = system_prompt_;
+        std::string effective_system_prompt = system_prompt_;
         if (context_manager_) {
             // 使用真实 conversation 而非临时单消息对话，确保上下文组装能看到
             // 完整的对话历史（token 预算、向量检索上下文、压缩摘要等）。
             auto assembly = context_manager_->assemble(conversation, max_context_tokens_, nullptr);
             if (!assembly.system_prompt.empty())
-                effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
+                effective_system_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
         }
-        orchestrator_->setMainPrompt(effective_prompt);
+        orchestrator_->setMainPrompt(effective_system_prompt);
     } catch (const std::exception& e) {
         spdlog::warn("[ParallelProcessor] 上下文组装失败，使用原始 prompt: {}", e.what());
     }

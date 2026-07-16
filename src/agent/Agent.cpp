@@ -353,19 +353,19 @@ llm::LLMResponse Agent::execute(const std::string& command,
 
     std::vector<llm::Message> messages = { llm::Message::user(command) };
     auto tools = registry_.getToolDefinitions();
-    std::string effective_prompt = system_prompt_;
+    std::string effective_system_prompt = system_prompt_;
     if (context_manager_) {
         llm::Conversation tempConv;
         tempConv.addUser(command);
         auto assembly = context_manager_->assemble(tempConv, max_context_tokens_);
         if (!assembly.system_prompt.empty())
-            effective_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
+            effective_system_prompt = system_prompt_ + "\n\n" + assembly.system_prompt;
     }
 
     // B8 补充：execute() 异常恢复，防止 LLM API 异常（网络超时、HTTP 错误）
     // 导致状态机卡在 Thinking 永久拒输入。与 processUserMessage() 的异常处理对齐。
     try {
-        auto response = client_->chat(messages, tools, effective_prompt, std::move(callbacks));
+        auto response = client_->chat(messages, tools, effective_system_prompt, std::move(callbacks));
         state_.transition(AgentState::Idle);
         return response;
     } catch (const std::exception& e) {

@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-07-16] 重命名 effective_prompt → effective_system_prompt
+
+> NAMING_ISSUES_REVIEW: `effective_prompt` 命名歧义已修复，明确其角色为"系统提示词"。
+
+### 源码清理
+- `IMessageProcessor.cpp`：`SerialProcessor::process()` 和 `ParallelProcessor::process()` 中重命名
+- `Agent.cpp`：`Agent::execute()` 中重命名
+
 ## [2026-07-16] 删除 ToolCallLoop 中所有 tracer 记录
 
 > 删除 ToolCallLoop 中全部的 tracer_->record() 调用、tracer_ 成员变量、
