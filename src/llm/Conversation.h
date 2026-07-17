@@ -87,8 +87,8 @@ public:
     // ================================================================
 
     // 返回系统提示词。
-    // System prompt 的实际来源是 Agent::system_prompt_（经过 PromptComposer 和
-    // ContextManager 动态注入），通过 LLMClient::chat() 的 system_prompt 参数单独传递。
+    // System prompt 的唯一来源。Agent::buildEffectivePrompt() 通过 PromptComposer 和
+    // ContextManager 动态注入上下文后，通过 LLMClient::chat() 的 system_prompt 参数传递。
     const std::string& systemPrompt() const { return system_prompt_; }
 
     // 获取不含 system 消息的对话历史（传给 LLMClient::chat）。

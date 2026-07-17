@@ -187,7 +187,7 @@ private:
 
     // ── Token 校准（自校准 TokenCounter）──
     llm::TokenCounter* calibrator_ = nullptr;  //  Token 校准器（非拥有，nullptr=降级）
-    std::string model_name_;                      //  当前模型名（用于按模型区分校准）
+    std::string model_name_;                   //  当前模型名（用于按模型区分校准）
 
     // ── 压缩实现细节 ──
     // 构建发送给压缩 LLM 的提示词（含对话文本和可选焦点）。

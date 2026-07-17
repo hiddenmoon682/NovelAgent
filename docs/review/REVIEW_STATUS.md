@@ -221,3 +221,32 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 | 1 | `effective_prompt` 命名歧义：变量名为"prompt"但实际存储系统提示词，与 `effective_messages` 形成误导性对仗 | 重命名为 `effective_system_prompt`，涉及 `SerialProcessor::process()`、`ParallelProcessor::process()`、`Agent::execute()` 三处 |
 
 **涉及文件**：`IMessageProcessor.cpp` / `Agent.cpp`
+
+---
+
+## 十、ToolCallLoop 超时机制问题（TIMEOUT_MECHANISM_REVIEW_2026-07-17）— 待处理
+
+> 发现日期：2026-07-17
+
+| # | 问题 | 状态 |
+|---|------|------|
+| 1 | `std::async` 超时后不杀线程，lambda `[&]` 捕获的局部引用变成悬空指针 → UB | 📋 计划删除 |
+| 2 | 写小说是长任务，硬超时可能打断正常执行 | 📋 计划删除 |
+| 3 | `max_rounds` + `cancelled_` 已提供足够的安全网，timeout 冗余 | 📋 计划删除 |
+
+**解决方案**：直接删除整个 timeout 机制（`config.timeout`、`setTimeout()`、`timed_out` 字段、超时分支）。  
+**详见** `TIMEOUT_MECHANISM_REVIEW_2026-07-17.md`
+
+---
+
+## 十一、ToolCallLoopResult token 字段归属问题（TOKEN_FIELDS_OWNERSHIP_REVIEW_2026-07-17）— 待处理
+
+> 发现日期：2026-07-17
+
+| # | 问题 | 状态 |
+|---|------|------|
+| 1 | `total_tokens_used` 无外部消费者，仅自身 warning 检查，且等于 `input_tokens + output_tokens` | 📋 待清理 |
+| 2 | `input_tokens` / `output_tokens` 注释称"供 ContextManager::recordUsage 使用"但实际无人这样用 | 📋 待更正 |
+| 3 | Agent 路径（hook）与 SubAgent 路径（result）token 记录方式不统一 | 📋 待统一 |
+
+**详见** `TOKEN_FIELDS_OWNERSHIP_REVIEW_2026-07-17.md`

@@ -176,8 +176,8 @@ ToolCallLoopResult ToolCallLoop::run(
             r.total_tokens_used += response.total_tokens;
             r.input_tokens += response.prompt_tokens;
             r.output_tokens += response.completion_tokens;
-        if (config.hooks.on_round_complete)
-            config.hooks.on_round_complete(response.prompt_tokens, response.completion_tokens, estimated);
+            if (config.hooks.on_round_complete)
+                config.hooks.on_round_complete(response.prompt_tokens, response.completion_tokens, estimated);
 
             if (config.token_warning_threshold > 0 &&
                 r.total_tokens_used > config.token_warning_threshold) {

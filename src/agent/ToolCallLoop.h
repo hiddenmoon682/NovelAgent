@@ -48,16 +48,29 @@ struct ToolCallLoopConfig {
     ToolCallLoopConfig& setMaxReflectionRounds(int n) { max_reflection_rounds = n; return *this; }
 };
 
+// ToolCallLoop::run() 的返回结果，包含 LLM 最终回复、终止原因及 token 统计。
+// 调用方（Agent / SubAgent）通过此结构判断循环是否正常结束、因何终止。
 struct ToolCallLoopResult {
+    // 最后一轮 LLM 的完整响应（含 content / tool_calls）。
+    // 正常结束时包含最终回复内容；反思终止时此字段可能为空。
     llm::LLMResponse response;
-    bool timed_out = false;
-    bool cancelled = false;            //  Issue 21+26: 外部取消信号触发
+
+    // ── 终止原因（三选一或互斥）──
+
+    bool timed_out = false;        //  超时终止 — 总执行时间超过 config.timeout
+    bool cancelled = false;        //  外部取消 — Issue 21+26: SubAgent 主动取消信号触发
+    bool loop_detected = false;    //  循环终止 — 反思轮数耗尽，重复工具调用仍未解决
+
+    // 人类可读的错误/终止描述。仅在 timed_out / cancelled / loop_detected 时非空。
+    // 例如："工具调用循环超时 (60s)" 或 "检测到重复工具调用循环，已自动终止（反思3轮后未解决）"
     std::string error;
-    int rounds_executed = 0;
-    int total_tokens_used = 0;
+
+    // ── 执行统计 ──
+
+    int rounds_executed = 0;       //  实际执行的 LLM 调用轮数（含首轮和反思路径的 LLM 调用）
+    int total_tokens_used = 0;     //  所有轮次累计 token 消耗（total = prompt + completion）
     int input_tokens = 0;          //  累计 prompt_tokens（所有轮次），供 ContextManager::recordUsage 使用
     int output_tokens = 0;         //  累计 completion_tokens（所有轮次），供 ContextManager::recordUsage 使用
-    bool loop_detected = false;
 };
 
 class StateMachine;
