@@ -39,8 +39,6 @@ static json tracePayloadToJson(const TracePayload& payload) {
             return json{{"input", p.input}};
         } else if constexpr (std::is_same_v<T, ToolCallPayload>) {
             return json{{"name", p.name}, {"args", p.args}};
-        } else if constexpr (std::is_same_v<T, ReflectionPayload>) {
-            return json{{"tool", p.tool}, {"round", p.round}};
         } else if constexpr (std::is_same_v<T, ParallelStartPayload>) {
             return json{{"input", p.input}};
         }

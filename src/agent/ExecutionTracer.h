@@ -40,11 +40,6 @@ struct ToolCallPayload {
     std::string args;                         // 参数 JSON 字符串
 };
 
-struct ReflectionPayload {
-    std::string tool;                         // 重复调用的工具名
-    int round = 0;                            // 反思轮次
-};
-
 struct ParallelStartPayload {
     std::string input;                        // 输入前 200 字符
 };
@@ -55,7 +50,6 @@ using TracePayload = std::variant<
     ErrorPayload,
     UserInputPayload,
     ToolCallPayload,
-    ReflectionPayload,
     ParallelStartPayload
 >;
 

@@ -250,3 +250,32 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 | 3 | Agent 路径（hook）与 SubAgent 路径（result）token 记录方式不统一 | 📋 待统一 |
 
 **详见** `TOKEN_FIELDS_OWNERSHIP_REVIEW_2026-07-17.md`
+
+---
+
+## 十二、反思机制名不副实问题（REFLECTION_MECHANISM_REVIEW_2026-07-17）— ✅ 已删除
+
+> 发现日期：2026-07-17 · 修复日期：2026-07-18
+
+| # | 问题 | 状态 |
+|---|------|------|
+| 1 | 反思仅注入模板消息，不做实质分析 | ✅ 已删除整个机制 |
+| 2 | 跳过 `pipeline.execute()`，不知道工具返回了什么 | ✅ 已删除 |
+| 3 | 模板消息不提供具体的修正方向 | ✅ 已删除 |
+| 4 | 每轮反思浪费一次 LLM 调用（Token 成本） | ✅ 已删除 |
+
+**解决方案**：不修复，直接删除。重复调用检测后直接以 `loop_detected` 终止，不再尝试"反思→重试"循环。
+
+**涉及文件**：`ToolCallLoop.h` / `ToolCallLoop.cpp` / `ExecutionTracer.h` / `ExecutionTracer.cpp` / `test_tool_call_loop.cpp`
+
+---
+
+## 十三、Token 计数字段命名不一致（TOKEN_FIELD_NAMING_REVIEW_2026-07-17）— ✅ 无需修改
+
+> 发现日期：2026-07-17 · 评估日期：2026-07-18
+
+| # | 问题 | 状态 |
+|---|------|------|
+| 1 | `LLMResponse` 用 `prompt_tokens`/`completion_tokens`，`ToolCallLoopResult` 用 `input_tokens`/`output_tokens`，两套命名混用 | ✅ 无需修改 |
+
+**评估结论**：两套命名处于不同抽象层（API DTO vs 业务结果），`response.prompt_tokens → r.input_tokens` 是层间合法映射。统一命名收益低（仅消除几行视觉差异），成本高（需 JSON 兼容层或大面积重命名）。

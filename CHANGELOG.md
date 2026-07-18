@@ -1,5 +1,20 @@
 # Changelog
 
+## [2026-07-18] 删除反思（Reflection）机制
+
+> REFLECTION_MECHANISM_REVIEW: ToolCallLoop 中的反思机制名不副实——检测到重复调用后仅注入模板消息就重新调 LLM，跳过工具执行、没有实际错误分析。每轮反思浪费一次 LLM 调用但无新信息，安全网由 `loop_detected` 终止保障。
+
+### 源码清理
+- `ToolCallLoop.h`：删除 `reflection_rounds_` 成员、`max_reflection_rounds` 字段+setter、`buildReflectionPrompt()` 声明、全部 `CRIT-2` 注释
+- `ToolCallLoop.cpp`：删除 `buildReflectionPrompt()` 方法体；`has_repeated` 分支简化为直接 `loop_detected` 终止；删除 `reflection_rounds_ = 0` 重置和 `CRIT-2` 注释
+- `ExecutionTracer.h`：删除 `ReflectionPayload` 结构体和 TracePayload variant 中条目（从未被任何代码 record）
+- `ExecutionTracer.cpp`：删除 `ReflectionPayload` 序列化分支
+- `test_tool_call_loop.cpp`：删除 `test_repeated_call_reflection()` 和 `test_reflection_exhausted()` 两个测试，更新文件头注释
+
+### 行为变化
+- 工具重复调用不再进入"反思→重试"循环，而是直接以 `loop_detected` 终止
+- `isRepeatedCall()` 重复检测逻辑保留，仍可识别并终止死循环
+
 ## [2026-07-16] 删除 IMessageProcessor 模块，内联串行/并行处理逻辑到 Agent
 
 > IMessageProcessor 策略模式存在 8 个属性与 Agent 完全重叠，6 个 setter 方法仅做转发

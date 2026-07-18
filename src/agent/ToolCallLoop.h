@@ -33,9 +33,6 @@ struct ToolCallLoopConfig {
     std::chrono::seconds timeout{0};
     int max_repeated_calls = 3;
     int token_warning_threshold = 0;
-    // CRIT-2: 最大反思轮数。检测到重复工具调用后，注入反思 prompt 让 LLM 自修正，
-    // 达到此上限后仍未解决则终止（默认 3 轮）。0=不启用反思直接终止。
-    int max_reflection_rounds = 3;
     // 可选回调，用于每轮完成后的 token 跟踪和上下文管理。
     ToolCallLoopHooks hooks;
 
@@ -45,7 +42,6 @@ struct ToolCallLoopConfig {
     ToolCallLoopConfig& setTimeout(std::chrono::seconds t) { timeout = t; return *this; }
     ToolCallLoopConfig& setMaxRepeatedCalls(int n) { max_repeated_calls = n; return *this; }
     ToolCallLoopConfig& setTokenWarningThreshold(int t) { token_warning_threshold = t; return *this; }
-    ToolCallLoopConfig& setMaxReflectionRounds(int n) { max_reflection_rounds = n; return *this; }
 };
 
 // ToolCallLoop::run() 的返回结果，包含 LLM 最终回复、终止原因及 token 统计。
@@ -99,16 +95,9 @@ private:
     StateMachine* state_;   // D1.1
     std::atomic<bool>* cancelled_ = nullptr;  // Issue 21+26: 外部取消信号
 
-    // CRIT-2: 当前反思轮数计数器（累计此 loop.run 调用中的反思次数）。
-    int reflection_rounds_ = 0;
-
     bool isRepeatedCall(const std::string& tool_name, const std::string& args_json,
                         std::unordered_map<std::string, int>& call_history,
                         int max_repeats) const;
-
-    // CRIT-2: 构建反思 prompt。告知 LLM 它陷入了重复调用循环，要求尝试不同方法。
-    static std::string buildReflectionPrompt(
-        const std::string& tool_name, const std::string& args_preview, int round);
 };
 
 } // namespace agent

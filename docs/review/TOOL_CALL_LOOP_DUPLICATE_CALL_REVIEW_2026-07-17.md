@@ -59,5 +59,4 @@ executeLoop:
 
 ## 相关文档
 
-反思路径中涉及反思机制本身（CRIT-2 名不副实）的问题已剥离至独立文档：
-➡ **详见 `REFLECTION_MECHANISM_REVIEW_2026-07-17.md`**
+- **重复调用循环终止后的错误消息污染上下文**：反思机制（现已删除）在 `loop_detected` 时曾向 conversation 注入 Tool 消息，后经评审已修正为不写入任何消息

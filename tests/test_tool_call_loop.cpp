@@ -1,4 +1,4 @@
-// ToolCallLoop 测试 — CRIT-2 反思机制验证 + 核心功能测试。
+// ToolCallLoop 测试 — 核心功能测试。
 
 #include "agent/ToolCallLoop.h"
 #include "agent/IToolProvider.h"
@@ -144,88 +144,6 @@ void test_direct_text_response() {
     auto result = loop.run(conv, registry.getToolDefinitions(), "", {}, {});
     CHECK(result.response.content == "好的，我明白了。");
     CHECK(result.rounds_executed == 0);  // 首轮就结束
-    PASS();
-}
-
-void test_repeated_call_reflection() {
-    TEST("CRIT-2 — 重复调用触发反思");
-    MockSeqLLMClient client;
-    // 连续 4 轮都返回同样的 read_chapter(ch-001)
-    for (int i = 0; i < 4; ++i) {
-        llm::LLMResponse r;
-        r.content = "";
-        r.finish_reason = "tool_calls";
-        llm::ToolCall tc;
-        tc.id = "call_" + std::to_string(i);
-        tc.function_name = "read_chapter";
-        tc.arguments = "{\"chapter_id\":\"ch-001\"}";
-        r.tool_calls.push_back(tc);
-        client.addResponse(r);
-    }
-    // 反思后：换了一个参数
-    {
-        llm::LLMResponse r;
-        r.content = "好的我将尝试其他方法";
-        r.finish_reason = "stop";
-        client.addResponse(r);
-    }
-
-    agent::ToolRegistry registry;
-    auto mockTool = std::make_unique<MockReadTool>();
-    registry.registerBuiltInTool(std::move(mockTool));
-
-    g_read_calls = 0;
-    llm::Conversation conv;
-    conv.addUser("分析第1章");
-
-    agent::ToolCallLoop loop(client, registry);
-    agent::ToolCallLoopConfig cfg;
-    cfg.max_rounds = 10;
-    cfg.max_repeated_calls = 3;     // 同一参数 3 次 → 触发
-    cfg.max_reflection_rounds = 3;  // 最多 3 轮反思
-
-    auto result = loop.run(conv, registry.getToolDefinitions(), "", {}, cfg);
-    // 反思触发后，LLM 最终回复了文本（而非 loop_detected）
-    CHECK(result.loop_detected == false);
-    // tool 仍然被调用了至少 3 次（触发 repeated 前）
-    // 注意：反思轮不执行工具，所以 read 调用数 ≤ 3
-    CHECK(g_read_calls <= 3);
-    PASS();
-}
-
-void test_reflection_exhausted() {
-    TEST("CRIT-2 — 反思耗尽后终止");
-    MockSeqLLMClient client;
-    // 连续 10 轮都返回同样的 read_chapter(ch-001)
-    for (int i = 0; i < 10; ++i) {
-        llm::LLMResponse r;
-        r.content = "";
-        r.finish_reason = "tool_calls";
-        llm::ToolCall tc;
-        tc.id = "call_" + std::to_string(i);
-        tc.function_name = "read_chapter";
-        tc.arguments = "{\"chapter_id\":\"ch-001\"}";
-        r.tool_calls.push_back(tc);
-        client.addResponse(r);
-    }
-
-    agent::ToolRegistry registry;
-    auto mockTool = std::make_unique<MockReadTool>();
-    registry.registerBuiltInTool(std::move(mockTool));
-
-    g_read_calls = 0;
-    llm::Conversation conv;
-    conv.addUser("分析第1章");
-
-    agent::ToolCallLoop loop(client, registry);
-    agent::ToolCallLoopConfig cfg;
-    cfg.max_rounds = 10;
-    cfg.max_repeated_calls = 3;
-    cfg.max_reflection_rounds = 2;  // 只允许 2 轮反思
-
-    auto result = loop.run(conv, registry.getToolDefinitions(), "", {}, cfg);
-    CHECK(result.loop_detected == true);  // 反思耗尽后应终止
-    CHECK(!result.error.empty());
     PASS();
 }
 
@@ -378,8 +296,6 @@ int main() {
 
     test_basic_tool_call();
     test_direct_text_response();
-    test_repeated_call_reflection();
-    test_reflection_exhausted();
     test_reasoning_content_preserved();
     test_cancellation();
     test_state_machine_transitions();
