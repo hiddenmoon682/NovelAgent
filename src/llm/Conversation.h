@@ -203,6 +203,16 @@ public:
         return result;
     }
 
+    // 清空所有 Assistant 消息中的 reasoning_content（思考过程）。
+    // 在 ToolCallLoop 结束后调用，释放上下文空间。
+    void stripReasoningContent() {
+        for (auto& msg : messages_) {
+            if (msg.role == MessageRole::Assistant) {
+                msg.reasoning_content.clear();
+            }
+        }
+    }
+
     // ── Issue 2: 批量修改（原子操作）──
     // 应用一组对话修改。add/addToolResult 之外的所有修改通过此方法集中执行。
     Conversation& apply(const ConversationDiff& diff) {

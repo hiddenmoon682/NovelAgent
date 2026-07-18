@@ -52,14 +52,15 @@ SubAgentResult SubAgent::execute(const SubAgentConfig& config)
             ToolCallLoopConfig cfg;
             cfg.setMaxRounds(config.max_tool_rounds)
                .setMaxRepeatedCalls(3);
+            cfg.hooks.on_round_complete = [&r](int input, int output, int) {
+                r.input_tokens += input;
+                r.output_tokens += output;
+            };
 
             auto loop_result = loop.run(
                 localConv, tool_defs, config.system_prompt, {}, cfg);
 
             r.output = loop_result.response.content;
-            r.input_tokens = loop_result.input_tokens;
-            r.output_tokens = loop_result.output_tokens;
-            if (loop_result.timed_out) { r.timed_out = true; r.error = loop_result.error; }
             if (loop_result.loop_detected) r.error = loop_result.error;
             if (loop_result.cancelled) { r.cancelled = true; r.error = loop_result.error; }
             // A3: 捕获轨迹摘要 — json summary() 转 string，供父 Agent 日志/调试

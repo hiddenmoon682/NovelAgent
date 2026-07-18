@@ -250,9 +250,7 @@ Agent::InternalResult Agent::processSerial(
     ToolCallLoop loop(*client_, registry_, &state_);
     ToolCallLoopConfig config;
     config.setMaxRounds(max_tool_rounds_)
-          .setMaxRepeatedCalls(3)
-          .setTimeout(std::chrono::seconds(0))
-          .setTokenWarningThreshold(0);
+          .setMaxRepeatedCalls(3);
     // 每轮完成后实时更新 TokenTracker + 校准 + 接近上限时自动压缩
     config.hooks.on_round_complete = [this](int input, int output, int estimated) {
         if (!context_manager_) return;
@@ -274,6 +272,9 @@ Agent::InternalResult Agent::processSerial(
     // ── 步骤 6: 执行 ToolCallLoop ──
     auto result = loop.run(conversation, tools, effective_system_prompt,
                            std::move(callbacks), config);
+
+    // ── 步骤 7: 清理循环中的思考过程（节省上下文空间）──
+    conversation.stripReasoningContent();
 
     // ── 步骤 8: 返回结果 ──
     InternalResult r;

@@ -239,17 +239,17 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 
 ---
 
-## 十一、ToolCallLoopResult token 字段归属问题（TOKEN_FIELDS_OWNERSHIP_REVIEW_2026-07-17）— 待处理
+## 十一、ToolCallLoopResult token 字段归属问题（TOKEN_FIELDS_OWNERSHIP_REVIEW_2026-07-17）— ✅ 已解决
 
-> 发现日期：2026-07-17
+> 发现日期：2026-07-17 · 修复日期：2026-07-18
 
 | # | 问题 | 状态 |
 |---|------|------|
-| 1 | `total_tokens_used` 无外部消费者，仅自身 warning 检查，且等于 `input_tokens + output_tokens` | 📋 待清理 |
-| 2 | `input_tokens` / `output_tokens` 注释称"供 ContextManager::recordUsage 使用"但实际无人这样用 | 📋 待更正 |
-| 3 | Agent 路径（hook）与 SubAgent 路径（result）token 记录方式不统一 | 📋 待统一 |
+| 1 | `total_tokens_used` 无外部消费者，仅自身 warning 检查 | ✅ 已删除；warning 检查一并移除（Agent 通过 ContextManager 管理预算） |
+| 2 | `input_tokens` / `output_tokens` 注释不准确 | ✅ 已删除；`ToolCallLoopResult` 不再包含 token 字段 |
+| 3 | Agent 与 SubAgent token 记录方式不统一 | ✅ 已统一：两者都通过 `on_round_complete` hook 记录 |
 
-**详见** `TOKEN_FIELDS_OWNERSHIP_REVIEW_2026-07-17.md`
+**方案**：`ToolCallLoopResult` 不再承担 token 传递职责。Agent 走 hook → `ContextManager::recordUsage()`；SubAgent 也走 hook → `SubAgentResult` → `Orchestrator`。
 
 ---
 
@@ -279,3 +279,19 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 | 1 | `LLMResponse` 用 `prompt_tokens`/`completion_tokens`，`ToolCallLoopResult` 用 `input_tokens`/`output_tokens`，两套命名混用 | ✅ 无需修改 |
 
 **评估结论**：两套命名处于不同抽象层（API DTO vs 业务结果），`response.prompt_tokens → r.input_tokens` 是层间合法映射。统一命名收益低（仅消除几行视觉差异），成本高（需 JSON 兼容层或大面积重命名）。
+
+---
+
+## 十四、ToolCallLoop 超时机制问题（TIMEOUT_MECHANISM_REVIEW_2026-07-17）— ✅ 已删除
+
+> 发现日期：2026-07-17 · 修复日期：2026-07-18
+
+| # | 问题 | 状态 |
+|---|------|------|
+| 1 | `std::async` 超时后不杀线程，`[&]` 捕获的局部引用变成悬空指针 → UB | ✅ 已删除整个 timeout 机制 |
+| 2 | 写小说是长任务，硬超时可能打断正常执行 | ✅ 已删除 |
+| 3 | `max_rounds` + `cancelled_` 已提供足够的安全网，timeout 冗余 | ✅ 已删除 |
+
+**方案**：直接删除。`ToolCallLoopConfig` 不再有 `timeout` 字段，`ToolCallLoopResult` 不再有 `timed_out` 字段，`std::async`/`<future>` 不再使用，循环体直接同步执行。Agent 和 SubAgent 各自通过 `max_rounds` 和 `cancelled_` 信号保障安全。
+
+**涉及文件**：`ToolCallLoop.h` / `ToolCallLoop.cpp` / `Agent.cpp` / `SubAgent.cpp`

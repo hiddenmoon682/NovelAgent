@@ -47,3 +47,7 @@ target_precompile_headers(test_deepseek_smoke REUSE_FROM novelagent_core)
 add_executable(test_e2e_chapter test_e2e_chapter.cpp)
 target_link_libraries(test_e2e_chapter PRIVATE novelagent_core novelagent_tools)
 target_precompile_headers(test_e2e_chapter REUSE_FROM novelagent_core)
+
+add_executable(test_e2e_reasoning_strip test_e2e_reasoning_strip.cpp)
+target_link_libraries(test_e2e_reasoning_strip PRIVATE novelagent_core novelagent_tools)
+target_precompile_headers(test_e2e_reasoning_strip REUSE_FROM novelagent_core)
