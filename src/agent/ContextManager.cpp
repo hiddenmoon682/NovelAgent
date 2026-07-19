@@ -222,7 +222,10 @@ CompactResult ContextManager::compact(
         result.tokens_after = response.completion_tokens;
 
         // 将 compact LLM 调用的 token 消耗计入会话统计
+        // （保存并恢复 current_context_size_，防止覆盖主对话的用量快照）
+        int saved_ctx = tracker_.currentContextSize();
         tracker_.record(response.prompt_tokens, response.completion_tokens);
+        tracker_.setCurrentContextSize(saved_ctx);
 
         // 将 compaction LLM 调用的真实 token 数回传给校准器
         if (calibrator_ && !model_name_.empty() && estimated_input > 0 && response.prompt_tokens > 0) {
