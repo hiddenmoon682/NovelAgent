@@ -1,6 +1,19 @@
 # Changelog
 
-## [2026-07-19] 修复 max_rounds 最后一轮工具调用 + 删除 stripReasoningContent
+## [2026-07-19] 完整修复串行工具调用流程 15 个发现（#6-#15）
+
+### Bug 修复
+- `ContextManager.cpp`：compact LLM 调用的 token 消耗计入 TokenTracker（`tracker_.record()`），压缩后更新上下文快照为压缩后的新对话大小。
+- `TokenCounter.cpp`：`countSingleMessage()` 和 `countMessages()` 新增 `reasoning_content` 字段的 token 统计。
+- `Agent.cpp`：processSerial 中 `ToolCallLoopResult` 的 `cancelled`/`loop_detected` 标志传播到 `LLMResponse::finish_reason`。
+- `ToolCallLoop.cpp`：`chat()` 调用和 `on_round_complete` hook 包裹 try-catch，异常时记录日志并重新抛出。修复 #10。
+- `Agent.cpp`：`process()` 和 `execute()` 的 6 个提前返回路径（空输入/校验失败/状态拒绝/异常）均设置 `finish_reason`，调用方可区分错误类型。修复 #11。
+- `Agent.cpp`：`buildEffectivePrompt()` 使用形参 `conversation` 而非成员 `conversation_`。修复 #12。
+
+### 源码清理 & 优化
+- `ToolCallLoop.h`：删除未使用的 `streaming` 字段和 `setStreaming()` setter。修复 #13。
+- `ToolPipeline.h/.cpp`：删除 `executeAndAppend()`（无调用点）及其关联的 `conversation_` 成员和双参数构造函数。修复 #14。
+- `ToolCallLoop.cpp`：`addAssistantFromResponse()` 的 tool_calls 拷贝处加警告注释，防止未来误改为 move。修复 #15。
 
 ### Bug 修复
 - `ToolCallLoop.cpp`：最后一轮调用 chat() 时移除工具定义并追加提示词，避免 LLM 再请求工具调用无法结束。修复 #1（max_rounds 退出时 assistant 双重添加 + content 丢失）。
