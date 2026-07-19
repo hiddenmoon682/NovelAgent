@@ -1,5 +1,29 @@
 # Changelog
 
+## [2026-07-19] 修复 max_rounds 最后一轮工具调用 + 删除 stripReasoningContent
+
+### Bug 修复
+- `ToolCallLoop.cpp`：最后一轮调用 chat() 时移除工具定义并追加提示词，避免 LLM 再请求工具调用无法结束。修复 #1（max_rounds 退出时 assistant 双重添加 + content 丢失）。
+- `ToolCallLoop.cpp`：取消路径将本轮响应加入对话（有 tool_calls 时追加终止结果），后续 LLM 可见任务已被取消。零额外 token 开销。
+- `ToolCallLoop.cpp`：正常路径中 `pipeline.execute()` 加 try-catch，异常时 `popBack()` 回滚已添加的孤立 assistant 消息。修复 #3。
+- `Agent.cpp`：processSerial 最终 assistant 消息补全 `reasoning_content` 复制。修复 #4。
+- `ToolCallLoop.cpp`：循环检测路径改为先加入 assistant(tool_calls) + 终止结果到对话（保证消息序列合法），再发一轮 chat() 通知 LLM 重复情况并获取最终文字答复。修复 #2（取消/循环检测退出丢弃有效响应）。
+
+> 不再清理任何 assistant 消息的 reasoning_content（思考过程）。理由：① 实现复杂度归零；
+> ② 保留推理过程不影响模型回复质量（实测保留时回复更连贯）；③ token 成本可忽略
+> （~几百 token/轮，对比 1M 窗口九牛一毛）；④ 消除"何时/怎样 strip"的 bug 隐患。
+
+### 源码清理 & 优化
+- `Conversation.h`：删除 `stripReasoningContent()` 方法
+- `Agent.cpp`：删除 `conversation.stripReasoningContent()` 调用及其注释
+- `ContextManager.cpp`：压缩时在 compact prompt 中附带 `[思考过程]` 内容，避免摘要丢失推理中的关键信息
+- `tests/test_e2e_reasoning_strip.cpp`：删除（专用测试不再需要）
+
+### 行为变化
+- 所有 assistant 消息的 `reasoning_content` 永久保留在对话中
+- 不再做条件判断（有/无 tool_calls 均不处理）
+- 与 DeepSeek API 规范一致（reasoning_content 回传不会导致 400）
+
 ## [2026-07-18] 删除反思（Reflection）机制
 
 > REFLECTION_MECHANISM_REVIEW: ToolCallLoop 中的反思机制名不副实——检测到重复调用后仅注入模板消息就重新调 LLM，跳过工具执行、没有实际错误分析。每轮反思浪费一次 LLM 调用但无新信息，安全网由 `loop_detected` 终止保障。
