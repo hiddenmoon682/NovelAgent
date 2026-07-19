@@ -277,6 +277,10 @@ Agent::InternalResult Agent::processSerial(
     // ── 步骤 7: 返回结果 ──
     InternalResult r;
     r.raw_response = result.response;
+    if (result.cancelled)
+        r.raw_response.finish_reason = "cancelled";
+    else if (result.loop_detected)
+        r.raw_response.finish_reason = "loop_detected";
     if (!result.response.content.empty() || !result.response.tool_calls.empty()) {
         llm::Message assistant;
         assistant.role = llm::MessageRole::Assistant;

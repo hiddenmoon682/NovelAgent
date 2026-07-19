@@ -146,6 +146,7 @@ int TokenCounter::countSingleMessage(const Message& msg)
     int total = countTokens(msg.content);
     total += countTokens(msg.tool_call_id);
     total += countTokens(msg.name);
+    total += countTokens(msg.reasoning_content);
     total += 4; // 消息角色等元数据开销
 
     for (const auto& tc : msg.tool_calls) {
@@ -164,6 +165,7 @@ int TokenCounter::countMessages(const std::vector<Message>& messages)
         total += countTokens(msg.content);
         total += countTokens(msg.tool_call_id);
         total += countTokens(msg.name);
+        total += countTokens(msg.reasoning_content);
         total += 4; // 消息角色等元数据开销（约 4 token/条）
 
         for (const auto& tc : msg.tool_calls) {

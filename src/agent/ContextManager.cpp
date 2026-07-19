@@ -247,6 +247,11 @@ CompactResult ContextManager::compact(
         summary_ = result.summary;
         marker_ = compact_count;
 
+        // 更新上下文用量快照为压缩后的新对话大小
+        int new_ctx = llm::TokenCounter::countMessagesCalibrated(
+            conversation.messages(), model_name_, calibrator_);
+        tracker_.setCurrentContextSize(new_ctx);
+
         spdlog::info("[ContextManager] compact 完成: {} 条 → 摘要 ({} → {} tokens, {:.0f}%)",
                      compact_count, result.tokens_before, result.tokens_after,
                      result.tokens_before > 0
