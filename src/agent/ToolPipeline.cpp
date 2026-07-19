@@ -100,6 +100,11 @@ std::string ToolPipeline::executeOne(const llm::ToolCall& tc)
                    (static_cast<unsigned char>(content.back()) & 0xC0) == 0x80) {
                 content.pop_back();
             }
+            // 如果退到了前导字节（11xxxxxx），它属于一个被截断的字符，一并弹出
+            if (!content.empty() &&
+                (static_cast<unsigned char>(content.back()) & 0xC0) == 0xC0) {
+                content.pop_back();
+            }
             content += "\n\n[... 内容过长已截断，全长约 "
                      + std::to_string(orig_chars) + " 字。请用 read_chapter 分段读取 ...]";
         }

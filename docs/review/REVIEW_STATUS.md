@@ -1,6 +1,6 @@
 # NovelAgent 审查状态总览
 
-> 最后更新：2026-07-19（追加 §十一 串行工具调用流程审查 + §十六 并发输入处理参考文档）
+> 最后更新：2026-07-19（追加 §十七 串行工具调用流程二次审查 15 项新发现）
 
 ---
 
@@ -327,7 +327,32 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 
 ---
 
-## 十六、Qt 并发输入处理参考（CONCURRENT_INPUT_HANDLING_2026-07-19）— 设计参考
+## 十七、串行工具调用流程二次审查（SERIAL_TOOL_CALL_REVIEW_2026-07-19_PHASE2）— 15 项新发现
+
+> 审查日期：2026-07-19（第二轮，首次 15 项已全部修复后重新审查）
+> 详细报告：[SERIAL_TOOL_CALL_REVIEW_2026-07-19_PHASE2.md](SERIAL_TOOL_CALL_REVIEW_2026-07-19_PHASE2.md)
+
+| # | 问题 | 严重度 | 验证 | 模块 | 状态 |
+|---|------|--------|------|------|------|
+| 1 | process() 异常不撤销 conversation 修改 | HIGH | CONFIRMED | `Agent.cpp` | 待修复 |
+| 2 | Conversation::apply() 部分执行无回滚 | HIGH | CONFIRMED | `Conversation.h` | 待修复 |
+| 3 | UTF-8 截断残留不完整 leading byte | HIGH | CONFIRMED | `ToolPipeline.cpp` | 待修复 |
+| 4 | isRepeatedCall JSON 键顺序漏检 | HIGH | CONFIRMED | `ToolCallLoop.cpp` | 待修复 |
+| 5 | compact 异常清空上次成功摘要元数据 | HIGH | CONFIRMED | `ContextManager.cpp` | 待修复 |
+| 6 | Token 校准忽略 system prompt | MED | CONFIRMED | `ToolCallLoop.cpp` | 待修复 |
+| 7 | resize 字节限制误作字符限制 | MED | CONFIRMED | `ToolPipeline.cpp` | 待修复 |
+| 8 | rounds_executed 少计 1 轮 | MED | CONFIRMED | `ToolCallLoop.cpp` | 待修复 |
+| 9 | cancelled_ 检查在 chat() 之后 | MED | CONFIRMED | `ToolCallLoop.cpp` | 待修复 |
+| 10 | hook 硬编码 conversation_ | MED | CONFIRMED | `Agent.cpp` | 待修复 |
+| 11 | 取消路径不设 rounds_executed | LOW | CONFIRMED | `ToolCallLoop.cpp` | 待修复 |
+| 12 | std::set 固定集合效率 | LOW | PLAUSIBLE | `ToolPipeline.cpp` | 待修复 |
+| 13 | kCompactKeepExchanges 注释过期 | LOW | CONFIRMED | `ContextManager.cpp` | 待修复 |
+| 14 | rewindTo 窄化转换溢出 | LOW | PLAUSIBLE | `Agent.cpp` | 待修复 |
+| 15 | truncateResult 死代码 | CLEANUP | CONFIRMED | `ToolPipeline.cpp` | 待修复 |
+
+---
+
+## 十八、Qt 并发输入处理参考（CONCURRENT_INPUT_HANDLING_2026-07-19）— 设计参考（CONCURRENT_INPUT_HANDLING_2026-07-19）— 设计参考
 
 > 记录日期：2026-07-19 · 非 Bug，为后续 Qt 前端的架构参考
 > 问题：上一条任务还在执行时用户输入了新指令，系统应如何处理

@@ -442,6 +442,9 @@ llm::LLMResponse Agent::process(const std::string& input,
     // ── 步骤 3: 轨迹记录 ──
     tracer_.record("user_input", 0, 0, UserInputPayload{.input = input.substr(0, 200)});
 
+    // ── 步骤 3.5: 对话快照 — 异常时回滚所有修改（含 compact 等不可逆操作）──
+    llm::Conversation conversation_snapshot = conversation_;
+
     // ── 步骤 4: 状态转换 Idle → Thinking ──
     state_.transition(AgentState::Thinking);
 
@@ -483,6 +486,7 @@ llm::LLMResponse Agent::process(const std::string& input,
     } catch (const std::exception& e) {
         spdlog::error("[Agent] 处理异常，强制状态恢复: {}", e.what());
         tracer_.record("error", 0, 0, ErrorPayload{.reason = "处理异常: " + std::string(e.what())});
+        conversation_ = std::move(conversation_snapshot);  // 回滚对话到处理前的状态
         state_.transition(AgentState::Error);
         state_.recover();
         return llm::LLMResponse{.finish_reason = "error"};
