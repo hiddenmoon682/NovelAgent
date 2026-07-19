@@ -221,6 +221,9 @@ CompactResult ContextManager::compact(
         result.summary = response.content;
         result.tokens_after = response.completion_tokens;
 
+        // 将 compact LLM 调用的 token 消耗计入会话统计
+        tracker_.record(response.prompt_tokens, response.completion_tokens);
+
         // 将 compaction LLM 调用的真实 token 数回传给校准器
         if (calibrator_ && !model_name_.empty() && estimated_input > 0 && response.prompt_tokens > 0) {
             calibrator_->calibrate(model_name_, estimated_input, response.prompt_tokens);
