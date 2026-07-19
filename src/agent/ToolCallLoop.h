@@ -36,7 +36,7 @@ struct ToolCallLoopConfig {
     // ── 流式 setter（支持链式调用）──
     ToolCallLoopConfig& setMaxRounds(int n) { max_rounds = n; return *this; }
     ToolCallLoopConfig& setStreaming(bool v) { streaming = v; return *this; }
-    ToolCallLoopConfig& setMaxRepeatedCalls(int n) { max_repeated_calls = n; return *this; }
+    ToolCallLoopConfig& setMaxRepeatedCalls(int n) { max_repeated_calls = (n > 0 ? n : 1); return *this; }
 };
 
 // ToolCallLoop::run() 的返回结果，包含 LLM 最终回复和终止原因。
