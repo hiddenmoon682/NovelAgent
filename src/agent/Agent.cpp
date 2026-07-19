@@ -251,6 +251,7 @@ Agent::InternalResult Agent::processSerial(
     ToolCallLoopConfig config;
     config.setMaxRounds(max_tool_rounds_)
           .setMaxRepeatedCalls(3);
+          
     // 每轮完成后实时更新 TokenTracker + 校准 + 接近上限时自动压缩
     config.hooks.on_round_complete = [this](int input, int output, int estimated) {
         if (!context_manager_) return;
@@ -273,16 +274,14 @@ Agent::InternalResult Agent::processSerial(
     auto result = loop.run(conversation, tools, effective_system_prompt,
                            std::move(callbacks), config);
 
-    // ── 步骤 7: 清理循环中的思考过程（节省上下文空间）──
-    conversation.stripReasoningContent();
-
-    // ── 步骤 8: 返回结果 ──
+    // ── 步骤 7: 返回结果 ──
     InternalResult r;
     r.raw_response = result.response;
     if (!result.response.content.empty() || !result.response.tool_calls.empty()) {
         llm::Message assistant;
         assistant.role = llm::MessageRole::Assistant;
         assistant.content = result.response.content;
+        assistant.reasoning_content = result.response.reasoning_content;
         assistant.tool_calls = result.response.tool_calls;
         conversation.add(std::move(assistant));
         r.text = result.response.content;

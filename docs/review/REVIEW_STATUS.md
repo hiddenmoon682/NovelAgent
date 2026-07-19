@@ -1,6 +1,6 @@
 # NovelAgent 审查状态总览
 
-> 最后更新：2026-07-16（追加 §十 TokenTracker 审查）
+> 最后更新：2026-07-19（追加 §十一 串行工具调用流程审查 + §十六 并发输入处理参考文档）
 
 ---
 
@@ -295,3 +295,42 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 **方案**：直接删除。`ToolCallLoopConfig` 不再有 `timeout` 字段，`ToolCallLoopResult` 不再有 `timed_out` 字段，`std::async`/`<future>` 不再使用，循环体直接同步执行。Agent 和 SubAgent 各自通过 `max_rounds` 和 `cancelled_` 信号保障安全。
 
 **涉及文件**：`ToolCallLoop.h` / `ToolCallLoop.cpp` / `Agent.cpp` / `SubAgent.cpp`
+
+---
+
+## 十五、串行工具调用流程审查（SERIAL_TOOL_CALL_REVIEW_2026-07-19）— 待修复
+
+> 发现日期：2026-07-19 · 审查方式：6 方向分析 + 3 次独立验证 + 1 轮 sweep
+> 审查范围：`Agent::processSerial()` → `ToolCallLoop::run()` → `ToolPipeline::execute()` → `Conversation::apply()`
+> 详细文档：[SERIAL_TOOL_CALL_REVIEW_2026-07-19.md](SERIAL_TOOL_CALL_REVIEW_2026-07-19.md)
+
+| # | 问题 | 严重度 | 验证 | 涉及文件 |
+|---|------|--------|------|----------|
+| 1 | max_rounds 退出时 assistant 双重添加 + content 丢失 | HIGH | CONFIRMED | `ToolCallLoop.cpp` / `Agent.cpp` |
+| 2 | 取消/循环检测退出丢弃有效响应 | HIGH | PLAUSIBLE | `ToolCallLoop.cpp` |
+| 3 | pipeline.execute() 异常致孤立 assistant | MED | CONFIRMED | `ToolCallLoop.cpp` / `ToolPipeline.cpp` |
+| 4 | 最终 assistant 消息缺失 reasoning_content | MED | CONFIRMED | `Agent.cpp` |
+| 5 | compact LLM token 未记录到 TokenTracker | MED | CONFIRMED | `Agent.cpp` / `ContextManager.cpp` |
+| 6 | TokenCounter 未统计 reasoning_content | MED | PLAUSIBLE | `TokenCounter.cpp` |
+| 7 | processSerial 忽略退出原因标志 | MED | PLAUSIBLE | `Agent.cpp` |
+| 8 | 取消检查在 LLM 调用之后 | LOW | PLAUSIBLE | `ToolCallLoop.cpp` |
+| 9 | max_repeated_calls ≤ 0 无钳位 | LOW | PLAUSIBLE | `ToolCallLoop.cpp` |
+| 10 | chat()/hook 抛出同致孤立轮次 | LOW | PLAUSIBLE | `ToolCallLoop.cpp` |
+| 11 | 异常 catch 返回无法区分的空响应 | LOW | PLAUSIBLE | `Agent.cpp` |
+| 12 | buildEffectivePrompt 混用成员/参数 | LOW | PLAUSIBLE | `Agent.cpp` |
+| 13 | streaming 字段死代码 | CLEANUP | CONFIRMED | `ToolCallLoop.h` |
+| 14 | executeAndAppend 未使用 | CLEANUP | CONFIRMED | `ToolPipeline.cpp` |
+| 15 | tool_calls 拷贝非 move 易误导 | CLEANUP | PLAUSIBLE | `ToolCallLoop.cpp` |
+
+> 修复进度：#1 已修复（2026-07-19），#2 已修复（2026-07-19），#2（取消路径重复）已修复
+
+---
+
+## 十六、Qt 并发输入处理参考（CONCURRENT_INPUT_HANDLING_2026-07-19）— 设计参考
+
+> 记录日期：2026-07-19 · 非 Bug，为后续 Qt 前端的架构参考
+> 问题：上一条任务还在执行时用户输入了新指令，系统应如何处理
+
+详见：[CONCURRENT_INPUT_HANDLING_2026-07-19.md](CONCURRENT_INPUT_HANDLING_2026-07-19.md)
+
+**推荐方案**：取消当前任务（利用已有的 `cancelled_` 标志 + 终止记录），然后处理新输入。需要改造 BackendServer 的会话锁和 Agent 的状态守卫。

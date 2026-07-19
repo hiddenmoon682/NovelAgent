@@ -198,6 +198,9 @@ CompactResult ContextManager::compact(
             default: continue;
         }
         oss << "[" << role_str << "] " << msg.content << "\n";
+        if (msg.role == llm::MessageRole::Assistant && !msg.reasoning_content.empty()) {
+            oss << "  [思考过程] " << msg.reasoning_content << "\n";
+        }
     }
     std::string conversation_text = oss.str();
 
