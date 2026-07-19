@@ -204,17 +204,26 @@ public:
     }
 
     // ── Issue 2: 批量修改（原子操作）──
-    // 应用一组对话修改。add/addToolResult 之外的所有修改通过此方法集中执行。
-    Conversation& apply(const ConversationDiff& diff) {
-        size_t base_index = messages_.size();
+    // 应用一组对话修改。采用 copy-then-swap 模式提供强异常保证：
+    // 失败时 messages_ 不受影响，异常安全。
+    Conversation& apply(ConversationDiff diff) {
+        // 在局部 vector 上构建新状态（失败不影响 messages_）
+        auto replacement = messages_;
+        replacement.reserve(messages_.size() + diff.added.size());
+
         for (auto& m : diff.added) {
-            messages_.push_back(std::move(m));
+            replacement.push_back(std::move(m));
         }
+
+        size_t base_index = messages_.size();
         for (auto idx : diff.pinned_indices) {
             size_t abs_idx = base_index + idx;
-            if (abs_idx < messages_.size())
-                messages_[abs_idx].preserved = true;
+            if (abs_idx < replacement.size())
+                replacement[abs_idx].preserved = true;
         }
+
+        // noexcept swap — 提交永不失败
+        messages_.swap(replacement);
         return *this;
     }
 
