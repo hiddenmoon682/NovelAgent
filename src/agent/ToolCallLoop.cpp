@@ -20,7 +20,7 @@ void addAssistantFromResponse(llm::Conversation& conversation, llm::LLMResponse&
     if (!response.reasoning_content.empty())
         assistant.reasoning_content = std::move(response.reasoning_content);
     if (!response.tool_calls.empty())
-        assistant.tool_calls = response.tool_calls;  // 拷贝，调用方后续仍需使用
+        assistant.tool_calls = response.tool_calls;  // 必须拷贝！调用方（execute/循环检测/取消路径）后续仍需读取 response.tool_calls
     conversation.add(std::move(assistant));
 }
 } // anonymous namespace
@@ -49,7 +49,7 @@ ToolCallLoopResult ToolCallLoop::run(
     llm::StreamCallbacks callbacks,
     const ToolCallLoopConfig& config)
 {
-    ToolPipeline pipeline(tools_, conversation);          // 工具执行管线：校验参数 → 执行 → 截断结果 → 生成 diff
+    ToolPipeline pipeline(tools_);                        // 工具执行管线：校验参数 → 执行 → 截断结果 → 生成 diff
     std::unordered_map<std::string, int> call_history;    // 调用历史：tool_name:args_json → 调用次数，用于重复检测
 
     ToolCallLoopResult r;
@@ -58,16 +58,21 @@ ToolCallLoopResult ToolCallLoop::run(
     for (int round = 0; round < config.max_rounds; ++round) {
         // ── LLM 调用（首轮或后续）──
         int estimated = llm::TokenCounter::countMessages(conversation.messages());
-        // ── 最后一轮：移除工具定义 + 提示 LLM 给出最终答复 ──
-        if (round == config.max_rounds - 1) {
-            std::string final_hint = system_prompt
-                + "\n\n注意：这是最后一轮对话，请直接给出最终答复，不要再调用工具。";
-            response = client_.chat(conversation.messages(), {}, final_hint, callbacks);
-        } else {
-            response = client_.chat(conversation.messages(), tools, system_prompt, callbacks);
+        try {
+            // ── 最后一轮：移除工具定义 + 提示 LLM 给出最终答复 ──
+            if (round == config.max_rounds - 1) {
+                std::string final_hint = system_prompt
+                    + "\n\n注意：这是最后一轮对话，请直接给出最终答复，不要再调用工具。";
+                response = client_.chat(conversation.messages(), {}, final_hint, callbacks);
+            } else {
+                response = client_.chat(conversation.messages(), tools, system_prompt, callbacks);
+            }
+            if (config.hooks.on_round_complete)
+                config.hooks.on_round_complete(response.prompt_tokens, response.completion_tokens, estimated);
+        } catch (const std::exception& e) {
+            spdlog::error("[ToolCallLoop] 第 {} 轮 LLM 调用失败: {}", round, e.what());
+            throw;
         }
-        if (config.hooks.on_round_complete)
-            config.hooks.on_round_complete(response.prompt_tokens, response.completion_tokens, estimated);
 
         if (cancelled_ && *cancelled_) {
             llm::LLMResponse last_response = std::move(response);

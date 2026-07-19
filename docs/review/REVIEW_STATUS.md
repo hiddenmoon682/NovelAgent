@@ -315,14 +315,15 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 | 7 | processSerial 忽略退出原因标志 | MED | PLAUSIBLE | `Agent.cpp` |
 | 8 | 取消检查在 LLM 调用之后 | LOW | PLAUSIBLE | `ToolCallLoop.cpp` |
 | 9 | max_repeated_calls ≤ 0 无钳位 | LOW | PLAUSIBLE | `ToolCallLoop.cpp` |
-| 10 | chat()/hook 抛出同致孤立轮次 | LOW | PLAUSIBLE | `ToolCallLoop.cpp` |
-| 11 | 异常 catch 返回无法区分的空响应 | LOW | PLAUSIBLE | `Agent.cpp` |
-| 12 | buildEffectivePrompt 混用成员/参数 | LOW | PLAUSIBLE | `Agent.cpp` |
-| 13 | streaming 字段死代码 | CLEANUP | CONFIRMED | `ToolCallLoop.h` |
-| 14 | executeAndAppend 未使用 | CLEANUP | CONFIRMED | `ToolPipeline.cpp` |
-| 15 | tool_calls 拷贝非 move 易误导 | CLEANUP | PLAUSIBLE | `ToolCallLoop.cpp` |
+| 10 | chat()/hook 抛出同致孤立轮次 | LOW | PLAUSIBLE | `ToolCallLoop.cpp` | ✅ 已修复 |
+| 11 | 异常 catch 返回无法区分的空响应 | LOW | PLAUSIBLE | `Agent.cpp` | ✅ 已修复 |
+| 12 | buildEffectivePrompt 混用成员/参数 | LOW | PLAUSIBLE | `Agent.cpp` | ✅ 已修复 |
+| 13 | streaming 字段死代码 | CLEANUP | CONFIRMED | `ToolCallLoop.h` | ✅ 已清理 |
+| 14 | executeAndAppend 未使用 | CLEANUP | CONFIRMED | `ToolPipeline.cpp` | ✅ 已清理 |
+| 15 | tool_calls 拷贝非 move 易误导 | CLEANUP | PLAUSIBLE | `ToolCallLoop.cpp` | ✅ 已修复 |
+| **合计** | **15 个发现** | | | | **15/15 已完成** |
 
-> 修复进度：#1 已修复（2026-07-19），#2 已修复（2026-07-19），#2（取消路径重复）已修复
+> 修复进度：#1-15 全部已修复（2026-07-19）。
 
 ---
 

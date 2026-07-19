@@ -207,14 +207,14 @@ std::string Agent::buildEffectivePrompt(llm::Conversation& conversation)
 {
     // ── 路径 A：无 ContextManager（直通模式） ──
     if (!context_manager_) {
-        return conversation_.systemPrompt();
+        return conversation.systemPrompt();
     }
 
     // ── 路径 B：有 ContextManager（动态上下文模式） ──
     auto assembly = context_manager_->assemble(conversation, max_context_tokens_, &*client_);
 
     PromptComponents pc;
-    pc.personality = conversation_.systemPrompt();
+    pc.personality = conversation.systemPrompt();
     pc.context = assembly.system_prompt;
     return PromptComposer::compose(pc);
 }
@@ -226,7 +226,7 @@ std::string Agent::buildEffectivePrompt(llm::Conversation& conversation)
 //   1. 追加用户消息     — conversation.addUser(input)
 //   2. 准备工具列表     — registry_.getToolDefinitions()
 //   3. 构建最终提示词   — buildEffectivePrompt()
-//   4. 配置 ToolCallLoop — max_rounds / streaming / 重复检测
+//   4. 配置 ToolCallLoop — max_rounds / 重复检测
 //   5. 执行 ToolCallLoop — loop.run() 驱动 LLM ↔ 工具的多轮交互
 //   6. Token 校准回传   — 对比估算值 vs API 返回值，更新 EMA 修正因子
 //   7. 记录 token 消耗  — recordUsage()
@@ -411,7 +411,7 @@ llm::LLMResponse Agent::process(const std::string& input,
     if (input.empty()) {
         spdlog::warn("[Agent] 收到空输入，已忽略");
         tracer_.record("error", 0, 0, ErrorPayload{.reason = "空输入被拒绝"});
-        return {};
+        return llm::LLMResponse{.finish_reason = "empty_input"};
     }
 
     // ── 输入校验（上下文中毒防御）──
@@ -420,7 +420,7 @@ llm::LLMResponse Agent::process(const std::string& input,
         if (!validateInput(input, reason)) {
             spdlog::warn("[Agent] 输入校验失败: {}", reason);
             tracer_.record("error", 0, 0, ErrorPayload{.reason = "输入校验: " + reason});
-            return {};
+            return llm::LLMResponse{.finish_reason = "invalid_input"};
         }
     }
 
@@ -435,7 +435,7 @@ llm::LLMResponse Agent::process(const std::string& input,
             spdlog::info("[Agent] 尝试从错误状态自动恢复 → Idle");
             state_.recover();
         } else {
-            return {};
+            return llm::LLMResponse{.finish_reason = "state_rejected"};
         }
     }
 
@@ -485,7 +485,7 @@ llm::LLMResponse Agent::process(const std::string& input,
         tracer_.record("error", 0, 0, ErrorPayload{.reason = "处理异常: " + std::string(e.what())});
         state_.transition(AgentState::Error);
         state_.recover();
-        return {};
+        return llm::LLMResponse{.finish_reason = "error"};
     }
 }
 
@@ -501,7 +501,7 @@ llm::LLMResponse Agent::execute(const std::string& command,
         std::string reason;
         if (!validateInput(command, reason)) {
             spdlog::warn("[Agent] execute 输入校验失败: {}", reason);
-            return {};
+            return llm::LLMResponse{.finish_reason = "invalid_input"};
         }
     }
 
@@ -527,7 +527,7 @@ llm::LLMResponse Agent::execute(const std::string& command,
         tracer_.record("error", 0, 0, ErrorPayload{.reason = "execute 异常: " + std::string(e.what())});
         state_.transition(AgentState::Error);
         state_.recover();
-        return {};
+        return llm::LLMResponse{.finish_reason = "error"};
     }
 }
 
