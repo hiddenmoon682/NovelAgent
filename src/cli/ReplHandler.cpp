@@ -443,7 +443,12 @@ void ReplHandler::run() {
             gui_.renderStatusBar(agent_.isParallelEnabled() ? "Parallel" : "Serial", 0, project_->title);
 
         std::cout << Ansi::userInput() << "> " << Ansi::reset() << std::flush;
-        if (!std::getline(std::cin, input)) break;
+        if (!std::getline(std::cin, input)) {
+            if (std::cin.eof()) break;  // Ctrl+D → 退出
+            std::cin.clear();           // Ctrl+C → 清空错误状态，继续循环
+            out_.write("\n" + Ansi::dim() + "按 Ctrl+C 以取消 AI 生成" + Ansi::reset() + "\n");
+            continue;
+        }
         if (input.empty()) continue;
         gui_.addToHistory(input);
 

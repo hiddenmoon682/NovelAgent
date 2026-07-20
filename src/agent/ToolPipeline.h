@@ -15,8 +15,8 @@ namespace agent {
 
 class ToolPipeline {
 public:
-    static constexpr size_t kMaxResultChars = 65536;   //  工具结果总字符上限（64KB）
-    static constexpr size_t kMaxContentChars = 56000;  //  content 字段字符上限（A15：JSON 对象层面截断，确保 LLM 拿到合法 JSON）
+    static constexpr size_t kMaxResultChars = 131072;   //  工具结果总字符上限（128KB，方案 A 上调以容纳 CJK content）
+    static constexpr size_t kMaxContentChars = 22000;   //  content 字段字符上限（按字符截断，中文 22000 字 ≈ 66KB，保证 JSON 整体不超过 128KB）
 
     // tools     工具提供者（ToolRegistry 或 RestrictedToolProvider）
     // 注意：构造函数不再持有 Conversation 引用——调用方通过 execute() 返回的

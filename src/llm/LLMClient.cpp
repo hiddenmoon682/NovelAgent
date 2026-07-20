@@ -139,7 +139,8 @@ LLMResponse LLMClient::chat(
     const std::vector<Message>& messages,
     const std::vector<ToolDefinition>& tools,
     const std::string& system_prompt,
-    StreamCallbacks callbacks)
+    StreamCallbacks callbacks,
+    const std::atomic<bool>* cancel_flag)
 {
     validateConfig();
 
@@ -158,6 +159,11 @@ LLMResponse LLMClient::chat(
         "/v1/chat/completions",
         body.dump(),
         [&](const char* data, size_t len) {
+            // 检查取消标志：若用户取消则中止流式接收
+            if (cancel_flag && *cancel_flag) {
+                spdlog::warn("[LLMClient] 收到取消信号，中断流式响应");
+                return false;  // httplib 关闭连接，返回 Canceled 错误
+            }
             raw_response_body.append(data, len);
             pipeline.feed(std::string(data, len));
             return true;
@@ -165,6 +171,11 @@ LLMResponse LLMClient::chat(
 
     // ── 传输层错误 ──
     if (!res) {
+        // 取消导致的 Canceled 错误 → 返回已累积的部分响应
+        if (cancel_flag && *cancel_flag) {
+            spdlog::warn("[LLMClient] 用户取消，返回部分响应");
+            return pipeline.response();  // 含已生成的部分文本，tool_calls 为空
+        }
         auto err = HttpClient::httpErrorToString(static_cast<int>(res.error()));
         last_error_ = err;
         spdlog::error("[LLMClient] 网络错误: {}", err);

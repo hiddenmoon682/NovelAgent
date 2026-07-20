@@ -1,5 +1,23 @@
 # Changelog
 
+## [2026-07-20] 用户取消机制实现（修复 #9 #11 + SSE 流式取消）
+
+### Bug 修复
+- `ToolCallLoop.cpp`：修复 #9 — `cancelled_` 检查移到循环开始处，不浪费 LLM API 调用；`chat()` 传入 `cancel_flag`；新增 `chat()` 返回后的二次检查。
+- `ToolCallLoop.cpp`：修复 #11 — 取消退出路径正确设置 `rounds_executed`。
+- `ReplHandler.cpp`：修复 Ctrl+C 在 `std::getline` 中导致 REPL 退出的问题，`clear()` 后继续循环。
+
+### 新增功能 — 用户取消机制
+- `ILLMClient.h` / `LLMClient.h`：`chat()` 新增 `const std::atomic<bool>* cancel_flag` 可选参数。
+- `LLMClient.cpp`：SSE 流式回调中检查 `cancel_flag`，收到取消信号时 `return false` 中止 HTTP 连接，返回已累积的部分响应。
+- `Agent.h`：新增 `cancel_requested_` 原子标志成员 + `requestCancel()` / `cancelFlag()` / `resetCancel()` 方法。
+- `Agent.cpp`：`processSerial()` 中 `ToolCallLoop::setCancelled(&cancel_requested_)` 接入取消信号。
+- `main.cpp`：注册 `SIGINT` 信号处理器，在 `runRepl()/runExec()` 期间将 `g_cancel_flag` 指向 Agent 的取消标志。
+- `ReplHandler.cpp`：处理 `std::cin` 在 Ctrl+C 后的 fail 状态，显示取消提示。
+
+### 测试适配
+- `test_tool_call_loop.cpp` / `test_context_manager.cpp` / `test_sub_agent.cpp`：Mock `chat()` 签名新增 `const std::atomic<bool>*` 默认参数。
+
 ## [2026-07-20] 新增 QuantClaw 参考审查、消息队列计划
 
 ### 文档

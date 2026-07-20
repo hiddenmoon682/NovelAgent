@@ -248,6 +248,7 @@ Agent::InternalResult Agent::processSerial(
 
     // ── 步骤 5: 配置 ToolCallLoop ──
     ToolCallLoop loop(*client_, registry_, &state_);
+    loop.setCancelled(&cancel_requested_);          // 传入取消标志
     ToolCallLoopConfig config;
     config.setMaxRounds(max_tool_rounds_)
           .setMaxRepeatedCalls(3);

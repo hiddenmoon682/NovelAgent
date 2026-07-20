@@ -38,7 +38,8 @@ public:
     llm::LLMResponse chat(const std::vector<llm::Message>&,
                           const std::vector<llm::ToolDefinition>&,
                           const std::string&,
-                          llm::StreamCallbacks) override {
+                          llm::StreamCallbacks,
+                          const std::atomic<bool>*) override {
         return makeSummary();
     }
     llm::LLMResponse chatNonStreaming(const std::vector<llm::Message>&,

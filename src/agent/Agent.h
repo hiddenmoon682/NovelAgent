@@ -16,6 +16,7 @@
 #include "llm/Conversation.h"
 #include "llm/ILLMClient.h"
 
+#include <atomic>
 #include <memory>
 #include <string>
 
@@ -117,6 +118,16 @@ public:
     // 检查 Agent 当前是否可接受新用户输入（仅在 Idle 状态返回 true）。
     bool canAcceptInput() const { return state_.canAcceptInput(); }
 
+    // ── 取消支持 ──
+
+    // 请求取消当前正在进行的处理（线程安全，原子变量写入）。
+    // 在 SSE 流式回调中检查该标志，中止 HTTP 连接并返回部分响应。
+    void requestCancel() { cancel_requested_.store(true); }
+    // 返回取消标志的原子指针（供 ToolCallLoop / SubAgent 使用）。
+    std::atomic<bool>* cancelFlag() { return &cancel_requested_; }
+    // 重置取消标志（供下一次请求使用）。
+    void resetCancel() { cancel_requested_.store(false); }
+
     // 返回当前 Agent 拥有的 LLMClient（可变引用），供外部直接调用 LLM。
     llm::ILLMClient& client() { return *client_; }
     // 返回工具注册表（可变引用），供外部注册或查询工具。
@@ -157,6 +168,9 @@ private:
 
     // Fix #6: 显式状态机
     StateMachine state_;
+
+    // ── 取消支持 ──
+    std::atomic<bool> cancel_requested_{false};   //  外部取消请求（Ctrl+C / SubAgent 超时）
 };
 
 } // namespace agent
