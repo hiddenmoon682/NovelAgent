@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026-07-20] 新增 QuantClaw 参考审查、消息队列计划
+
+### 文档
+- `docs/review/QUANTCLAW_REFERENCE_REVIEW_2026-07-20.md`：新增 QuantClaw 参考项目审查，记录两个发现：
+  - **缺乏上下文溢出恢复**：LLM 返回 context overflow 时无重试机制，对比 QuantClaw 的 `CompactOverflow()` + 最多 3 次重试
+  - **流式模式工具执行时机**：QuantClaw 在 stream callback 中收到 tool_call chunk 时即执行工具，不等流结束
+- `docs/plan/QUEUE_QT_INTEGRATION_PLAN_2026-07-20.md`：新增消息队列 + Qt 前端集成计划
+- `docs/review/TOOLCHAIN_AND_PARAMETER_VALIDATION_2026-07-20.md`：新增 ToolChain 功能记录 + LLM 参数传错问题分析
+
 ## [2026-07-19] 完整修复串行工具调用流程 15 个发现（#6-#15）
 
 ### Bug 修复

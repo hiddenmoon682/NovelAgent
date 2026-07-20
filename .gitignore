@@ -43,3 +43,6 @@ gui/node_modules/
 gui/dist/
 gui/src-tauri/target/
 gui/src-tauri/binaries/novelagent-*.exe
+
+# 参考项目源码（不跟踪）
+_ref/
