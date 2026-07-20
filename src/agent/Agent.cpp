@@ -408,6 +408,9 @@ Agent::InternalResult Agent::processParallel(
 llm::LLMResponse Agent::process(const std::string& input,
                                             llm::StreamCallbacks callbacks)
 {
+    // ── 步骤 0: 复位取消标志，使本轮请求能正常执行 ──
+    resetCancel();
+
     // ── 步骤 1: 输入守卫 ──
     if (input.empty()) {
         spdlog::warn("[Agent] 收到空输入，已忽略");
@@ -488,6 +491,9 @@ llm::LLMResponse Agent::process(const std::string& input,
         spdlog::error("[Agent] 处理异常，强制状态恢复: {}", e.what());
         tracer_.record("error", 0, 0, ErrorPayload{.reason = "处理异常: " + std::string(e.what())});
         conversation_ = std::move(conversation_snapshot);  // 回滚对话到处理前的状态
+        // 回滚 ContextManager 压缩状态，避免摘要指向已回滚的消息索引
+        // 下次 assemble() 会重新判断是否触发压缩
+        if (context_manager_) context_manager_->clearCompactedSummary();
         state_.transition(AgentState::Error);
         state_.recover();
         return llm::LLMResponse{.finish_reason = "error"};
