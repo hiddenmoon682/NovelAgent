@@ -24,7 +24,8 @@ public:
     llm::LLMResponse chat(const std::vector<llm::Message>&,
                           const std::vector<llm::ToolDefinition>&,
                           const std::string&,
-                          llm::StreamCallbacks) override {
+                          llm::StreamCallbacks,
+                          const std::atomic<bool>*) override {
         llm::LLMResponse r;
         r.content = response_;
         r.finish_reason = "stop";
@@ -52,7 +53,8 @@ public:
     llm::LLMResponse chat(const std::vector<llm::Message>&,
                           const std::vector<llm::ToolDefinition>&,
                           const std::string&,
-                          llm::StreamCallbacks) override {
+                          llm::StreamCallbacks,
+                          const std::atomic<bool>*) override {
         std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms_));
         llm::LLMResponse r;
         r.content = "慢响应完成";

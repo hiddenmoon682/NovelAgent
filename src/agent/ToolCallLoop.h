@@ -64,8 +64,8 @@ public:
     ToolCallLoop(llm::ILLMClient& client, IToolProvider& tools,
                  StateMachine* state = nullptr);
 
-    // Issue 21+26: 设置外部取消标志（SubAgent 的超时取消信号）。
-    // 在每轮循环开始处检查，被设置后立即终止并返回。
+    // Issue 21+26: 设置外部取消标志（SubAgent 的超时取消信号 / 主 Agent 的 Ctrl+C）。
+    // 在每轮循环开始处和 chat() 返回后检查，被设置后立即终止并返回。
     void setCancelled(std::atomic<bool>* cancelled) { cancelled_ = cancelled; }
 
     // 执行 tool_call 循环。

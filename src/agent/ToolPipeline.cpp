@@ -49,6 +49,22 @@ static size_t utf8CharLen(const std::string& s) {
     return len;
 }
 
+// 截断 UTF-8 字符串至多 max_chars 个字符，返回安全的字节截断位置。
+// 与 utf8CharLen 使用相同的迭代逻辑，确保截断位置落在合法字符边界。
+static size_t utf8CharTruncatePos(const std::string& s, size_t max_chars) {
+    size_t byte_pos = 0;
+    size_t char_count = 0;
+    while (char_count < max_chars && byte_pos < s.size()) {
+        auto c = static_cast<unsigned char>(s[byte_pos]);
+        if (c <= 0x7F)      byte_pos += 1;
+        else if (c <= 0xDF) byte_pos += 2;
+        else if (c <= 0xEF) byte_pos += 3;
+        else                byte_pos += 4;
+        ++char_count;
+    }
+    return byte_pos;
+}
+
 std::string ToolPipeline::executeOne(const llm::ToolCall& tc)
 {
     nlohmann::json args;
@@ -90,21 +106,13 @@ std::string ToolPipeline::executeOne(const llm::ToolCall& tc)
     // A15 修复：在 JSON 对象层面截断 content 字段，确保 LLM 拿到合法 JSON。
     // 此前在 dump() 后的原始字符串上做字节级截断，preview 几乎必然非法
     // （截在字符串值中间，引号未闭合），LLM 无法解析章节内容。
+    // #7 修复：使用字符感知截断替换字节 resize，确保 CJK 文本不会被过度截断。
     if (result.contains("content") && result["content"].is_string()) {
         std::string& content = result["content"].get_ref<std::string&>();
-        if (content.size() > kMaxContentChars) {
+        if (utf8CharLen(content) > kMaxContentChars) {
             const size_t orig_chars = utf8CharLen(content);
-            content.resize(kMaxContentChars);
-            // 回退到最后一个合法 UTF-8 字符边界
-            while (!content.empty() &&
-                   (static_cast<unsigned char>(content.back()) & 0xC0) == 0x80) {
-                content.pop_back();
-            }
-            // 如果退到了前导字节（11xxxxxx），它属于一个被截断的字符，一并弹出
-            if (!content.empty() &&
-                (static_cast<unsigned char>(content.back()) & 0xC0) == 0xC0) {
-                content.pop_back();
-            }
+            const size_t byte_pos = utf8CharTruncatePos(content, kMaxContentChars);
+            content.resize(byte_pos);
             content += "\n\n[... 内容过长已截断，全长约 "
                      + std::to_string(orig_chars) + " 字。请用 read_chapter 分段读取 ...]";
         }

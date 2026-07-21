@@ -34,11 +34,14 @@ public:
     // ================================================================
 
     // 流式调用：实时通过 callbacks 输出，请求完成后返回完整 LLMResponse。
+    // cancel_flag 可选取消标志，非拥有指针。当 *cancel_flag == true 时
+    // 在 SSE 回调中中止请求并返回已累积的部分响应。
     LLMResponse chat(
         const std::vector<Message>& messages,
         const std::vector<ToolDefinition>& tools = {},
         const std::string& system_prompt = "",
-        StreamCallbacks callbacks = {}
+        StreamCallbacks callbacks = {},
+        const std::atomic<bool>* cancel_flag = nullptr
     );
 
     // 非流式调用：等待完整 JSON 响应后返回。

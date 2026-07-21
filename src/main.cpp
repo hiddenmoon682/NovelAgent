@@ -7,6 +7,7 @@
 #include "llm/LLMClientFactory.h"
 #include "project/ProjectManager.h"
 
+#include <csignal>
 #include <CLI/CLI.hpp>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -46,6 +47,15 @@ static std::string argToUtf8(const std::string& input) {
 #else
 static std::string argToUtf8(const std::string& input) { return input; }
 #endif
+
+// ── 全局 SIGINT 信号处理 ──
+// 在 LLM 请求处理期间被触发时，设置取消标志，SSE 回调将中止 HTTP 连接。
+static std::atomic<bool>* g_cancel_flag = nullptr;
+extern "C" void sigint_handler(int) {
+    if (g_cancel_flag) {
+        g_cancel_flag->store(true);
+    }
+}
 
 int main(int argc, char** argv) {
     Ansi::enableWindowsAnsi();
@@ -124,6 +134,17 @@ int main(int argc, char** argv) {
         }
 
         NovelAgentApp novelAgent(*provider, projectPtr);
+
+        // ── 注册 SIGINT 信号处理器 ──
+        // 在 runRepl/runExec 期间，g_cancel_flag 指向 Agent 的取消标志，
+        // Ctrl+C 时设置该标志，LLMClient 的 SSE 回调将中止 HTTP 连接。
+        struct SigGuard {
+            std::atomic<bool>* old_flag;
+            SigGuard() : old_flag(g_cancel_flag) {}
+            ~SigGuard() { g_cancel_flag = old_flag; }
+        } sig_guard;
+        g_cancel_flag = novelAgent.agent().cancelFlag();
+        signal(SIGINT, sigint_handler);
 
         if (!execCommand.empty()) {
             novelAgent.runExec(execCommand);

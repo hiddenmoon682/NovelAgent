@@ -3,6 +3,7 @@
 #include "config/AppConfig.h"
 #include "llm/Message.h"
 
+#include <atomic>
 #include <functional>
 #include <string>
 #include <vector>
@@ -53,6 +54,9 @@ struct StreamCallbacks {
 //   tools        — 可用的工具定义（Function Calling），可选
 //   system_prompt — 系统提示词，可选
 //   callbacks    — 流式回调集合（仅 chat() 使用），可选
+//   cancel_flag  — 取消标志（非拥有指针），当 *cancel_flag == true 时
+//                   SSE 回调下一次收到数据时中止请求并返回部分响应。
+//                   默认 nullptr 表示不支持取消。仅 chat() 使用。
 // ===========================================================================
 
 class ILLMClient {
@@ -60,11 +64,13 @@ public:
     virtual ~ILLMClient() = default;
 
     // 流式调用：实时通过 callbacks 输出增量内容 / 推理过程。
+    // cancel_flag 可选取消标志，非拥有指针，指向调用方管理的原子布尔值。
     virtual LLMResponse chat(
         const std::vector<Message>& messages,
         const std::vector<ToolDefinition>& tools = {},
         const std::string& system_prompt = "",
-        StreamCallbacks callbacks = {}) = 0;
+        StreamCallbacks callbacks = {},
+        const std::atomic<bool>* cancel_flag = nullptr) = 0;
 
     // 非流式调用：等待完整响应后返回 LLMResponse。
     // 适用于不需要实时显示的场景（如工具返回结果处理）。

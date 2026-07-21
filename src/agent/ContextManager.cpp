@@ -261,8 +261,8 @@ CompactResult ContextManager::compact(
         spdlog::error("[ContextManager] compact LLM 调用失败: {}", e.what());
         result.summary = "(压缩失败: " + std::string(e.what()) + ")";
         result.messages_compacted = 0;
-        summary_.clear();
-        marker_ = 0;
+        // 不清空 summary_/marker_：对话未被修改（removeOldest 和 prepend 在成功分支），
+        // 上次成功的摘要仍然有效且与对话状态一致。
     }
 
     return result;

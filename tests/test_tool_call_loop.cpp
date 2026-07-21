@@ -41,7 +41,8 @@ public:
     llm::LLMResponse chat(const std::vector<llm::Message>&,
                           const std::vector<llm::ToolDefinition>&,
                           const std::string&,
-                          llm::StreamCallbacks) override {
+                          llm::StreamCallbacks,
+                          const std::atomic<bool>*) override {
         return nextResponse();
     }
     llm::LLMResponse chatNonStreaming(const std::vector<llm::Message>&,
@@ -122,7 +123,7 @@ void test_basic_tool_call() {
     auto result = loop.run(conv, registry.getToolDefinitions(), "", {}, cfg);
     CHECK(!result.response.content.empty());
     CHECK(g_read_calls == 1);
-    CHECK(result.rounds_executed == 1);
+    CHECK(result.rounds_executed == 2);  // round=0(tool_call) + round=1(文本回复) = 2 轮
     PASS();
 }
 
@@ -143,7 +144,7 @@ void test_direct_text_response() {
     agent::ToolCallLoop loop(client, registry);
     auto result = loop.run(conv, registry.getToolDefinitions(), "", {}, {});
     CHECK(result.response.content == "好的，我明白了。");
-    CHECK(result.rounds_executed == 0);  // 首轮就结束
+    CHECK(result.rounds_executed == 1);  // round=0 首轮就结束 = 1 轮
     PASS();
 }
 
