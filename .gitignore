@@ -28,6 +28,9 @@ config.json
 .cache/
 
 # Example novels are user data
+
+# External reference repos (not project code)
+_ref/
 examples/
 .claude/settings.local.json
 tui/my_novel/

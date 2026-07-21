@@ -138,7 +138,7 @@ bool Agent::rewindTo(size_t index) {
     // 修复时空悖论：回滚到压缩点之前，清空失效摘要
     if (context_manager_) {
         int marker = context_manager_->compactionMarker();
-        if (marker > 0 && static_cast<int>(index + 1) <= marker) {
+        if (marker > 0 && index + 1 <= static_cast<size_t>(marker)) {
             context_manager_->clearCompactedSummary();
             spdlog::info("[Agent] 回滚到压缩点(#{} ≤ marker#{})之前，已清空失效摘要",
                          index + 1, marker);
@@ -254,7 +254,7 @@ Agent::InternalResult Agent::processSerial(
           .setMaxRepeatedCalls(3);
           
     // 每轮完成后实时更新 TokenTracker + 校准 + 接近上限时自动压缩
-    config.hooks.on_round_complete = [this](int input, int output, int estimated) {
+    config.hooks.on_round_complete = [this, &conversation](int input, int output, int estimated) {
         if (!context_manager_) return;
         context_manager_->recordUsage(input, output);
         // 每轮校准：estimated 是调 LLM 前对 conversation 的原始估算，input 是 API 返回的 prompt_tokens
@@ -266,7 +266,7 @@ Agent::InternalResult Agent::processSerial(
         if (status.status >= ContextStatus::AutoCompact && status.status != ContextStatus::Error) {
             spdlog::info("[Agent] 工具循环中上下文较高 ({}%), 自动压缩旧历史",
                          status.usage_percent);
-            context_manager_->compact(conversation_, *client_,
+            context_manager_->compact(conversation, *client_,
                 "自动压缩：工具调用循环中上下文不足");
         }
     };
@@ -491,8 +491,12 @@ llm::LLMResponse Agent::process(const std::string& input,
         spdlog::error("[Agent] 处理异常，强制状态恢复: {}", e.what());
         tracer_.record("error", 0, 0, ErrorPayload{.reason = "处理异常: " + std::string(e.what())});
         conversation_ = std::move(conversation_snapshot);  // 回滚对话到处理前的状态
-        // 回滚 ContextManager 压缩状态，避免摘要指向已回滚的消息索引
-        // 下次 assemble() 会重新判断是否触发压缩
+        // 清空 ContextManager 的压缩状态（summary_ / marker_）。
+        // 异常可能来自 compact 成功之后的任何步骤——此时 compact 已修改了
+        // summary_/marker_，但对话却被回滚到快照，摘要就变成了指向已回滚
+        // 消息的悬挂指针。所以这里必须清空，下次 assemble() 会重新压缩。
+        // 注意：compact 自己内部的 catch 不清空（见 ContextManager.cpp:260），
+        // 因为那里对话没被修改，不需要；需要清空的是外层兜底 catch。
         if (context_manager_) context_manager_->clearCompactedSummary();
         state_.transition(AgentState::Error);
         state_.recover();

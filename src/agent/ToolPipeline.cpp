@@ -5,7 +5,9 @@
 
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
-#include <set>
+#include <algorithm>
+#include <array>
+#include <string_view>
 
 namespace agent {
 
@@ -14,11 +16,11 @@ llm::ConversationDiff ToolPipeline::execute(const std::vector<llm::ToolCall>& to
     llm::ConversationDiff diff;
 
     // A9: 设定类工具——执行结果对长篇小说一致性至关重要
-    static const std::set<std::string> kSettingTools = {
-        "create_character", "update_character",
-        "create_setting",   "update_setting",
-        "create_world_rule","update_world_rule",
-        "add_character_development"
+    static constexpr std::array kSettingTools = {
+        std::string_view{"create_character"}, std::string_view{"update_character"},
+        std::string_view{"create_setting"},   std::string_view{"update_setting"},
+        std::string_view{"create_world_rule"},std::string_view{"update_world_rule"},
+        std::string_view{"add_character_development"}
     };
 
     for (const auto& tc : tool_calls) {
@@ -28,7 +30,7 @@ llm::ConversationDiff ToolPipeline::execute(const std::vector<llm::ToolCall>& to
         diff.added.push_back(llm::Message::toolResult(tc.id, std::move(result)));
 
         // A9：设定类工具结果自动 pin
-        if (kSettingTools.count(tc.function_name)) {
+        if (std::ranges::find(kSettingTools, tc.function_name) != kSettingTools.end()) {
             diff.pinned_indices.push_back(idx);
         }
     }
@@ -134,13 +136,6 @@ std::string ToolPipeline::executeOne(const llm::ToolCall& tc)
         return truncated.dump();
     }
     return result_str;
-}
-
-std::string ToolPipeline::truncateResult(std::string result, size_t maxChars)
-{
-    if (result.size() <= maxChars) return result;
-    return result.substr(0, maxChars)
-         + "\n...(已截断，共 " + std::to_string(result.size()) + " 字符)";
 }
 
 } // namespace agent

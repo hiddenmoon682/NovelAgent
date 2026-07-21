@@ -38,7 +38,6 @@ private:
     bool cache_populated_ = false;
 
     std::string executeOne(const llm::ToolCall& tc);
-    static std::string truncateResult(std::string result, size_t maxChars);
 };
 
 } // namespace agent

@@ -27,6 +27,9 @@ public:
     }
 
     // 请求前检查上下文用量状态（基于最近一次请求的实际大小）。
+    // 数据来源：record() 写入的 API 实际 prompt_tokens。适用于 on_round_complete hook 等
+    // 刚拿到 API 真实值时的快速检查。与 check(realtime) 在校正因子 ≠1.0 时可能有细微差异——
+    // 但两者处于请求生命周期的不同阶段（刚返回 vs 下次调用前），各自使用当时的最佳数据，差异可控。
     PreRequestResult check() const {
         PreRequestResult r;
         r.model_limit = state_.model_context_limit;
@@ -85,7 +88,8 @@ public:
     int lastOutputTokens() const { return last_output_tokens_; }
     // 返回当前对话的总 token 数（由 assemble() 设置，record() 不覆盖）。
     int currentTotalTokens() const { return current_total_tokens_; }
-    // 手动设置当前上下文大小（供 assemble() 在 LLM 调用前写入启发式估算值）。
+    // 手动设置当前上下文大小。compact() 在记录自身 LLM 消耗后恢复主对话快照时使用（第 228 行），
+    // 以及在压缩完成后更新为压缩后的对话大小（第 253 行）。
     void setCurrentContextSize(int size) { current_context_size_ = size; }
     // 设置当前对话的总 token 数（由 assemble() 在步骤 2 算完后写入）。
     void setCurrentTotalTokens(int total) { current_total_tokens_ = total; }

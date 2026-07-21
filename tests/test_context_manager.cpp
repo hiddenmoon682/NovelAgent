@@ -280,15 +280,15 @@ void test_compact_actually_removes_messages() {
     CompactMockLLMClient llm;
     auto result = cm.compact(conv, llm, std::nullopt);
 
-    // 压缩了 30-6=24 条
-    CHECK(result.messages_compacted == 24);
-    // 对话消息数下降到 20（保留最近 3 对 = 6 条）+ 2（摘要 user/assistant 对）
-    CHECK(conv.size() == 8);
+    // 压缩了 30-10=20 条
+    CHECK(result.messages_compacted == 20);
+    // 对话消息数下降到 10（保留最近 5 对 = 10 条）+ 2（摘要 user/assistant 对）
+    CHECK(conv.size() == 12);
     // 摘要插入在头部，保留的最近消息紧随其后
     const auto& msgs = conv.messages();
     CHECK(msgs[0].content.find("以下是被压缩的旧对话摘要") != std::string::npos);
     CHECK(msgs[1].content.find("被压缩的历史摘要") != std::string::npos);
-    CHECK(msgs[2].content.find("用户消息 12") != std::string::npos);  // 第一条保留消息
+    CHECK(msgs[2].content.find("用户消息 10") != std::string::npos);  // 第一条保留消息
     // 摘要被存储
     CHECK(cm.hasCompactedSummary());
     CHECK(result.summary.find("压缩摘要") != std::string::npos);
@@ -306,10 +306,10 @@ void test_compact_skip_when_messages_insufficient() {
     }
     CompactMockLLMClient llm;
     auto result = cm.compact(conv, llm, std::nullopt);
-    // 10 条 > 1（硬拒绝阈值），保留 6 条，压缩 4 条
-    CHECK(result.messages_compacted == 4);
-    // 保留 6 条 + 2 条摘要 user/assistant 对 = 8
-    CHECK(conv.size() == 8);
+    // 10 条 > 1（硬拒绝阈值），保留 4 条，压缩 6 条
+    CHECK(result.messages_compacted == 6);
+    // 保留 4 条 + 2 条摘要 user/assistant 对 = 6
+    CHECK(conv.size() == 6);
     PASS();
 }
 

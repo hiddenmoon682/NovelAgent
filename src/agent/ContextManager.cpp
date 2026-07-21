@@ -73,7 +73,7 @@ constexpr const char* kCompactSystemPrompt =
     "避免过度概括或丢失已有摘要中的细节。";
 
 // Compaction 时保留的最近消息对数。
-constexpr int kCompactKeepExchanges = 3;   // 保留最近 10 对 = ~20 条消息
+constexpr int kCompactKeepExchanges = 5;   // 保留最近 5 对 = 10 条消息
 constexpr int kMinKeepExchanges = 2;        // 最少保留 2 对 = 4 条消息
 } // namespace
 
@@ -166,7 +166,7 @@ CompactResult ContextManager::compact(
 
     // 保留最近 kCompactKeepExchanges 对消息，压缩更早的历史。
     // 消息不足时按比例缩减保留数，最少保留 1 条。
-    const int ideal_keep = kCompactKeepExchanges * 2;   // 20
+    const int ideal_keep = kCompactKeepExchanges * 2;   // 10
     const int min_keep = kMinKeepExchanges * 2;          // 4
 
     if (total_msgs <= 1) {

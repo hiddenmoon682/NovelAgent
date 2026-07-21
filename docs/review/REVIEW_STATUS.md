@@ -1,6 +1,10 @@
 # NovelAgent 审查状态总览
 
-> 最后更新：2026-07-20（追加 QuantClaw 参考审查：上下文溢出恢复缺口 + 流式工具调用模式）
+> 最后更新：2026-07-21（SERIAL_TOOL_CALL 两轮审查 + TOKEN_TRACKER + DUPLICATE_CALL 审查已归档）
+
+---
+
+**当前审查状态**：所有已注册审查批次均已完成或确认无需修复。Serial Tool Call 路径两轮共 30 项发现已全部清零。
 
 ---
 
@@ -298,57 +302,82 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 
 ---
 
-## 十五、串行工具调用流程审查（SERIAL_TOOL_CALL_REVIEW_2026-07-19）— 待修复
+## 十四·五、ToolCallLoop 首轮 LLM 调用冗余审查（TOOL_CALL_LOOP_DUPLICATE_CALL_REVIEW_2026-07-17）— ✅ 已修复
 
-> 发现日期：2026-07-19 · 审查方式：6 方向分析 + 3 次独立验证 + 1 轮 sweep
-> 审查范围：`Agent::processSerial()` → `ToolCallLoop::run()` → `ToolPipeline::execute()` → `Conversation::apply()`
-> 详细文档：[SERIAL_TOOL_CALL_REVIEW_2026-07-19.md](SERIAL_TOOL_CALL_REVIEW_2026-07-19.md)
+> 发现日期：2026-07-17 · 修复日期：2026-07-18（架构重构）
 
-| # | 问题 | 严重度 | 验证 | 涉及文件 |
-|---|------|--------|------|----------|
-| 1 | max_rounds 退出时 assistant 双重添加 + content 丢失 | HIGH | CONFIRMED | `ToolCallLoop.cpp` / `Agent.cpp` |
-| 2 | 取消/循环检测退出丢弃有效响应 | HIGH | PLAUSIBLE | `ToolCallLoop.cpp` |
-| 3 | pipeline.execute() 异常致孤立 assistant | MED | CONFIRMED | `ToolCallLoop.cpp` / `ToolPipeline.cpp` |
-| 4 | 最终 assistant 消息缺失 reasoning_content | MED | CONFIRMED | `Agent.cpp` |
-| 5 | compact LLM token 未记录到 TokenTracker | MED | CONFIRMED | `Agent.cpp` / `ContextManager.cpp` |
-| 6 | TokenCounter 未统计 reasoning_content | MED | PLAUSIBLE | `TokenCounter.cpp` |
-| 7 | processSerial 忽略退出原因标志 | MED | PLAUSIBLE | `Agent.cpp` |
-| 8 | 取消检查在 LLM 调用之后 | LOW | PLAUSIBLE | `ToolCallLoop.cpp` |
-| 9 | max_repeated_calls ≤ 0 无钳位 | LOW | PLAUSIBLE | `ToolCallLoop.cpp` |
-| 10 | chat()/hook 抛出同致孤立轮次 | LOW | PLAUSIBLE | `ToolCallLoop.cpp` | ✅ 已修复 |
-| 11 | 异常 catch 返回无法区分的空响应 | LOW | PLAUSIBLE | `Agent.cpp` | ✅ 已修复 |
-| 12 | buildEffectivePrompt 混用成员/参数 | LOW | PLAUSIBLE | `Agent.cpp` | ✅ 已修复 |
-| 13 | streaming 字段死代码 | CLEANUP | CONFIRMED | `ToolCallLoop.h` | ✅ 已清理 |
-| 14 | executeAndAppend 未使用 | CLEANUP | CONFIRMED | `ToolPipeline.cpp` | ✅ 已清理 |
-| 15 | tool_calls 拷贝非 move 易误导 | CLEANUP | PLAUSIBLE | `ToolCallLoop.cpp` | ✅ 已修复 |
-| **合计** | **15 个发现** | | | | **15/15 已完成** |
+**原问题**：`ToolCallLoop::run()` 中存在 **3 处 `client_.chat()` 调用**——首轮独立于循环外，循环底部还有一次，导致每轮两次 LLM 调用。
 
-> 修复进度：#1-15 全部已修复（2026-07-19）。
+**当前代码验证**：已整合为单一路径——LLM 调用统一在循环顶部，首轮作为第 0 次迭代自然进入，后续轮次在工具执行后进入下一次迭代。
+
+| 场景 | 前 | 后 |
+|------|-----|-----|
+| 无工具调用 | 首轮 chat + 进入循环 round=0 空检测 | 循环 round=0 → chat → 空检测 |
+| 1 轮工具后完成 | 首轮 chat + round=0 执行工具 + 底部 chat + round=1 空检测 | 循环 round=0 → chat → 执行工具 → round=1 → chat → 空检测 |
+| max_rounds | 首轮 chat + max_rounds 次循环 chat | max_rounds+1 次循环 chat |
 
 ---
 
-## 十七、串行工具调用流程二次审查（SERIAL_TOOL_CALL_REVIEW_2026-07-19_PHASE2）— 15 项新发现
+## 十五、串行工具调用流程审查（SERIAL_TOOL_CALL_REVIEW_2026-07-19）— ✅ 已清零
 
-> 审查日期：2026-07-19（第二轮，首次 15 项已全部修复后重新审查）
+> 发现日期：2026-07-19 · 修复日期：2026-07-19
+> 审查范围：`Agent::processSerial()` → `ToolCallLoop::run()` → `ToolPipeline::execute()` → `Conversation::apply()`
+
+| # | 问题 | 严重度 | 修复方式 |
+|---|------|--------|----------|
+| 1 | max_rounds 退出时 assistant 双重添加 + content 丢失 | HIGH | 区分正常/最大轮次退出路径，内容不移动到对话逻辑 |
+| 2 | 取消/循环检测退出丢弃有效响应 | HIGH | 在取消/循环检测前保存 last_response 中有效 tool_calls |
+| 3 | pipeline.execute() 异常致孤立 assistant | MED | ToolCallLoop catch 中 popBack() 回滚后再 rethrow |
+| 4 | 最终 assistant 消息缺失 reasoning_content | MED | processSerial 回传 LLMResponse 时复制 reasoning_content |
+| 5 | compact LLM token 未记录到 TokenTracker | MED | on_round_complete hook 中 recordUsage + 保存/恢复 context_size |
+| 6 | TokenCounter 未统计 reasoning_content | MED | `countSingleMessage()` 添加 reasoning_content 统计 |
+| 7 | processSerial 忽略退出原因标志 | MED | 取消/循环检测时设置 finish_reason 字段 |
+| 8 | 取消检查在 LLM 调用之后 | LOW | ToolCallLoop 首轮前增加 cancelled_ 检查 |
+| 9 | max_repeated_calls ≤ 0 无钳位 | LOW | setMaxRepeatedCalls 钳位为  |
+| 10 | chat()/hook 抛出同致孤立轮次 | LOW | catch 块 popBack + rethrow，外层兜底 catch 完整回滚 |
+| 11 | 异常 catch 返回无法区分的空响应 | LOW | 改为返回含 finish_reason="error" 的 LLMResponse |
+| 12 | buildEffectivePrompt 混用成员/参数 | LOW | 统一使用 conversation 参数 |
+| 13 | streaming 字段死代码 | CLEANUP | 删除 `StreamCallbacks` 中无用的 streaming 字段 |
+| 14 | executeAndAppend 未使用 | CLEANUP | 删除 executeAndAppend 方法 |
+| 15 | tool_calls 拷贝非 move 易误导 | CLEANUP | 添加注释说明为何 tool_calls 必须拷贝 |
+
+---
+
+## 十六、TokenTracker 校准与检查机制审查（TOKEN_TRACKER_REVIEW_2026-07-16）— ✅ 已关闭
+
+> 发现日期：2026-07-16 · 关闭日期：2026-07-21
+
+| # | 问题 | 严重度 | 状态 |
+|---|------|--------|------|
+| 3 | `setCurrentContextSize()` 注释称"供 assemble() 使用"与实际调用者不符 | 低 | ✅ 注释已修正：说明实际消费者是 compact() 的两处调用 |
+| 4 | `check()` 无参版（API prompt_tokens）与 `check(realtime)`（启发式×校正因子）计量体系不一致 | 低 | 📋 接受差异：两者处于请求不同生命周期，使用当时最佳数据，校正因子趋近 1.0 时空隙消失 |
+
+**决策说明**：问题 4 采用方案 A（接受差异）。hook 路径使用 API 真实值做快速检查，assemble 路径用估算值做精确预算——设计意图正当，差异可控。
+
+---
+
+## 十七、串行工具调用流程二次审查（SERIAL_TOOL_CALL_REVIEW_2026-07-19_PHASE2）— ✅ 已清零
+
+> 审查日期：2026-07-19 · 修复日期：2026-07-21
 > 详细报告：[SERIAL_TOOL_CALL_REVIEW_2026-07-19_PHASE2.md](SERIAL_TOOL_CALL_REVIEW_2026-07-19_PHASE2.md)
 
-| # | 问题 | 严重度 | 验证 | 模块 | 状态 |
-|---|------|--------|------|------|------|
-| 1 | process() 异常不撤销 conversation 修改 | HIGH | CONFIRMED | `Agent.cpp` | 待修复 |
-| 2 | Conversation::apply() 部分执行无回滚 | HIGH | CONFIRMED | `Conversation.h` | 待修复 |
-| 3 | UTF-8 截断残留不完整 leading byte | HIGH | CONFIRMED | `ToolPipeline.cpp` | 待修复 |
-| 4 | isRepeatedCall JSON 键顺序漏检 | HIGH | CONFIRMED | `ToolCallLoop.cpp` | 待修复 |
-| 5 | compact 异常清空上次成功摘要元数据 | HIGH | CONFIRMED | `ContextManager.cpp` | 待修复 |
-| 6 | Token 校准忽略 system prompt | MED | CONFIRMED | `ToolCallLoop.cpp` | 待修复 |
-| 7 | resize 字节限制误作字符限制 | MED | CONFIRMED | `ToolPipeline.cpp` | 待修复 |
-| 8 | rounds_executed 少计 1 轮 | MED | CONFIRMED | `ToolCallLoop.cpp` | 待修复 |
-| 9 | cancelled_ 检查在 chat() 之后 | MED | CONFIRMED | `ToolCallLoop.cpp` | 待修复 |
-| 10 | hook 硬编码 conversation_ | MED | CONFIRMED | `Agent.cpp` | 待修复 |
-| 11 | 取消路径不设 rounds_executed | LOW | CONFIRMED | `ToolCallLoop.cpp` | 待修复 |
-| 12 | std::set 固定集合效率 | LOW | PLAUSIBLE | `ToolPipeline.cpp` | 待修复 |
-| 13 | kCompactKeepExchanges 注释过期 | LOW | CONFIRMED | `ContextManager.cpp` | 待修复 |
-| 14 | rewindTo 窄化转换溢出 | LOW | PLAUSIBLE | `Agent.cpp` | 待修复 |
-| 15 | truncateResult 死代码 | CLEANUP | CONFIRMED | `ToolPipeline.cpp` | 待修复 |
+| # | 问题 | 严重度 | 验证 | 修复方式 |
+|---|------|--------|------|----------|
+| 1 | process() 异常不撤销 conversation 修改 | HIGH | CONFIRMED | catch 块回滚 conversation_snapshot + clearCompactedSummary() |
+| 2 | Conversation::apply() 部分执行无回滚 | HIGH | CONFIRMED | copy-then-swap 原子 apply，异常不影响原消息 |
+| 3 | UTF-8 截断残留不完整 leading byte | HIGH | CONFIRMED | utf8CharTruncatePos 替换 byte 级 resize |
+| 4 | isRepeatedCall JSON 键顺序漏检 | HIGH | CONFIRMED | parse→dump 标准化键顺序 |
+| 5 | compact 异常清空上次成功摘要元数据 | HIGH | CONFIRMED | compact catch 不清空；外层 process() catch 负责清空 |
+| 6 | Token 校准忽略 system prompt | MED | CONFIRMED | estimated 加入 countTokens(system_prompt) |
+| 7 | resize 字节限制误作字符限制 | MED | CONFIRMED | utf8CharLen + utf8CharTruncatePos 字符级截断 |
+| 8 | rounds_executed 少计 1 轮 | MED | CONFIRMED | 正常和取消退出路径统一设置 rounds_executed |
+| 9 | cancelled_ 检查在 chat() 之后 | MED | CONFIRMED | 首轮前增加 cancelled_ 检查，避免浪费 API 调用 |
+| 10 | hook 硬编码 conversation_ | MED | CONFIRMED | lambda 捕获 &conversation 参数 |
+| 11 | 取消路径不设 rounds_executed | LOW | CONFIRMED | 首轮前取消失真前设置 rounds_executed=0 |
+| 12 | std::set 固定集合效率 | LOW | PLAUSIBLE | 改为 constexpr std::array + std::ranges::find |
+| 13 | kCompactKeepExchanges 注释过期 | LOW | CONFIRMED | 注释更新为实际值，常量调至 5（保留 10 条消息） |
+| 14 | rewindTo 窄化转换溢出 | LOW | PLAUSIBLE | 比较反转：size_t 侧 static_cast 代替 int 侧 |
+| 15 | truncateResult 死代码 | CLEANUP | CONFIRMED | 删除函数声明和实现（零调用者） |
 
 ---
 
