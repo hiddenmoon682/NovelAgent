@@ -8,6 +8,7 @@
 #include "project/Models.h"
 #include "project/ProjectIO.h"
 #include "project/ProjectManager.h"
+#include "skill/ISkillProvider.h"
 
 #include <iostream>
 #include <algorithm>
@@ -75,7 +76,7 @@ void ReplHandler::setupPhase5Commands() {
         ss << "  章节: " << project_->outline.chapters.size() << " 章\n";
         ss << "  角色: " << project_->characters.size() << " 个\n";
         ss << "  设定: " << project_->settings.size() << " 个\n";
-        ss << "  对话: " << agent_.conversation().size() << " 条\n";
+        ss << "  对话: " << agent_.memory().size() << " 条\n";
         if (project_->target_word_count > 0)
             ss << "  字数: " << project_->current_word_count << "/" << project_->target_word_count << "\n";
         out_.write(ss.str());
@@ -100,7 +101,7 @@ void ReplHandler::setupPhase5Commands() {
             if (args[0] == "max_context_tokens") {
                 int w = std::stoi(args[1]);
                 if (w < 1024) { out_.write(Ansi::warning() + "至少需要 1024 tokens\n" + Ansi::reset()); return true; }
-                agent_.setMaxContextTokens(w);
+                if (auto* cm = agent_.contextManager()) cm->setModelContextLimit(w);
                 out_.write(Ansi::success() + "max_context_tokens → " + std::to_string(w) + "\n" + Ansi::reset());
             } else if (args[0] == "auto_compact") {
                 if (args[1] == "on") {
@@ -211,7 +212,7 @@ void ReplHandler::setupCommands() {
         else ss << " " << Ansi::success() << "(正常)";
         ss << Ansi::reset() << "\n";
 
-        ss << "  对话消息:   " << agent_.conversation().size() << " 条\n";
+        ss << "  对话消息:   " << agent_.memory().size() << " 条\n";
 
         // 显示当前警告
         auto warnings = agent_.contextWarnings();
@@ -222,7 +223,7 @@ void ReplHandler::setupCommands() {
             }
         }
 
-        auto pinned = agent_.conversation().pinnedIndices();
+        auto pinned = agent_.memory().pinnedIndices();
         if (!pinned.empty()) {
             ss << "  保留消息:   " << pinned.size() << " 条 (索引:";
             for (size_t i = 0; i < pinned.size() && i < 10; ++i) {
@@ -268,7 +269,7 @@ void ReplHandler::setupCommands() {
 
     parser_.registerCommand("pin", "/pin last|<N> — 保留消息不被截断", [this](const auto& args) {
         if (args.empty() || args[0] == "last") {
-            auto& conv = agent_.conversation();
+            auto& conv = agent_.memory();
             if (conv.size() == 0) {
                 out_.write(Ansi::dim() + "对话为空，无消息可保留。\n" + Ansi::reset());
                 return true;
@@ -283,7 +284,7 @@ void ReplHandler::setupCommands() {
                 if (agent_.pinMessage(idx)) {
                     out_.write(Ansi::success() + "已保留消息 #" + std::to_string(idx) + "\n" + Ansi::reset());
                 } else {
-                    out_.write(Ansi::warning() + "索引越界，当前共 " + std::to_string(agent_.conversation().size()) + " 条消息\n" + Ansi::reset());
+                    out_.write(Ansi::warning() + "索引越界，当前共 " + std::to_string(agent_.memory().size()) + " 条消息\n" + Ansi::reset());
                 }
             } catch (...) {
                 out_.write(Ansi::error() + "用法: /pin last 或 /pin <数字>\n" + Ansi::reset());
@@ -323,8 +324,7 @@ void ReplHandler::setupCommands() {
                 if (i > 1) oss << " ";
                 oss << args[i];
             }
-            auto& conv = const_cast<llm::Conversation&>(agent_.conversation());
-            if (conv.editMessage(idx, oss.str())) {
+            if (agent_.editMessage(idx, oss.str())) {
                 out_.write(Ansi::success() + "已编辑消息 #" + std::to_string(idx) + "\n" + Ansi::reset());
             } else {
                 out_.write(Ansi::warning() + "无法编辑消息 #" + std::to_string(idx)
@@ -345,7 +345,7 @@ void ReplHandler::setupCommands() {
             } else {
                 std::ostringstream ss;
                 ss << Ansi::info() << "可回滚的消息 (" << checkpoints.size() << " 个用户消息):\n" << Ansi::reset();
-                auto all_msgs = agent_.conversation().all();
+                auto all_msgs = agent_.memory().all();
                 for (auto idx : checkpoints) {
                     const auto& msg = all_msgs[idx];
                     std::string preview = msg.content.substr(0, 80);
@@ -361,7 +361,7 @@ void ReplHandler::setupCommands() {
             size_t idx = static_cast<size_t>(std::stoi(args[0]));
             if (agent_.rewindTo(idx)) {
                 out_.write(Ansi::success() + "已回滚到消息 #" + std::to_string(idx)
-                    + "（保留 " + std::to_string(agent_.conversation().size()) + " 条）\n" + Ansi::reset());
+                    + "（保留 " + std::to_string(agent_.memory().size()) + " 条）\n" + Ansi::reset());
             } else {
                 out_.write(Ansi::warning() + "索引越界。\n" + Ansi::reset());
             }
@@ -372,13 +372,13 @@ void ReplHandler::setupCommands() {
     });
 
     parser_.registerCommand("pins", "/pins — 列出所有保留消息", [this](const auto&) {
-        auto pinned = agent_.conversation().pinnedIndices();
+        auto pinned = agent_.memory().pinnedIndices();
         if (pinned.empty()) {
             out_.write(Ansi::dim() + "没有保留消息。使用 /pin last 保留最近一条。\n" + Ansi::reset());
         } else {
             std::ostringstream ss;
             ss << Ansi::info() << "保留消息 (" << pinned.size() << " 条):\n" << Ansi::reset();
-            auto all_msgs = agent_.conversation().all();
+            auto all_msgs = agent_.memory().all();
             for (auto idx : pinned) {
                 const auto& msg = all_msgs[idx];
                 std::string role;
@@ -397,6 +397,27 @@ void ReplHandler::setupCommands() {
         }
         return true;
     });
+
+    // 技能斜杠命令
+    if (skill_provider_) {
+        for (const auto& cmd : skill_provider_->getAllCommands()) {
+            std::string skill_cmd_name = cmd.name;
+            std::string help = "/" + cmd.name;
+            if (!cmd.description.empty())
+                help += " — " + cmd.description;
+
+            parser_.registerCommand(cmd.name, help,
+                [this, skill_cmd_name](const std::vector<std::string>& args) {
+                    std::string input = "/" + skill_cmd_name;
+                    for (const auto& a : args)
+                        input += " " + a;
+                    auto callbacks = StreamDisplay::create(out_);
+                    agent_.process(input, callbacks);
+                    out_.write("\n");
+                    return true;
+                });
+        }
+    }
 }
 
 std::vector<std::string> ReplHandler::getCompletions(const std::string& prefix) const {
@@ -432,8 +453,8 @@ void ReplHandler::run() {
         out_.write("\n");
         // Fix #3: 恢复上次会话（对话 + 元数据）
         try { agent_.loadSessionState(); } catch (...) {}
-        if (agent_.conversation().size() > 0)
-            out_.write(Ansi::dim() + "已恢复上次会话（" + std::to_string(agent_.conversation().size()) + " 条消息）\n" + Ansi::reset());
+        if (agent_.memory().size() > 0)
+            out_.write(Ansi::dim() + "已恢复上次会话（" + std::to_string(agent_.memory().size()) + " 条消息）\n" + Ansi::reset());
         out_.write(Ansi::dim() + "项目: " + project_->title + " | 输入消息开始写作\n\n" + Ansi::reset());
     }
 

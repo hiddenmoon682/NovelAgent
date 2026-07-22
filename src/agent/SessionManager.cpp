@@ -43,7 +43,7 @@ std::string SessionManager::createSession() {
 
     auto session = std::make_shared<Session>();
     session->id = uuid4();
-    session->agent = std::make_unique<agent::Agent>(factory_, registry_);
+    session->agent = std::make_unique<agent::Agent>(factory_, registry_, session->memory);
     session->agent->setSystemPrompt(
         "你是一个专业的网络小说写作助手 NovelAgent。");
     session->state = std::make_unique<agent::StateMachine>();

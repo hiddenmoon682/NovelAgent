@@ -39,8 +39,8 @@ SubAgentResult SubAgent::execute(const SubAgentConfig& config)
         try {
             if (cancelled_) return r;
 
-            // 步骤 1: 在本地 Conversation 上添加用户消息（无锁）
-            llm::Conversation localConv;
+            // 步骤 1: 在本地 Memory 上添加用户消息（无锁）
+            llm::Memory localConv;
             localConv.addUser(config.task);
 
             if (cancelled_) return r;

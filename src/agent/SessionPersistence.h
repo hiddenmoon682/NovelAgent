@@ -12,7 +12,8 @@
 #include <vector>
 
 namespace llm {
-class Conversation;
+class IMemory;
+class Memory;
 } // namespace llm
 
 namespace agent {
@@ -44,13 +45,13 @@ public:
         : storage_(storage) {}
 
     // 保存完整对话历史到 .novelagent/conversation.json。
-    void save(const llm::Conversation& conversation);
+    void save(const llm::IMemory& memory);
 
     // 从 .novelagent/conversation.json 加载对话历史。
-    llm::Conversation load();
+    llm::Memory load();
 
     // 归档当前对话到 .novelagent/archive/conversation_<timestamp>.json。
-    void archive(const llm::Conversation& conversation);
+    void archive(const llm::IMemory& memory);
 
     // ── 会话元数据（跨重启恢复）──
 

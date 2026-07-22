@@ -96,10 +96,10 @@ ContextManager::ContextManager(FileStorageBackend& storage)
 // ===========================================================================
 
 void ContextManager::saveSessionState(
-    const llm::Conversation& conv,
+    const llm::IMemory& mem,
     const std::vector<size_t>& preserved_indices)
 {
-    persistence_.save(conv);
+    persistence_.save(mem);
 
     const int64_t mtime = project_ ? projectSettingsMtime(project_->path) : 0;
 
@@ -115,9 +115,10 @@ void ContextManager::saveSessionState(
 }
 
 void ContextManager::loadSessionState(
-    llm::Conversation& conv)
+    llm::IMemory& mem)
 {
-    conv = persistence_.load();
+    auto loaded = persistence_.load();
+    mem.restore(loaded.checkpoint());
     auto meta = persistence_.loadMeta();
 
     const int64_t current_mtime = project_ ? projectSettingsMtime(project_->path) : 0;
@@ -136,11 +137,11 @@ void ContextManager::loadSessionState(
 
     // 恢复 preserved 标记
     for (auto idx : meta.preserved_indices) {
-        conv.pinMessage(idx);
+        mem.pin(idx);
     }
 
     spdlog::info("[ContextManager] 完整会话状态已恢复 (消息={}, preserved={}, compact={}, requests={})",
-                 conv.size(), meta.preserved_indices.size(),
+                 mem.size(), meta.preserved_indices.size(),
                  !meta.compacted_summary.empty(), meta.token_state.request_count);
 }
 
@@ -156,12 +157,12 @@ void ContextManager::resetSession() {
 // ===========================================================================
 
 CompactResult ContextManager::compact(
-    llm::Conversation& conversation,
+    llm::IMemory& memory,
     llm::ILLMClient& llm_client,
     std::optional<std::string> focus)
 {
     CompactResult result;
-    const auto& all_msgs = conversation.messages();
+    const auto& all_msgs = memory.messages();
     int total_msgs = static_cast<int>(all_msgs.size());
 
     // 保留最近 kCompactKeepExchanges 对消息，压缩更早的历史。
@@ -234,14 +235,14 @@ CompactResult ContextManager::compact(
                           model_name_, estimated_input, response.prompt_tokens);
         }
 
-        // 从 conversation 头部删除已压缩的旧消息
-        conversation.removeOldest(compact_count);
+        // 从 memory 头部删除已压缩的旧消息
+        memory.removeOldest(compact_count);
 
-        // 将被压缩的对话摘要以 user/assistant 消息对插入对话头部，
+        // 将被压缩的对话摘要以 user/assistant 消息对插入头部，
         // 替代刚被删除的旧消息的时序位置（必须在保留的最近消息之前）。
         // 注意先 prepend assistant 再 prepend user，最终顺序为 user→assistant。
-        conversation.prepend(llm::Message::assistant("[被压缩的历史摘要]\n" + result.summary));
-        conversation.prepend(llm::Message::user("【系统】以下是被压缩的旧对话摘要："));
+        memory.prepend(llm::Message::assistant("[被压缩的历史摘要]\n" + result.summary));
+        memory.prepend(llm::Message::user("【系统】以下是被压缩的旧对话摘要："));
 
         // 在对话修改成功后统一更新内部状态，避免异常路径下 summary_/marker_ 不一致
         summary_ = result.summary;
@@ -249,7 +250,7 @@ CompactResult ContextManager::compact(
 
         // 更新上下文用量快照为压缩后的新对话大小
         int new_ctx = llm::TokenCounter::countMessagesCalibrated(
-            conversation.messages(), model_name_, calibrator_);
+            memory.messages(), model_name_, calibrator_);
         tracker_.setCurrentContextSize(new_ctx);
 
         spdlog::info("[ContextManager] compact 完成: {} 条 → 摘要 ({} → {} tokens, {:.0f}%)",
@@ -317,8 +318,7 @@ bool ContextManager::shouldAutoCompact(int usage_percent) const {
 // ===========================================================================
 
 ContextAssembly ContextManager::assemble(
-    llm::Conversation& conversation,
-    int max_context_tokens,
+    llm::IMemory& memory,
     llm::ILLMClient* llm_client)
 {
     ContextAssembly result;
@@ -329,23 +329,23 @@ ContextAssembly ContextManager::assemble(
     }
 
     // ── 步骤 1: Token 预算 ──────────────────────────────────────────────
+    int model_limit = tracker_.modelLimit();
     int sys_tokens = llm::TokenCounter::countTokensCalibrated(result.system_prompt, model_name_, calibrator_);
-    int msg_budget = std::max(0, max_context_tokens - sys_tokens);
+    int msg_budget = std::max(0, model_limit - sys_tokens);
 
     if (msg_budget <= 0) {
         result.warnings.push_back(
             "System prompt 已占用全部预算（" + std::to_string(sys_tokens) +
             " tokens），无法容纳对话历史。建议精简项目上下文或增加 max_context_tokens。");
         spdlog::error("[ContextManager] msg_budget <= 0 (sys={}, max={})",
-                      sys_tokens, max_context_tokens);
+                      sys_tokens, model_limit);
     }
 
     // ── 步骤 3（合并原步骤 2+3）: 实时用量检查 + 自动压缩 + 告警 ──────
-    result.messages = conversation.messages();
+    result.messages = memory.messages();
     int msg_tokens = tracker_.updateMessageTokens(result.messages, model_name_, calibrator_);
     result.total_tokens = sys_tokens + msg_tokens;
 
-    int model_limit = tracker_.modelLimit();
     if (model_limit > 0) {
         auto pre_check = checkThresholds(result.total_tokens);
 
@@ -356,10 +356,10 @@ ContextAssembly ContextManager::assemble(
         {
             spdlog::info("[ContextManager] 自动压缩触发 (用量 {}%, 阈值 {}%)",
                          pre_check.usage_percent, tracker_.autoCompactThreshold());
-            auto cr = compact(conversation, *llm_client, "自动压缩：上下文用量过高");
+            auto cr = compact(memory, *llm_client, "自动压缩：上下文用量过高");
             if (cr.messages_compacted > 0) {
-                // 压缩成功 — 重新计算（conversation 已被 compact() 修改）
-                result.messages = conversation.messages();
+                // 压缩成功 — 重新计算（memory 已被 compact() 修改）
+                result.messages = memory.messages();
                 msg_tokens = tracker_.updateMessageTokens(result.messages, model_name_, calibrator_);
                 result.total_tokens = sys_tokens + msg_tokens;
                 spdlog::info("[ContextManager] 自动压缩完成: {} 条 → 摘要, 新用量 {} tokens",

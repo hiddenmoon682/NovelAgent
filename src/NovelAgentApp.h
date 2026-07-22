@@ -2,35 +2,32 @@
 
 #include "agent/Agent.h"
 #include "agent/ContextManager.h"
-#include "agent/IIndexService.h"
 #include "agent/TemplateManager.h"
 #include "agent/ToolRegistry.h"
 #include "config/AppConfig.h"
+#include "llm/Conversation.h"
 #include "llm/LLMClientFactory.h"
 #include "llm/TokenCounter.h"
 #include "project/FileStorageBackend.h"
 #include "retrieval/VectorStore.h"
 #include "retrieval/EmbeddingGenerator.h"
+#include "skill/SkillRegistry.h"
 
 #include "cli/IOutputChannel.h"
 
 struct Project;
+namespace agent { class ProjectIndexService; }
 #include <memory>
 #include <string>
 #include <vector>
 
-// NovelAgent 应用层组装器 — 门面模式封装全部组件装配。
-// Issue 6: 实现 IIndexService，ReplHandler 通过抽象接口访问索引功能，
-// 消除 ReplHandler → NovelAgentApp* 的反向依赖。
-class NovelAgentApp : public agent::IIndexService {
+// NovelAgent 应用层组装器 — 门面模式封装全部组件装配（纯布线，不含业务逻辑）。
+class NovelAgentApp {
 public:
-    // provider  LLM Provider 配置
-    // project   已打开的小说项目
-    // out       输出通道（默认=控制台）
-    // disabledTools  禁用的工具名列表（空=全部启用）
     NovelAgentApp(const ProviderConfig& provider, std::shared_ptr<Project> project,
                   IOutputChannel* out = nullptr,
                   std::vector<std::string> disabledTools = {});
+    ~NovelAgentApp();
 
     void runRepl(const std::string& welcomeMessage = "");
     void runExec(const std::string& command);
@@ -39,24 +36,25 @@ public:
     agent::ContextManager& contextManager() { return cm_; }
     agent::ToolRegistry& registry() { return registry_; }
     agent::TemplateManager& templateManager() { return template_mgr_; }
+    skill::SkillRegistry& skillRegistry() { return skill_registry_; }
     std::shared_ptr<Project> project() { return project_; }
-
-    // Issue 6: IIndexService 实现 — 替代原来的 vectorStore()/embeddingGenerator()
-    agent::IndexResult indexAll(std::function<void(const std::string&)> progress = nullptr) override;
 
 private:
     std::unique_ptr<IOutputChannel> ownedOutput_;
     IOutputChannel& out_;
-    llm::LLMClientFactory client_;  // LLMClient 工厂（构造后不可变，传递给 Agent 创建独立客户端）
+    llm::LLMClientFactory client_;
     agent::ToolRegistry registry_;
+    llm::Memory memory_;                              //  记忆（对等组件，注入 Agent）
     agent::Agent agent_;
     std::shared_ptr<Project> project_;
-    llm::TokenCounter calibrator_;  // Token 自校准器（必须在 cm_ 之前初始化）
-    FileStorageBackend storage_;   // 必须在 cm_ 之前初始化
+    llm::TokenCounter calibrator_;
+    FileStorageBackend storage_;
     agent::ContextManager cm_;
-    retrieval::VectorStore vector_store_;               // 向量存储（语义检索）
-    retrieval::EmbeddingGenerator embedding_gen_;       // 嵌入生成器
+    retrieval::VectorStore vector_store_;
+    retrieval::EmbeddingGenerator embedding_gen_;
     agent::TemplateManager template_mgr_;
+    std::unique_ptr<agent::ProjectIndexService> index_service_;
+    skill::SkillRegistry skill_registry_;
 
     void setupAgent(const std::vector<std::string>& disabledTools);
 };

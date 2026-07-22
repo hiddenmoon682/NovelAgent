@@ -49,3 +49,6 @@ gui/src-tauri/binaries/novelagent-*.exe
 
 # 参考项目源码（不跟踪）
 _ref/
+
+# Qoder CLI local config
+.qoder/

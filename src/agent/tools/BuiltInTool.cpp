@@ -14,13 +14,12 @@ void BuiltInTool::registerFactory(std::string name, Factory factory) {
 }
 
 void BuiltInTool::registerAllTo(ToolRegistry& registry,
-                                 std::shared_ptr<Project> project,
+                                 const ToolDependencies& deps,
                                  const std::vector<std::string>& disabled) {
     for (auto& entry : factories()) {
-        // 跳过被禁用的工具
         if (std::find(disabled.begin(), disabled.end(), entry.name) != disabled.end())
             continue;
-        registry.registerBuiltInTool(entry.factory(project));
+        registry.registerBuiltInTool(entry.factory(deps));
     }
 }
 

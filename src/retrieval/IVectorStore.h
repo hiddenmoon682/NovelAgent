@@ -63,6 +63,10 @@ public:
     virtual int count() const = 0;
 
     virtual bool contains(const std::string& id) const = 0;
+
+    // ── 持久化 ──
+
+    virtual void flush() {}
 };
 
 } // namespace retrieval

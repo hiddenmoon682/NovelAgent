@@ -14,6 +14,7 @@
 #include "agent/ToolRegistry.h"
 #include "agent/tools/ChapterTools.h"
 #include "config/AppConfig.h"
+#include "llm/Conversation.h"
 #include "llm/LLMClientFactory.h"
 #include "project/ProjectIO.h"
 
@@ -121,7 +122,8 @@ int main() {
 
     // 4. 创建 Agent
     std::cout << "\n[4/5] 创建 Agent...\n";
-    agent::Agent agent(factory, registry);
+    llm::Memory memory;
+    agent::Agent agent(factory, registry, memory);
     agent.setSystemPrompt(
         "你是一个小说写作助手。你可以使用工具来管理小说项目。\n"
         "当用户要求列出章节、读取内容、写入章节时，请使用对应的工具。\n"
@@ -188,8 +190,8 @@ int main() {
     std::cout << "\n───────────────────────────────────────────\n\n";
 
     // ── 对话历史统计 ──
-    std::cout << "▶ 对话历史: " << agent.conversation().size() << " 条消息\n";
-    auto all_msgs = agent.conversation().all();
+    std::cout << "▶ 对话历史: " << agent.memory().size() << " 条消息\n";
+    auto all_msgs = agent.memory().all();
     for (size_t i = 0; i < all_msgs.size(); ++i) {
         const auto& msg = all_msgs[i];
         std::string role_str;

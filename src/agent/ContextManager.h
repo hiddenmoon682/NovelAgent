@@ -55,10 +55,9 @@ public:
     //   4. 缓存警告/当前大小（供 Agent/REPL 在下一次请求前读取）
     //
     // llm_client 用于自动压缩（为 nullptr 时跳过自动压缩检查）。
-    // conversation 非 const — 自动压缩可能删除旧消息并插入摘要。
+    // memory 非 const — 自动压缩可能删除旧消息并插入摘要。
     ContextAssembly assemble(
-        llm::Conversation& conversation,
-        int max_context_tokens,
+        llm::IMemory& memory,
         llm::ILLMClient* llm_client = nullptr);
 
     // 构建系统提示词（项目概要 + 工具使用指南）。
@@ -115,7 +114,7 @@ public:
 
     // 执行对话压缩 — 用 LLM 将旧消息摘要为一段文本。
     CompactResult compact(
-        llm::Conversation& conversation,
+        llm::IMemory& memory,
         llm::ILLMClient& llm_client,
         std::optional<std::string> focus = std::nullopt);
 
@@ -151,18 +150,18 @@ public:
 
     SessionPersistence& persistence() { return persistence_; }
 
-    void saveSession(const llm::Conversation& conv) { persistence_.save(conv); }
-    llm::Conversation loadSession() { return persistence_.load(); }
-    void archiveSession(const llm::Conversation& conv) { persistence_.archive(conv); }
+    void saveSession(const llm::IMemory& mem) { persistence_.save(mem); }
+    llm::Memory loadSession() { return persistence_.load(); }
+    void archiveSession(const llm::IMemory& mem) { persistence_.archive(mem); }
 
     // 保存完整会话状态（对话 + 元数据），供灾难恢复。
     // project_mtime 自动从 project_ 获取。
-    void saveSessionState(const llm::Conversation& conv,
+    void saveSessionState(const llm::IMemory& mem,
                           const std::vector<size_t>& preserved_indices);
 
     // 加载完整会话状态并恢复到 ContextManager 内部状态。
     // 自动对比 project_mtime，如果 Project 被修改过则清空压缩摘要。
-    void loadSessionState(llm::Conversation& conv);
+    void loadSessionState(llm::IMemory& mem);
 
     // 公开子组件（供测试/诊断使用）
     TokenTracker& tracker() { return tracker_; }

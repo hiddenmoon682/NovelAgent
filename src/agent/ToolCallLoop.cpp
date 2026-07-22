@@ -10,9 +10,9 @@
 namespace agent {
 
 namespace {
-// 将 LLMResponse 转为 assistant 消息并加入对话。
+// 将 LLMResponse 转为 assistant 消息并加入记忆。
 // 只复制/移动 response 中非空的字段，避免写入无意义的数据。
-void addAssistantFromResponse(llm::Conversation& conversation, llm::LLMResponse& response) {
+void addAssistantFromResponse(llm::IMemory& memory, llm::LLMResponse& response) {
     llm::Message assistant;
     assistant.role = llm::MessageRole::Assistant;
     if (!response.content.empty())
@@ -21,7 +21,7 @@ void addAssistantFromResponse(llm::Conversation& conversation, llm::LLMResponse&
         assistant.reasoning_content = std::move(response.reasoning_content);
     if (!response.tool_calls.empty())
         assistant.tool_calls = response.tool_calls;  // 必须拷贝！调用方（execute/循环检测/取消路径）后续仍需读取 response.tool_calls
-    conversation.add(std::move(assistant));
+    memory.inject(std::move(assistant));
 }
 
 // 构造取消提示 assistant 消息，用于取消时维持一问一答对话格式。
@@ -59,7 +59,7 @@ bool ToolCallLoop::isRepeatedCall(
 }
 
 ToolCallLoopResult ToolCallLoop::run(
-    llm::Conversation& conversation,
+    llm::IMemory& memory,
     const std::vector<llm::ToolDefinition>& tools,
     const std::string& system_prompt,
     llm::StreamCallbacks callbacks,
@@ -77,7 +77,7 @@ ToolCallLoopResult ToolCallLoop::run(
         if (round == 0 && cancelled_ && *cancelled_) {
             spdlog::warn("[ToolCallLoop] 首轮前取消信号，退出 (round=0)");
             // 加空 assistant 消息维持一问一答格式
-            conversation.add(cancelledAssistant());
+            memory.inject(cancelledAssistant());
             r.cancelled = true;
             r.rounds_executed = 0;       // [#11 修复] 记录实际轮数
             r.error = "任务已取消";
@@ -85,16 +85,16 @@ ToolCallLoopResult ToolCallLoop::run(
         }
 
         // ── LLM 调用（首轮或后续）──
-        int estimated = llm::TokenCounter::countMessages(conversation.messages())
+        int estimated = llm::TokenCounter::countMessages(memory.messages())
             + llm::TokenCounter::countTokens(system_prompt);  // 包含 system prompt，确保与 API 的 prompt_tokens 口径一致
         try {
             // ── 如果是最后一轮：移除工具定义 + 提示 LLM 给出最终答复 ──
             if (round == config.max_rounds - 1) {
                 std::string final_hint = system_prompt
                     + "\n\n注意：这是最后一轮对话，请直接给出最终答复，不要再调用工具。";
-                response = client_.chat(conversation.messages(), {}, final_hint, callbacks, cancelled_);
+                response = client_.chat(memory.messages(), {}, final_hint, callbacks, cancelled_);
             } else {
-                response = client_.chat(conversation.messages(), tools, system_prompt, callbacks, cancelled_);
+                response = client_.chat(memory.messages(), tools, system_prompt, callbacks, cancelled_);
             }
             if (config.hooks.on_round_complete)
                 config.hooks.on_round_complete(response.prompt_tokens, response.completion_tokens, estimated);
@@ -107,7 +107,7 @@ ToolCallLoopResult ToolCallLoop::run(
         if (cancelled_ && *cancelled_) {
             spdlog::warn("[ToolCallLoop] chat() 期间取消，退出 (round={})", round);
             // 加空 assistant 消息维持一问一答格式，避免上一轮 tool_result 孤立
-            conversation.add(cancelledAssistant());
+            memory.inject(cancelledAssistant());
             r.cancelled = true;
             r.rounds_executed = round + 1;
             r.error = "任务已取消";
@@ -145,8 +145,8 @@ ToolCallLoopResult ToolCallLoop::run(
             // 保存当前响应
             llm::LLMResponse last_response = std::move(response);
 
-            // 加入 assistant 消息（含重复的 tool_calls）到对话
-            addAssistantFromResponse(conversation, last_response);
+            // 加入 assistant 消息（含重复的 tool_calls）到记忆
+            addAssistantFromResponse(memory, last_response);
 
             // 为每个工具调用添加终止结果，确保消息序列合法
             for (const auto& tc : last_response.tool_calls) {
@@ -154,18 +154,18 @@ ToolCallLoopResult ToolCallLoop::run(
                     {"error", "工具调用已被系统终止：检测到重复调用"},
                     {"retryable", false}
                 };
-                conversation.add(llm::Message::toolResult(tc.id, error_result.dump()));
+                memory.inject(llm::Message::toolResult(tc.id, error_result.dump()));
             }
 
             // 再发一轮：移除工具定义 + 提示重复调用
             std::string repeat_hint = system_prompt
                 + "\n\n系统检测到工具调用（" + repeated_tool_name + "）出现重复，"
                 + "已自动终止工具循环。请直接给出最终答复，不要再调用任何工具。";
-            response = client_.chat(conversation.messages(), {}, repeat_hint, callbacks, cancelled_);
+            response = client_.chat(memory.messages(), {}, repeat_hint, callbacks, cancelled_);
 
             if (config.hooks.on_round_complete)
                 config.hooks.on_round_complete(response.prompt_tokens, response.completion_tokens,
-                    llm::TokenCounter::countMessages(conversation.messages()));
+                    llm::TokenCounter::countMessages(memory.messages()));
 
             r.loop_detected = true;
             r.response = response;
@@ -175,15 +175,15 @@ ToolCallLoopResult ToolCallLoop::run(
         }
 
         // ── 正常路径：追加 assistant + 执行工具 ──
-        addAssistantFromResponse(conversation, response);
+        addAssistantFromResponse(memory, response);
 
         if (state_) state_->transition(AgentState::AwaitingTool);
 
         try {
             auto diff = pipeline.execute(response.tool_calls);
-            conversation.apply(diff);
+            memory.apply(diff);
         } catch (...) {
-            conversation.popBack();
+            memory.popBack();
             throw;
         }
 

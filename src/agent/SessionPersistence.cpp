@@ -13,12 +13,12 @@
 
 namespace agent {
 
-void SessionPersistence::save(const llm::Conversation& conversation)
+void SessionPersistence::save(const llm::IMemory& memory)
 {
     // 序列化为 JSON 数组：[{role, content, tool_calls?, tool_call_id?}, ...]
     // preserved 标记不持久化（由 session_meta.json 的 preserved_indices 管理）
     nlohmann::json j = nlohmann::json::array();
-    for (const auto& msg : conversation.all()) {
+    for (const auto& msg : memory.all()) {
         nlohmann::json msg_json;
         msg_json["role"] = llm::roleToString(msg.role);
         msg_json["content"] = msg.content;
@@ -42,12 +42,12 @@ void SessionPersistence::save(const llm::Conversation& conversation)
     spdlog::info("[SessionPersistence] 会话已保存 ({} 条消息)", j.size());
 }
 
-llm::Conversation SessionPersistence::load()
+llm::Memory SessionPersistence::load()
 {
-    llm::Conversation conv;
+    llm::Memory mem;
     std::string path = utils::file::joinPath(storage_.agentDir(), kConversationFile);
     nlohmann::json j = storage_.loadJson(path);
-    if (!j.is_array()) return conv;  // 文件不存在或格式异常 → 返回空对话
+    if (!j.is_array()) return mem;  // 文件不存在或格式异常 → 返回空对话
 
     // 防御式解析：每个字段独立提取，缺失时使用 getOrDefault 兜底
     for (const auto& msg_json : j) {
@@ -70,15 +70,15 @@ llm::Conversation SessionPersistence::load()
                 msg.tool_calls.push_back(tc);
             }
         }
-        conv.add(std::move(msg));
+        mem.add(std::move(msg));
     }
-    spdlog::info("[SessionPersistence] 会话已加载 ({} 条消息)", conv.size());
-    return conv;
+    spdlog::info("[SessionPersistence] 会话已加载 ({} 条消息)", mem.size());
+    return mem;
 }
 
-void SessionPersistence::archive(const llm::Conversation& conversation)
+void SessionPersistence::archive(const llm::IMemory& memory)
 {
-    if (conversation.empty()) return;
+    if (memory.empty()) return;
 
     std::string archive_dir = utils::file::joinPath(storage_.agentDir(), kArchiveDir);
     utils::file::createDirs(archive_dir);
@@ -88,7 +88,7 @@ void SessionPersistence::archive(const llm::Conversation& conversation)
     std::replace(ts.begin(), ts.end(), ':', '-');
 
     nlohmann::json j = nlohmann::json::array();
-    for (const auto& msg : conversation.all()) {
+    for (const auto& msg : memory.all()) {
         nlohmann::json msg_json;
         msg_json["role"] = llm::roleToString(msg.role);
         msg_json["content"] = msg.content;

@@ -52,8 +52,9 @@ bool validateInput(const std::string& input, std::string& reason) {
 }
 } // namespace
 
-Agent::Agent(llm::LLMClientFactory& factory, ToolRegistry& registry)
-    : factory_(factory), client_(factory.create()), registry_(registry)
+Agent::Agent(llm::LLMClientFactory& factory, ToolRegistry& registry, llm::IMemory& memory)
+    : factory_(factory), client_(factory.create()), registry_(registry), memory_(memory)
+    , tool_context_(registry)
 {
     parallel_mode_ = false;  // 默认串行模式
 }
@@ -61,10 +62,7 @@ Agent::Agent(llm::LLMClientFactory& factory, ToolRegistry& registry)
 Agent::~Agent() = default;
 
 void Agent::setSystemPrompt(std::string prompt) {
-    conversation_.setSystemPrompt(std::move(prompt));
-}
-void Agent::setMaxToolRounds(int n) {
-    max_tool_rounds_ = (n >= 1) ? n : 1;
+    memory_.injectSystemPrompt(std::move(prompt));
 }
 void Agent::setContextManager(ContextManager* cm) {
     context_manager_ = cm;
@@ -73,13 +71,10 @@ void Agent::setContextManager(ContextManager* cm) {
         cm->setModelName(client_->config().model);
     }
 }
-void Agent::setMaxContextTokens(int tokens) {
-    max_context_tokens_ = tokens;
-}
-void Agent::clearConversation() { conversation_.clear(); }
+void Agent::clearMemory() { memory_.clear(); }
 
 void Agent::resetSession() {
-    conversation_.clear();
+    memory_.clear();
     tracer_.clear();
     orchestrator_.reset();
     // 级联到 ContextManager：清空 token 统计、压缩摘要、警告缓存、向量脏标记
@@ -92,15 +87,19 @@ CompactResult Agent::compactConversation(std::optional<std::string> focus) {
         empty.summary = "(上下文管理器未配置)";
         return empty;
     }
-    return context_manager_->compact(conversation_, *client_, std::move(focus));
+    return context_manager_->compact(memory_, *client_, std::move(focus));
 }
 
 bool Agent::pinMessage(size_t index) {
-    return conversation_.pinMessage(index);
+    return memory_.pin(index);
 }
 
 bool Agent::unpinMessage(size_t index) {
-    return conversation_.unpinMessage(index);
+    return memory_.unpin(index);
+}
+
+bool Agent::editMessage(size_t index, std::string new_content) {
+    return memory_.edit(index, std::move(new_content));
 }
 
 SessionTokenState Agent::contextStats() const {
@@ -114,10 +113,10 @@ std::vector<std::string> Agent::contextWarnings() const {
 }
 
 bool Agent::rewindTo(size_t index) {
-    if (index >= conversation_.size()) return false;
+    if (index >= memory_.size()) return false;
 
     // Issue 11: 检测回滚是否会丢失 pinned 消息
-    auto pinned = conversation_.pinnedIndices();
+    auto pinned = memory_.pinnedIndices();
     std::vector<size_t> lost_pins;
     for (auto pi : pinned) {
         if (pi > index) lost_pins.push_back(pi);
@@ -133,7 +132,7 @@ bool Agent::rewindTo(size_t index) {
                      index, lost_pins.size(), ids);
     }
 
-    conversation_.truncateTo(index + 1);  // 保留到 index（含）
+    memory_.truncateTo(index + 1);  // 保留到 index（含）
 
     // 修复时空悖论：回滚到压缩点之前，清空失效摘要
     if (context_manager_) {
@@ -145,13 +144,13 @@ bool Agent::rewindTo(size_t index) {
         }
     }
 
-    spdlog::info("[Agent] 回滚到消息 #{} (保留 {} 条)", index, conversation_.size());
+    spdlog::info("[Agent] 回滚到消息 #{} (保留 {} 条)", index, memory_.size());
     return true;
 }
 
 std::vector<size_t> Agent::checkpointIndices() const {
     std::vector<size_t> result;
-    const auto& all = conversation_.all();
+    const auto& all = memory_.all();
     for (size_t i = 0; i < all.size(); ++i) {
         if (all[i].role == llm::MessageRole::User) {
             result.push_back(i);
@@ -162,20 +161,20 @@ std::vector<size_t> Agent::checkpointIndices() const {
 
 void Agent::saveSessionState() {
     if (!context_manager_) return;
-    auto pinned = conversation_.pinnedIndices();
-    context_manager_->saveSessionState(conversation_, pinned);
+    auto pinned = memory_.pinnedIndices();
+    context_manager_->saveSessionState(memory_, pinned);
 }
 
 void Agent::loadSessionState() {
     if (!context_manager_) return;
-    conversation_.clear();
-    context_manager_->loadSessionState(conversation_);
+    memory_.clear();
+    context_manager_->loadSessionState(memory_);
 }
 
 void Agent::useParallelProcessor(TemplateManager* tm) {
     parallel_mode_ = true;
     if (!orchestrator_) {
-        orchestrator_ = std::make_unique<AgentOrchestrator>(factory_, registry_, conversation_.systemPrompt());
+        orchestrator_ = std::make_unique<AgentOrchestrator>(factory_, registry_, memory_.systemPrompt());
     }
     if (tm) {
         orchestrator_->setTemplateManager(tm);
@@ -203,18 +202,18 @@ void Agent::useParallelProcessor(TemplateManager* tm) {
 //     │   └─ 用量告警
 //     └─ PromptComposer::compose() 将 personality 与 context 拼接
 // ===========================================================================
-std::string Agent::buildEffectivePrompt(llm::Conversation& conversation)
+std::string Agent::buildEffectivePrompt(llm::IMemory& memory)
 {
     // ── 路径 A：无 ContextManager（直通模式） ──
     if (!context_manager_) {
-        return conversation.systemPrompt();
+        return memory.systemPrompt();
     }
 
     // ── 路径 B：有 ContextManager（动态上下文模式） ──
-    auto assembly = context_manager_->assemble(conversation, max_context_tokens_, &*client_);
+    auto assembly = context_manager_->assemble(memory, &*client_);
 
     PromptComponents pc;
-    pc.personality = conversation.systemPrompt();
+    pc.personality = memory.systemPrompt();
     pc.context = assembly.system_prompt;
     return PromptComposer::compose(pc);
 }
@@ -234,30 +233,30 @@ std::string Agent::buildEffectivePrompt(llm::Conversation& conversation)
 // ===========================================================================
 Agent::InternalResult Agent::processSerial(
     const std::string& input,
-    llm::Conversation& conversation,
+    llm::IMemory& memory,
     llm::StreamCallbacks callbacks)
 {
     // ── 步骤 2: 追加用户消息 ──
-    conversation.addUser(input);
+    memory.addUser(input);
 
     // ── 步骤 3: 准备工具列表 ──
     auto tools = registry_.getToolDefinitions();
 
     // ── 步骤 4: 构建最终提示词 ──
-    auto effective_system_prompt = buildEffectivePrompt(conversation);
+    auto effective_system_prompt = buildEffectivePrompt(memory);
 
     // ── 步骤 5: 配置 ToolCallLoop ──
     ToolCallLoop loop(*client_, registry_, &state_);
     loop.setCancelled(&cancel_requested_);          // 传入取消标志
     ToolCallLoopConfig config;
-    config.setMaxRounds(max_tool_rounds_)
-          .setMaxRepeatedCalls(3);
+    config.setMaxRounds(exec_config_.max_tool_rounds)
+          .setMaxRepeatedCalls(exec_config_.max_repeated_calls);
           
     // 每轮完成后实时更新 TokenTracker + 校准 + 接近上限时自动压缩
-    config.hooks.on_round_complete = [this, &conversation](int input, int output, int estimated) {
+    config.hooks.on_round_complete = [this, &memory](int input, int output, int estimated) {
         if (!context_manager_) return;
         context_manager_->recordUsage(input, output);
-        // 每轮校准：estimated 是调 LLM 前对 conversation 的原始估算，input 是 API 返回的 prompt_tokens
+        // 每轮校准：estimated 是调 LLM 前对 memory 的原始估算，input 是 API 返回的 prompt_tokens
         if (context_manager_->hasCalibrator() && estimated > 0 && input > 0) {
             context_manager_->calibrator()->calibrate(
                 client_->config().model, estimated, input);
@@ -266,13 +265,13 @@ Agent::InternalResult Agent::processSerial(
         if (status.status >= ContextStatus::AutoCompact && status.status != ContextStatus::Error) {
             spdlog::info("[Agent] 工具循环中上下文较高 ({}%), 自动压缩旧历史",
                          status.usage_percent);
-            context_manager_->compact(conversation, *client_,
+            context_manager_->compact(memory, *client_,
                 "自动压缩：工具调用循环中上下文不足");
         }
     };
 
     // ── 步骤 6: 执行 ToolCallLoop ──
-    auto result = loop.run(conversation, tools, effective_system_prompt,
+    auto result = loop.run(memory, tools, effective_system_prompt,
                            std::move(callbacks), config);
 
     // ── 步骤 7: 返回结果 ──
@@ -288,7 +287,7 @@ Agent::InternalResult Agent::processSerial(
         assistant.content = result.response.content;
         assistant.reasoning_content = result.response.reasoning_content;
         assistant.tool_calls = result.response.tool_calls;
-        conversation.add(std::move(assistant));
+        memory.inject(std::move(assistant));
         r.text = result.response.content;
     }
     return r;
@@ -301,23 +300,23 @@ Agent::InternalResult Agent::processSerial(
 // ===========================================================================
 Agent::InternalResult Agent::processParallel(
     const std::string& input,
-    llm::Conversation& conversation,
+    llm::IMemory& memory,
     llm::StreamCallbacks callbacks)
 {
     InternalResult r;
 
     // 惰性创建编排器
     if (!orchestrator_) {
-        orchestrator_ = std::make_unique<AgentOrchestrator>(factory_, registry_, conversation_.systemPrompt());
+        orchestrator_ = std::make_unique<AgentOrchestrator>(factory_, registry_, memory_.systemPrompt());
     }
 
     // ── 上下文组装 ──
     try {
-        std::string effective_system_prompt = conversation_.systemPrompt();
+        std::string effective_system_prompt = memory_.systemPrompt();
         if (context_manager_) {
-            auto assembly = context_manager_->assemble(conversation, max_context_tokens_, nullptr);
+            auto assembly = context_manager_->assemble(memory, nullptr);
             if (!assembly.system_prompt.empty())
-                effective_system_prompt = conversation_.systemPrompt() + "\n\n" + assembly.system_prompt;
+                effective_system_prompt = memory_.systemPrompt() + "\n\n" + assembly.system_prompt;
         }
         orchestrator_->setMainPrompt(effective_system_prompt);
     } catch (const std::exception& e) {
@@ -330,8 +329,8 @@ Agent::InternalResult Agent::processParallel(
             ParallelStartPayload{.input = input.substr(0, 200)});
 
         auto text = orchestrator_->processMessage(input);
-        conversation.addUser(input);
-        conversation.addAssistant(text);
+        memory.addUser(input);
+        memory.addAssistant(text);
 
         // 注入子任务工具调用详情
         {
@@ -352,7 +351,7 @@ Agent::InternalResult Agent::processParallel(
                 if (!sub_detail.empty()) {
                     llm::Message ass = llm::Message::assistant(
                         "(并行分析完成，子任务详情:)\n" + sub_detail);
-                    conversation.add(std::move(ass));
+                    memory.inject(std::move(ass));
                 }
             }
         }
@@ -446,8 +445,8 @@ llm::LLMResponse Agent::process(const std::string& input,
     // ── 步骤 3: 轨迹记录 ──
     tracer_.record("user_input", 0, 0, UserInputPayload{.input = input.substr(0, 200)});
 
-    // ── 步骤 3.5: 对话快照 — 异常时回滚所有修改（含 compact 等不可逆操作）──
-    llm::Conversation conversation_snapshot = conversation_;
+    // ── 步骤 3.5: 记忆快照 — 异常时回滚所有修改（含 compact 等不可逆操作）──
+    auto memory_snapshot = memory_.checkpoint();
 
     // ── 步骤 4: 状态转换 Idle → Thinking ──
     state_.transition(AgentState::Thinking);
@@ -459,9 +458,9 @@ llm::LLMResponse Agent::process(const std::string& input,
         // 根据并行标志选择处理路径
         InternalResult result;
         if (parallel_mode_)
-            result = processParallel(input, conversation_, std::move(callbacks));
+            result = processParallel(input, memory_, std::move(callbacks));
         else
-            result = processSerial(input, conversation_, std::move(callbacks));
+            result = processSerial(input, memory_, std::move(callbacks));
 
         auto t_end = std::chrono::steady_clock::now();
         int total_ms = static_cast<int>(
@@ -490,7 +489,7 @@ llm::LLMResponse Agent::process(const std::string& input,
     } catch (const std::exception& e) {
         spdlog::error("[Agent] 处理异常，强制状态恢复: {}", e.what());
         tracer_.record("error", 0, 0, ErrorPayload{.reason = "处理异常: " + std::string(e.what())});
-        conversation_ = std::move(conversation_snapshot);  // 回滚对话到处理前的状态
+        memory_.restore(memory_snapshot);  // 回滚记忆到处理前的状态
         // 清空 ContextManager 的压缩状态（summary_ / marker_）。
         // 异常可能来自 compact 成功之后的任何步骤——此时 compact 已修改了
         // summary_/marker_，但对话却被回滚到快照，摘要就变成了指向已回滚
@@ -524,13 +523,13 @@ llm::LLMResponse Agent::execute(const std::string& command,
 
     std::vector<llm::Message> messages = { llm::Message::user(command) };
     auto tools = registry_.getToolDefinitions();
-    std::string effective_system_prompt = conversation_.systemPrompt();
+    std::string effective_system_prompt = memory_.systemPrompt();
     if (context_manager_) {
-        llm::Conversation tempConv;
-        tempConv.addUser(command);
-        auto assembly = context_manager_->assemble(tempConv, max_context_tokens_);
+        llm::Memory tempMem;
+        tempMem.addUser(command);
+        auto assembly = context_manager_->assemble(tempMem);
         if (!assembly.system_prompt.empty())
-            effective_system_prompt = conversation_.systemPrompt() + "\n\n" + assembly.system_prompt;
+            effective_system_prompt = memory_.systemPrompt() + "\n\n" + assembly.system_prompt;
     }
 
     try {

@@ -66,6 +66,7 @@ set(NOVELAGENT_AGENT
     src/agent/ToolCallLoop.h src/agent/ToolCallLoop.cpp
     src/agent/ISynthesisStrategy.h src/agent/ISynthesisStrategy.cpp
     src/agent/IIndexService.h                                   # Issue 6: 索引服务接口
+    src/agent/ProjectIndexService.h src/agent/ProjectIndexService.cpp
     src/agent/SessionPersistence.h src/agent/SessionPersistence.cpp
     src/agent/ContextManager.h src/agent/ContextManager.cpp
     src/agent/SessionManager.h src/agent/SessionManager.cpp
@@ -73,6 +74,7 @@ set(NOVELAGENT_AGENT
     src/agent/PromptContextBuilder.h src/agent/PromptContextBuilder.cpp
     src/agent/Agent.h src/agent/Agent.cpp
     src/agent/ToolPipeline.h src/agent/ToolPipeline.cpp
+    src/agent/ContextualToolProvider.h src/agent/ContextualToolProvider.cpp
     src/agent/SubAgent.h src/agent/SubAgent.cpp
     src/agent/AgentOrchestrator.h src/agent/AgentOrchestrator.cpp
     src/agent/SubAgentTemplate.h
@@ -104,4 +106,11 @@ set(NOVELAGENT_CLI
     src/cli/CommandParser.h src/cli/CommandParser.cpp
     src/cli/StreamDisplay.h src/cli/StreamDisplay.cpp
     src/cli/ReplHandler.h src/cli/ReplHandler.cpp
+)
+
+set(NOVELAGENT_SKILL
+    src/skill/SkillMetadata.h
+    src/skill/ISkillProvider.h
+    src/skill/SkillLoader.h src/skill/SkillLoader.cpp
+    src/skill/SkillRegistry.h src/skill/SkillRegistry.cpp
 )

@@ -115,7 +115,8 @@ void test_assemble_no_project() {
     llm::Conversation conv;
     conv.addUser("测试");
     agent::ContextManager cm;
-    auto result = cm.assemble(conv, 131072);
+    cm.setModelContextLimit(131072);
+    auto result = cm.assemble(conv);
     CHECK(result.system_prompt.empty());
     PASS();
 }
@@ -153,7 +154,8 @@ void test_total_tokens() {
     conv.addUser("测试消息");
 
     agent::ContextManager cm;
-    auto result = cm.assemble(conv, 131072);
+    cm.setModelContextLimit(131072);
+    auto result = cm.assemble(conv);
     CHECK(result.total_tokens > 0);
     PASS();
 }
@@ -325,12 +327,12 @@ void test_last_warnings_cached() {
     std::string big_text = "word ";
     for (int i = 0; i < 600; ++i) big_text += "word ";
     conv.addUser(big_text);  // ~600 单词 × 1.3 ≈ 780 tokens，远超 200 限制
-    cm.assemble(conv, 131072);
+    cm.assemble(conv);
     CHECK(!cm.lastWarnings().empty());
 
     // 恢复大窗口 → 不再有告警
     cm.setModelContextLimit(131072);
-    cm.assemble(conv, 131072);
+    cm.assemble(conv);
     CHECK(cm.lastWarnings().empty());
 
     PASS();
@@ -350,7 +352,7 @@ void test_critical_warning() {
     std::string big_text = "word ";
     for (int i = 0; i < 600; ++i) big_text += "word ";
     conv.addUser(big_text);  // ~600 单词 × 1.3 ≈ 780 tokens，远超 200 限制
-    auto result = cm.assemble(conv, 131072);
+    auto result = cm.assemble(conv);
 
     // 390% 超出模型窗口上限 → Error（致命错误），fatal 标志置位
     CHECK(result.fatal);

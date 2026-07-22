@@ -11,9 +11,10 @@
 #include "agent/AgentOrchestrator.h"
 #include "agent/AgentState.h"
 #include "agent/ContextManagerTypes.h"
+#include "agent/ContextualToolProvider.h"
 #include "agent/ExecutionTracer.h"
 #include "agent/ToolCallLoop.h"
-#include "llm/Conversation.h"
+#include "llm/IMemory.h"
 #include "llm/ILLMClient.h"
 
 #include <atomic>
@@ -30,22 +31,29 @@ class ToolRegistry;
 class ContextManager;
 class TemplateManager;
 
+// Agent 执行约束参数（与 SubAgentConfig 对称）。
+struct AgentExecutionConfig {
+    int max_tool_rounds = 10;       // 单次用户消息的最大工具调用轮数
+    int max_repeated_calls = 3;     // 同一工具调用的最大重复次数
+};
+
 class Agent {
 public:
     // factory  LLM 客户端工厂（Agent 通过它创建自己的独立 LLMClient）
-    Agent(llm::LLMClientFactory& factory, ToolRegistry& registry);
+    // memory   记忆实例（对等组件，由外部组装器注入，Agent 不拥有其生命周期）
+    Agent(llm::LLMClientFactory& factory, ToolRegistry& registry, llm::IMemory& memory);
     ~Agent();
 
     // 设置系统提示词，定义 Agent 的角色、行为和写作风格。
     void setSystemPrompt(std::string prompt);
-    // 设置单次用户消息的最大工具调用轮数，防止无限循环。
-    void setMaxToolRounds(int n);
+    // 设置执行约束参数（最大工具调用轮数、重复调用上限）。
+    void setExecutionConfig(AgentExecutionConfig config) { exec_config_ = config; }
+    // 获取当前执行约束参数。
+    const AgentExecutionConfig& executionConfig() const { return exec_config_; }
     // 设置上下文管理器（知识库检索、动态上下文注入）。
     void setContextManager(ContextManager* cm);
     // 获取上下文管理器（非拥有指针，可能为 nullptr）。
     ContextManager* contextManager() const { return context_manager_; }
-    // 设置每次请求的最大上下文 token 数（应用层预算上限），旧消息超出将被截断。
-    void setMaxContextTokens(int tokens);
 
     // 处理用户输入——核心入口。自动追加对话历史、调用 LLM、执行工具，
     // 并在多轮 tool_call 循环后返回最终 LLMResponse。
@@ -56,10 +64,10 @@ public:
     llm::LLMResponse execute(const std::string& command,
                               llm::StreamCallbacks callbacks = {});
 
-    // 返回当前对话历史（只读），供外部查看或日志记录。
-    const llm::Conversation& conversation() const { return conversation_; }
+    // 返回当前记忆（只读），供外部查看或日志记录。
+    const llm::IMemory& memory() const { return memory_; }
     // 清空对话历史，开始全新的对话。
-    void clearConversation();
+    void clearMemory();
     // 重置整个会话（清空对话 + 重置上下文追踪 + 清除压缩摘要）。
     void resetSession();
 
@@ -74,6 +82,8 @@ public:
     bool pinMessage(size_t index);
     // 取消保留。
     bool unpinMessage(size_t index);
+    // 编辑指定索引的消息内容（仅允许 User 和 Assistant 消息）。
+    bool editMessage(size_t index, std::string new_content);
     // 获取上下文统计（累计 token 消耗、请求次数、模型窗口上限）。
     agent::SessionTokenState contextStats() const;
     // 获取最后一次上下文组装的警告列表（截断/用量临界/向量过期/预算溢出等）。
@@ -132,6 +142,8 @@ public:
     llm::ILLMClient& client() { return *client_; }
     // 返回工具注册表（可变引用），供外部注册或查询工具。
     ToolRegistry& registry() { return registry_; }
+    // 返回渐进式工具上下文提供者。
+    ContextualToolProvider& toolContext() { return tool_context_; }
 
 private:
     // 内部处理结果（包含最终文本 + 原始 LLM 响应）。
@@ -142,26 +154,26 @@ private:
 
     // 串行处理路径 — 标准 tool_call 循环。
     InternalResult processSerial(const std::string& input,
-                                 llm::Conversation& conversation,
+                                 llm::IMemory& memory,
                                  llm::StreamCallbacks callbacks);
     // 并行处理路径 — 子任务编排。
     InternalResult processParallel(const std::string& input,
-                                   llm::Conversation& conversation,
+                                   llm::IMemory& memory,
                                    llm::StreamCallbacks callbacks);
     // 构建最终发给 LLM 的系统提示词。
-    std::string buildEffectivePrompt(llm::Conversation& conversation);
+    std::string buildEffectivePrompt(llm::IMemory& memory);
 
 private:
 
     llm::LLMClientFactory& factory_;                //  LLM 客户端工厂，供并行模式创建子 Agent
     std::unique_ptr<llm::ILLMClient> client_;       //  Agent 自己的独立 LLMClient
     ToolRegistry& registry_;                        //  工具注册表
-    llm::Conversation conversation_;                //  对话历史（含 system prompt）
-    int max_tool_rounds_ = 10;                      //  最大工具调用轮数
+    llm::IMemory& memory_;                          //  记忆（对等组件，外部注入，非拥有）
+    AgentExecutionConfig exec_config_;              //  执行约束参数（轮数/重复上限）
     ContextManager* context_manager_ = nullptr;     //  上下文管理器（非拥有指针）
-    int max_context_tokens_ = 131072;               //  最大上下文 token 数
     bool parallel_mode_ = false;                    //  是否启用并行模式
     std::unique_ptr<AgentOrchestrator> orchestrator_; //  并行编排器
+    ContextualToolProvider tool_context_;            //  渐进式工具上下文提供者
 
     // Fix #3: 执行轨迹记录器
     ExecutionTracer tracer_;

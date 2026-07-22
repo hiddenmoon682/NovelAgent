@@ -4,7 +4,7 @@
 // Agent 和 SubAgent 均可使用（SubAgent 传入 RestrictedToolProvider）。
 
 #include "agent/IToolProvider.h"
-#include "llm/Conversation.h"
+#include "llm/IMemory.h"
 #include "llm/ILLMClient.h"
 #include "llm/Message.h"
 #include "llm/TokenCounter.h"
@@ -70,7 +70,7 @@ public:
 
     // 执行 tool_call 循环。
     ToolCallLoopResult run(
-        llm::Conversation& conversation,
+        llm::IMemory& memory,
         const std::vector<llm::ToolDefinition>& tools,
         const std::string& system_prompt,
         llm::StreamCallbacks callbacks,

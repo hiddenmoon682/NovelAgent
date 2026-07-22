@@ -15,6 +15,7 @@
 #include "agent/IToolProvider.h"
 #include "llm/Conversation.h"
 #include "llm/ILLMClient.h"
+#include "llm/IMemory.h"
 #include "llm/Message.h"
 
 #include <atomic>
@@ -69,13 +70,13 @@ public:
     // A3: 设置外部 tracer（可选），其摘要将随结果一并返回。
     void setTracer(ExecutionTracer* tracer) { external_tracer_ = tracer; }
 
-    const llm::Conversation& conversation() const { return conversation_; }
+    const llm::IMemory& memory() const { return conversation_; }
     const ExecutionTracer& tracer() const { return tracer_; }
 
 private:
     std::unique_ptr<llm::ILLMClient> client_;  // 独立 LLMClient 实例
     IToolProvider& tools_;
-    llm::Conversation conversation_;
+    llm::Memory conversation_;                 // 子 Agent 独立记忆（线程隔离）
     std::mutex conv_mutex_;               // 保护 conversation_ 并发访问
     std::atomic<bool> cancelled_{false};  // 超时时通知异步任务停止
     ExecutionTracer tracer_;              // A3: 子任务执行轨迹记录器，由 setTracer 或 execute 内部使用

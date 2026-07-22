@@ -11,6 +11,7 @@
 #include "agent/ContextManager.h"
 #include "agent/ExecutionTracer.h"
 #include "agent/ToolRegistry.h"
+#include "llm/Conversation.h"
 
 #include <chrono>
 #include <memory>
@@ -30,6 +31,7 @@ namespace agent {
 // 单个会话（使用 shared_ptr 管理生命周期，防止 use-after-free）。
 struct Session {
     std::string id;
+    llm::Memory memory;                          //  每个会话独立的记忆
     std::unique_ptr<agent::Agent> agent;
     std::unique_ptr<agent::ContextManager> ctx_mgr;
     std::unique_ptr<agent::StateMachine> state;

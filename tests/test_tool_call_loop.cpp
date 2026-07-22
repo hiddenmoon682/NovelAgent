@@ -5,6 +5,7 @@
 #include "agent/ToolRegistry.h"
 #include "agent/AgentState.h"
 #include "llm/ILLMClient.h"
+#include "llm/Conversation.h"
 #include "llm/Message.h"
 #include "config/AppConfig.h"
 
@@ -113,7 +114,7 @@ void test_basic_tool_call() {
     registry.registerBuiltInTool(std::move(mockTool));
 
     g_read_calls = 0;
-    llm::Conversation conv;
+    llm::Memory conv;
     conv.addUser("帮我读第1章");
 
     agent::ToolCallLoop loop(client, registry);
@@ -138,7 +139,7 @@ void test_direct_text_response() {
     }
 
     agent::ToolRegistry registry;
-    llm::Conversation conv;
+    llm::Memory conv;
     conv.addUser("你好");
 
     agent::ToolCallLoop loop(client, registry);
@@ -174,7 +175,7 @@ void test_cancellation() {
     registry.registerBuiltInTool(std::move(mockTool));
 
     std::atomic<bool> cancel_flag{false};
-    llm::Conversation conv;
+    llm::Memory conv;
     conv.addUser("测试取消");
 
     agent::ToolCallLoop loop(client, registry);
@@ -213,7 +214,7 @@ void test_state_machine_transitions() {
 
     agent::StateMachine state_machine;
     state_machine.transition(agent::AgentState::Thinking);  // 模拟 SerialProcessor 的真实流程
-    llm::Conversation conv;
+    llm::Memory conv;
     conv.addUser("测试");
 
     g_read_calls = 0;
@@ -256,7 +257,7 @@ void test_reasoning_content_preserved() {
     registry.registerBuiltInTool(std::move(mockTool));
 
     g_read_calls = 0;
-    llm::Conversation conv;
+    llm::Memory conv;
     conv.addUser("帮我分析第1章");
 
     agent::ToolCallLoop loop(client, registry);

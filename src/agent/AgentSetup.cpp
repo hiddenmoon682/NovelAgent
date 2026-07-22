@@ -2,14 +2,12 @@
 
 #include "agent/ToolRegistry.h"
 
-#include <memory>
-
 namespace agent {
 
 void registerAllTools(ToolRegistry& registry,
-                      std::shared_ptr<Project> project,
+                      const ToolDependencies& deps,
                       const std::vector<std::string>& disabled) {
-    BuiltInTool::registerAllTo(registry, std::move(project), disabled);
+    BuiltInTool::registerAllTo(registry, deps, disabled);
 }
 
 } // namespace agent

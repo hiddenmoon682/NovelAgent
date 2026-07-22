@@ -73,6 +73,7 @@ public:
     std::optional<VectorEntry> get(const std::string& id) const;
 
     void saveToFile() const;
+    void flush() override { saveToFile(); }
 
 private:
     std::string db_path_;

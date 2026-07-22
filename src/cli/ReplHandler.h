@@ -19,6 +19,7 @@
 
 struct Project;
 namespace agent { class IIndexService; }  // Issue 6: 通过接口访问索引功能
+namespace skill { class ISkillProvider; }
 
 class ReplHandler {
 public:
@@ -34,6 +35,8 @@ public:
     // Issue 6: 设置索引服务（通过抽象接口，消除 NovelAgentApp* 反向依赖）
     void setIndexService(agent::IIndexService* svc) { index_service_ = svc; }
 
+    void setSkillProvider(skill::ISkillProvider* sp) { skill_provider_ = sp; }
+
 private:
     agent::Agent& agent_;
     IOutputChannel& out_;
@@ -42,6 +45,7 @@ private:
     std::shared_ptr<Project> project_;
     std::string welcome_;
     agent::IIndexService* index_service_ = nullptr;  // Issue 6: 替代 NovelAgentApp* app_
+    skill::ISkillProvider* skill_provider_ = nullptr;
 
     void setupCommands();
     void setupPhase5Commands();

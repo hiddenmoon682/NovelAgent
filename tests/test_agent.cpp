@@ -1,6 +1,7 @@
 #include "agent/Agent.h"
 #include "agent/ToolRegistry.h"
 #include "agent/ContextManager.h"
+#include "llm/Conversation.h"
 #include "llm/LLMClientFactory.h"
 #include "project/FileStorageBackend.h"
 #include "project/ProjectIO.h"
@@ -111,7 +112,8 @@ void test_simple_conversation() {
 
     llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
-    agent::Agent agent(factory, registry);
+    llm::Memory memory;
+    agent::Agent agent(factory, registry, memory);
 
     auto response = agent.process("Hi");
 
@@ -119,11 +121,11 @@ void test_simple_conversation() {
     CHECK(response.finish_reason == "stop");
 
     // 验证对话历史：user + assistant = 2 条
-    CHECK(agent.conversation().size() == 2);
-    CHECK(agent.conversation().all()[0].role == llm::MessageRole::User);
-    CHECK(agent.conversation().all()[0].content == "Hi");
-    CHECK(agent.conversation().all()[1].role == llm::MessageRole::Assistant);
-    CHECK(agent.conversation().all()[1].content == "你好，我是助手");
+    CHECK(agent.memory().size() == 2);
+    CHECK(agent.memory().all()[0].role == llm::MessageRole::User);
+    CHECK(agent.memory().all()[0].content == "Hi");
+    CHECK(agent.memory().all()[1].role == llm::MessageRole::Assistant);
+    CHECK(agent.memory().all()[1].content == "你好，我是助手");
 
     server.stop();
     PASS();
@@ -181,20 +183,21 @@ void test_tool_call_loop() {
         }
     );
 
-    agent::Agent agent(factory, registry);
+    llm::Memory memory;
+    agent::Agent agent(factory, registry, memory);
     auto response = agent.process("echo test");
 
     CHECK(response.content == "工具已执行完毕");
     CHECK(call_count == 2);
 
     // 验证对话历史：user + assistant(tool_calls) + tool_result + assistant(final)
-    CHECK(agent.conversation().size() == 4);
-    CHECK(agent.conversation().all()[0].role == llm::MessageRole::User);
-    CHECK(agent.conversation().all()[1].role == llm::MessageRole::Assistant);
-    CHECK(agent.conversation().all()[1].tool_calls.size() == 1);
-    CHECK(agent.conversation().all()[2].role == llm::MessageRole::Tool);
-    CHECK(agent.conversation().all()[3].role == llm::MessageRole::Assistant);
-    CHECK(agent.conversation().all()[3].content == "工具已执行完毕");
+    CHECK(agent.memory().size() == 4);
+    CHECK(agent.memory().all()[0].role == llm::MessageRole::User);
+    CHECK(agent.memory().all()[1].role == llm::MessageRole::Assistant);
+    CHECK(agent.memory().all()[1].tool_calls.size() == 1);
+    CHECK(agent.memory().all()[2].role == llm::MessageRole::Tool);
+    CHECK(agent.memory().all()[3].role == llm::MessageRole::Assistant);
+    CHECK(agent.memory().all()[3].content == "工具已执行完毕");
 
     server.stop();
     PASS();
@@ -223,13 +226,14 @@ void test_execute_mode() {
 
     llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
-    agent::Agent agent(factory, registry);
+    llm::Memory memory;
+    agent::Agent agent(factory, registry, memory);
 
     auto response = agent.execute("查询项目状态");
 
     CHECK(response.content == "查询结果");
     // execute 不修改内部对话历史
-    CHECK(agent.conversation().empty());
+    CHECK(agent.memory().empty());
 
     server.stop();
     PASS();
@@ -258,19 +262,20 @@ void test_conversation_management() {
 
     llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
-    agent::Agent agent(factory, registry);
+    llm::Memory memory;
+    agent::Agent agent(factory, registry, memory);
 
     // 第一轮
     agent.process("第一句话");
-    CHECK(agent.conversation().size() == 2);
+    CHECK(agent.memory().size() == 2);
 
     // 第二轮
     agent.process("第二句话");
-    CHECK(agent.conversation().size() == 4);
+    CHECK(agent.memory().size() == 4);
 
     // 清空
-    agent.clearConversation();
-    CHECK(agent.conversation().empty());
+    agent.clearMemory();
+    CHECK(agent.memory().empty());
 
     server.stop();
     PASS();
@@ -292,11 +297,12 @@ void test_empty_input() {
 
     llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
-    agent::Agent agent(factory, registry);
+    llm::Memory memory;
+    agent::Agent agent(factory, registry, memory);
 
     auto response = agent.process("");
     CHECK(response.content.empty());
-    CHECK(agent.conversation().empty());
+    CHECK(agent.memory().empty());
 
     server.stop();
     PASS();
@@ -323,7 +329,8 @@ void test_exception_recovery() {
 
     llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
-    agent::Agent agent(factory, registry);
+    llm::Memory memory;
+    agent::Agent agent(factory, registry, memory);
 
     // 异常前状态正确
     CHECK(agent.canAcceptInput());
@@ -368,7 +375,8 @@ void test_session_persisted_after_message() {
 
     llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
-    agent::Agent agent(factory, registry);
+    llm::Memory memory;
+    agent::Agent agent(factory, registry, memory);
 
     // 绑定 ContextManager + Project，使 processUserMessage 末尾的 saveSessionState 真正落盘
     FileStorageBackend storage(tmp);
@@ -376,7 +384,6 @@ void test_session_persisted_after_message() {
     cm.setProject(&proj);
     cm.setModelContextLimit(65536);
     agent.setContextManager(&cm);
-    agent.setMaxContextTokens(65536);
 
     // 处理前：conversation.json 应为空数组（createProjectDir 初始化的默认值）
     const std::string convPath = tmp + "/.novelagent/conversation.json";
