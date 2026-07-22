@@ -28,8 +28,8 @@ struct ToolCallLoopHooks {
 struct ToolCallLoopConfig {
     int max_rounds = 10;
     int max_repeated_calls = 3;
-    // 可选回调，用于每轮完成后的 token 跟踪和上下文管理。
     ToolCallLoopHooks hooks;
+    class ThreadPool* pool = nullptr;  // 可选线程池（并发执行只读工具）
 
     // ── 流式 setter（支持链式调用）──
     ToolCallLoopConfig& setMaxRounds(int n) { max_rounds = n; return *this; }

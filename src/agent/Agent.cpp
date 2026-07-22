@@ -9,6 +9,7 @@
 #include "agent/ToolCallLoop.h"
 #include "agent/ToolPipeline.h"
 #include "agent/ToolRegistry.h"
+#include "agent/ThreadPool.h"
 #include "llm/LLMClientFactory.h"
 
 #include <spdlog/spdlog.h>
@@ -55,6 +56,7 @@ bool validateInput(const std::string& input, std::string& reason) {
 Agent::Agent(llm::LLMClientFactory& factory, ToolRegistry& registry, llm::IMemory& memory)
     : factory_(factory), client_(factory.create()), registry_(registry), memory_(memory)
     , tool_context_(registry)
+    , tool_pool_(std::make_unique<ThreadPool>(4))
 {
     parallel_mode_ = false;  // 默认串行模式
 }
@@ -251,6 +253,7 @@ Agent::InternalResult Agent::processSerial(
     ToolCallLoopConfig config;
     config.setMaxRounds(exec_config_.max_tool_rounds)
           .setMaxRepeatedCalls(exec_config_.max_repeated_calls);
+    config.pool = tool_pool_.get();
           
     // 每轮完成后实时更新 TokenTracker + 校准 + 接近上限时自动压缩
     config.hooks.on_round_complete = [this, &memory](int input, int output, int estimated) {
