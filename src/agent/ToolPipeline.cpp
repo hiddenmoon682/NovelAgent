@@ -1,21 +1,36 @@
-// ToolPipeline 实现 — Fix #1: 依赖 IToolProvider&。
+// ToolPipeline 实现 — 并发执行：只读工具通过 ThreadPool 并发，写工具串行。
 
 #include "agent/ToolPipeline.h"
 #include "agent/ParameterValidator.h"
+#include "agent/ThreadPool.h"
 
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <array>
+#include <future>
 #include <string_view>
 
 namespace agent {
+
+bool ToolPipeline::isReadOnly(const std::string& name) {
+    static constexpr std::array kPrefixes = {
+        std::string_view{"get_"},
+        std::string_view{"list_"},
+        std::string_view{"read_"},
+        std::string_view{"search_"},
+    };
+    for (auto prefix : kPrefixes) {
+        if (name.starts_with(prefix))
+            return true;
+    }
+    return false;
+}
 
 llm::ConversationDiff ToolPipeline::execute(const std::vector<llm::ToolCall>& tool_calls)
 {
     llm::ConversationDiff diff;
 
-    // A9: 设定类工具——执行结果对长篇小说一致性至关重要
     static constexpr std::array kSettingTools = {
         std::string_view{"create_character"}, std::string_view{"update_character"},
         std::string_view{"create_setting"},   std::string_view{"update_setting"},
@@ -23,17 +38,71 @@ llm::ConversationDiff ToolPipeline::execute(const std::vector<llm::ToolCall>& to
         std::string_view{"add_character_development"}
     };
 
-    for (const auto& tc : tool_calls) {
-        spdlog::info("[ToolPipeline] 执行: {} (id={})", tc.function_name, tc.id);
-        std::string result = executeOne(tc);
-        size_t idx = diff.added.size();
-        diff.added.push_back(llm::Message::toolResult(tc.id, std::move(result)));
+    const size_t n = tool_calls.size();
 
-        // A9：设定类工具结果自动 pin
-        if (std::ranges::find(kSettingTools, tc.function_name) != kSettingTools.end()) {
-            diff.pinned_indices.push_back(idx);
+    // 无 ThreadPool 或只有一个工具调用时走串行路径
+    if (!pool_ || n <= 1) {
+        for (const auto& tc : tool_calls) {
+            spdlog::info("[ToolPipeline] 执行: {} (id={})", tc.function_name, tc.id);
+            std::string result = executeOne(tc);
+            size_t idx = diff.added.size();
+            diff.added.push_back(llm::Message::toolResult(tc.id, std::move(result)));
+            if (std::ranges::find(kSettingTools, tc.function_name) != kSettingTools.end())
+                diff.pinned_indices.push_back(idx);
+        }
+        return diff;
+    }
+
+    // 并发路径：只读工具提交到 ThreadPool，写工具在主线程串行
+    // results[i] 对应 tool_calls[i] 的执行结果
+    std::vector<std::string> results(n);
+    std::vector<std::future<std::string>> futures(n);
+    std::vector<bool> is_async(n, false);
+
+    // 确保 schema 缓存已填充（并发前完成，避免竞态）
+    if (!cache_populated_) {
+        for (const auto& def : tools_.getDefinitions())
+            schema_cache_[def.name] = def.parameters;
+        cache_populated_ = true;
+    }
+
+    for (size_t i = 0; i < n; ++i) {
+        const auto& tc = tool_calls[i];
+        if (isReadOnly(tc.function_name)) {
+            // 只读工具：异步执行
+            is_async[i] = true;
+            futures[i] = pool_->submit([this, &tc]() -> std::string {
+                return executeOne(tc);
+            });
         }
     }
+
+    // 写工具在主线程按序执行（保证 Project 修改的顺序性）
+    for (size_t i = 0; i < n; ++i) {
+        if (is_async[i])
+            continue;
+        const auto& tc = tool_calls[i];
+        spdlog::info("[ToolPipeline] 串行执行: {} (id={})", tc.function_name, tc.id);
+        results[i] = executeOne(tc);
+    }
+
+    // 收集异步结果
+    for (size_t i = 0; i < n; ++i) {
+        if (is_async[i]) {
+            spdlog::info("[ToolPipeline] 并发完成: {} (id={})",
+                         tool_calls[i].function_name, tool_calls[i].id);
+            results[i] = futures[i].get();
+        }
+    }
+
+    // 按原序组装 diff
+    for (size_t i = 0; i < n; ++i) {
+        size_t idx = diff.added.size();
+        diff.added.push_back(llm::Message::toolResult(tool_calls[i].id, std::move(results[i])));
+        if (std::ranges::find(kSettingTools, tool_calls[i].function_name) != kSettingTools.end())
+            diff.pinned_indices.push_back(idx);
+    }
+
     return diff;
 }
 

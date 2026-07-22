@@ -65,7 +65,7 @@ ToolCallLoopResult ToolCallLoop::run(
     llm::StreamCallbacks callbacks,
     const ToolCallLoopConfig& config)
 {
-    ToolPipeline pipeline(tools_);                        // 工具执行管线：校验参数 → 执行 → 截断结果 → 生成 diff
+    ToolPipeline pipeline(tools_, config.pool);
     std::unordered_map<std::string, int> call_history;    // 调用历史：tool_name:args_json → 调用次数，用于重复检测
 
     ToolCallLoopResult r;

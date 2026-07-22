@@ -30,6 +30,7 @@ namespace agent {
 class ToolRegistry;
 class ContextManager;
 class TemplateManager;
+class ThreadPool;
 
 // Agent 执行约束参数（与 SubAgentConfig 对称）。
 struct AgentExecutionConfig {
@@ -174,6 +175,7 @@ private:
     bool parallel_mode_ = false;                    //  是否启用并行模式
     std::unique_ptr<AgentOrchestrator> orchestrator_; //  并行编排器
     ContextualToolProvider tool_context_;            //  渐进式工具上下文提供者
+    std::unique_ptr<ThreadPool> tool_pool_;          //  工具并发执行线程池
 
     // Fix #3: 执行轨迹记录器
     ExecutionTracer tracer_;
