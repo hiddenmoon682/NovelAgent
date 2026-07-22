@@ -5,6 +5,7 @@
 #include "cli/AnsiTerminal.h"
 #include "config/AppConfig.h"
 #include "llm/LLMClientFactory.h"
+#include "novelagent_qt/QmlApp.h"
 #include "project/ProjectManager.h"
 
 #include <csignal>
@@ -64,11 +65,13 @@ int main(int argc, char** argv) {
 
     std::string projectPath, execCommand, providerName = "deepseek";
     bool verbose = false;
+    bool cliMode = false;
 
     app.add_option("-p,--project", projectPath, "项目目录路径");
     app.add_option("-e,--exec", execCommand, "执行单次命令后退出");
     app.add_option("--provider", providerName, "LLM provider (deepseek, kimi, claude)");
     app.add_flag("-v,--verbose", verbose, "启用调试日志");
+    app.add_flag("--cli", cliMode, "强制使用终端 REPL 模式（不启动 QML GUI）");
 
     try { app.parse(argc, argv); }
     catch (const CLI::ParseError& e) { return app.exit(e); }
@@ -151,8 +154,14 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        // 默认：启动 REPL 交互模式
-        novelAgent.runRepl();
+        // --cli：终端 REPL 交互模式
+        if (cliMode) {
+            novelAgent.runRepl();
+            return 0;
+        }
+
+        // 默认：QML GUI 模式
+        return qtui::runQmlApp(argc, argv, novelAgent);
 
     } catch (const std::exception& e) {
         std::cerr << Ansi::error() << "\n致命错误: " << e.what()

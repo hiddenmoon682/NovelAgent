@@ -29,6 +29,11 @@ if(EXISTS "D:/SoftWare/msys2/mingw64")
     list(PREPEND CMAKE_PREFIX_PATH "D:/SoftWare/msys2/mingw64")
 endif()
 
+# Qt 6.8.3（QML GUI 前端）
+if(EXISTS "D:/QT/QT/6.8.3/mingw_64")
+    list(PREPEND CMAKE_PREFIX_PATH "D:/QT/QT/6.8.3/mingw_64")
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(CompilerSettings)
 
@@ -78,8 +83,45 @@ target_include_directories(novelagent_app PUBLIC src)
 target_link_libraries(novelagent_app PUBLIC novelagent_core novelagent_tools)
 target_precompile_headers(novelagent_app REUSE_FROM novelagent_core)
 
+# ── Qt6 QML GUI 前端 ──
+find_package(Qt6 REQUIRED COMPONENTS Core Quick QuickControls2)
+qt_standard_project_setup(REQUIRES 6.5)
+
+set(NOVELAGENT_QT_SOURCES
+    src/novelagent_qt/QmlBridge.h src/novelagent_qt/QmlBridge.cpp
+    src/novelagent_qt/QmlApp.h src/novelagent_qt/QmlApp.cpp
+)
+
+set(NOVELAGENT_QML_FILES
+    src/novelagent_qt/qml/MainWindow.qml
+    src/novelagent_qt/qml/AgentPanel.qml
+    src/novelagent_qt/qml/ChatBubble.qml
+    src/novelagent_qt/qml/SessionPanel.qml
+    src/novelagent_qt/qml/ReaderPanel.qml
+    src/novelagent_qt/qml/StatusBar.qml
+    src/novelagent_qt/qml/Theme.qml
+    src/novelagent_qt/qml/qmldir
+)
+
+add_library(novelagent_qt OBJECT ${NOVELAGENT_QT_SOURCES})
+target_include_directories(novelagent_qt PUBLIC src)
+target_link_libraries(novelagent_qt PUBLIC
+    novelagent_core novelagent_tools novelagent_app
+    Qt6::Core Qt6::Quick Qt6::QuickControls2
+)
+set_target_properties(novelagent_qt PROPERTIES AUTOMOC ON)
+
+qt_add_resources(novelagent_qt "qml_resources"
+    PREFIX "/qml"
+    BASE src/novelagent_qt/qml
+    FILES ${NOVELAGENT_QML_FILES}
+)
+
 add_executable(novelagent src/main.cpp)
-target_link_libraries(novelagent PRIVATE novelagent_core novelagent_tools novelagent_app)
+target_link_libraries(novelagent PRIVATE
+    novelagent_core novelagent_tools novelagent_app novelagent_qt
+    Qt6::Core Qt6::Quick Qt6::QuickControls2
+)
 
 # ── 自动复制 MSYS2 DLL（双击 exe 无需配置 PATH）──
 if(WIN32 AND EXISTS "D:/SoftWare/msys2/mingw64/bin")
