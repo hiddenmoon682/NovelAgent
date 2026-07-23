@@ -1,7 +1,7 @@
 /// RelevantCharacterTools 实现 — 按章节获取关联角色。
 
 #include "agent/tools/RelevantCharacterTools.h"
-#include "agent/PromptSelector.h"
+#include "agent/prompt/PromptSelector.h"
 #include "project/Models.h"
 #include "utils/SchemaUtils.h"
 

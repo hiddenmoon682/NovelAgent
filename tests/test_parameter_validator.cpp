@@ -2,7 +2,7 @@
 // 验证 schema 设 additionalProperties:false 时，未知字段被阻断（而非仅 warn），
 // 使 LLM 拼错字段名（如 charcter_id）能被自纠，不再静默吞掉浪费一轮工具调用。
 
-#include "agent/ParameterValidator.h"
+#include "agent/tool/ParameterValidator.h"
 #include "utils/SchemaUtils.h"
 
 #include <iostream>

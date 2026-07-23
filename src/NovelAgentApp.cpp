@@ -1,8 +1,8 @@
 #include "NovelAgentApp.h"
 
-#include "agent/AgentSetup.h"
-#include "agent/ProjectIndexService.h"
-#include "agent/PromptComposer.h"
+#include "agent/tools/BuiltInTool.h"
+#include "agent/index/ProjectIndexService.h"
+#include "agent/prompt/PromptComposer.h"
 #include "cli/ConsoleOutput.h"
 #include "cli/ReplHandler.h"
 #include "cli/StreamDisplay.h"
@@ -21,7 +21,7 @@ NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
     , agent_(client_, registry_, memory_)
     , project_(project ? std::move(project) : std::make_shared<Project>())
     , storage_(project_ ? project_->path : "")
-    , cm_(storage_)
+    , persistence_(storage_)
     , embedding_gen_(provider)
 {
     setupAgent(std::move(disabledTools));
@@ -33,7 +33,7 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
 {
     if (project_ && !project_->title.empty()) {
         agent::ToolDependencies deps{project_, &vector_store_, &embedding_gen_};
-        agent::registerAllTools(registry_, deps, disabledTools);
+        agent::BuiltInTool::registerAllTo(registry_, deps, disabledTools);
     }
 
     agent::PromptComponents pc;
@@ -51,7 +51,6 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
         "- 写完后确认内容已正确写入文件\n"
         "- 保持语言流畅、情节紧凑";
 
-    // 技能发现与注入
     if (project_ && !project_->path.empty()) {
         skill_registry_.addSearchPath(project_->path + "/skills");
         skill_registry_.addSearchPath(utils::file::homeDir() + "/.novelagent/skills");
@@ -63,14 +62,15 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
 
     agent_.setSystemPrompt(agent::PromptComposer::compose(pc));
 
-    // 注入 Token 自校准器到 ContextManager（利用 API 返回的真实 token 做 EMA 修正）
-    cm_.setCalibrator(&calibrator_);
+    // 注入上下文管理组件
+    agent_.setProject(project_.get());
+    agent_.setCalibrator(&calibrator_);
+    agent_.setPersistence(&persistence_);
 
-    agent_.setContextManager(&cm_);
-    cm_.setModelContextLimit(client_.config().max_context_tokens);
-    cm_.setProject(project_.get());
+    agent::TokenBudget budget;
+    budget.model_limit = client_.config().max_context_tokens;
+    agent_.setTokenBudget(budget);
 
-    // 初始化向量检索后端
     if (project_ && !project_->path.empty()) {
         std::string vec_path = project_->path + "/.novelagent/vectors.json";
         vector_store_.init(vec_path);
@@ -105,7 +105,6 @@ void NovelAgentApp::runExec(const std::string& command)
         out_.write("\n");
     } catch (const std::exception& e) {
         std::string err = e.what();
-        // 友好错误提示
         if (err.find("401") != std::string::npos || err.find("API Key") != std::string::npos)
             out_.writeError("错误: API Key 无效，请检查 config.json 中的密钥配置。\n");
         else if (err.find("Connection") != std::string::npos || err.find("连接") != std::string::npos)

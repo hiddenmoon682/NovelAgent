@@ -11,7 +11,7 @@
 //     (Qt::QueuedConnection) 转发到 QML 主线程
 //   - busy_ 原子标志保证同一时刻只有一个请求在执行（串行）
 
-#include "agent/Agent.h"
+#include "agent/core/Agent.h"
 #include "llm/ILLMClient.h"
 
 #include <QObject>

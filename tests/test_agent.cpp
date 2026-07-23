@@ -1,7 +1,7 @@
-#include "agent/Agent.h"
-#include "agent/ToolRegistry.h"
-#include "agent/ContextManager.h"
-#include "llm/Conversation.h"
+#include "agent/core/Agent.h"
+#include "agent/tool/ToolRegistry.h"
+#include "agent/session/SessionPersistence.h"
+#include "agent/context/Memory.h"
 #include "llm/LLMClientFactory.h"
 #include "project/FileStorageBackend.h"
 #include "project/ProjectIO.h"
@@ -357,7 +357,6 @@ void test_session_persisted_after_message() {
     const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_b2_persist";
     if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
     ProjectIO::createProjectDir(tmp, "B2 测试");
-    Project proj = ProjectIO::load(tmp);
 
     MockServer server;
     server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
@@ -378,12 +377,10 @@ void test_session_persisted_after_message() {
     llm::Memory memory;
     agent::Agent agent(factory, registry, memory);
 
-    // 绑定 ContextManager + Project，使 processUserMessage 末尾的 saveSessionState 真正落盘
+    // 绑定 SessionPersistence，使 processUserMessage 末尾的 saveSessionState 真正落盘
     FileStorageBackend storage(tmp);
-    agent::ContextManager cm(storage);
-    cm.setProject(&proj);
-    cm.setModelContextLimit(65536);
-    agent.setContextManager(&cm);
+    agent::SessionPersistence persistence(storage);
+    agent.setPersistence(&persistence);
 
     // 处理前：conversation.json 应为空数组（createProjectDir 初始化的默认值）
     const std::string convPath = tmp + "/.novelagent/conversation.json";

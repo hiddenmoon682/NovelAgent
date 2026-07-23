@@ -42,8 +42,6 @@ set(NOVELAGENT_LLM
     src/llm/HttpClient.h src/llm/HttpClient.cpp
     src/llm/LLMClient.h src/llm/LLMClient.cpp
     src/llm/LLMClientFactory.h src/llm/LLMClientFactory.cpp
-    src/llm/IMemory.h
-    src/llm/Conversation.h
 )
 
 set(NOVELAGENT_RETRIEVAL
@@ -55,31 +53,36 @@ set(NOVELAGENT_RETRIEVAL
 )
 
 set(NOVELAGENT_AGENT
-    src/agent/ToolRegistry.h src/agent/ToolRegistry.cpp
-    src/agent/IToolProvider.h src/agent/IToolProvider.cpp
-    src/agent/AgentOrchestratorTypes.h src/agent/ContextManagerTypes.h
-    src/agent/AgentState.h src/agent/AgentState.cpp
-    src/agent/ParameterValidator.h src/agent/ParameterValidator.cpp
-    src/agent/ExecutionTracer.h src/agent/ExecutionTracer.cpp
-    src/agent/TokenTracker.h                                    # Issue 3: Token 追踪器
-    src/agent/PromptSelector.h src/agent/PromptSelector.cpp
-    src/agent/ThreadPool.h                                      # Issue 4: 固定线程池
-    src/agent/ToolCallLoop.h src/agent/ToolCallLoop.cpp
-    src/agent/ISynthesisStrategy.h src/agent/ISynthesisStrategy.cpp
-    src/agent/IIndexService.h                                   # Issue 6: 索引服务接口
-    src/agent/ProjectIndexService.h src/agent/ProjectIndexService.cpp
-    src/agent/SessionPersistence.h src/agent/SessionPersistence.cpp
-    src/agent/ContextManager.h src/agent/ContextManager.cpp
-    src/agent/SessionManager.h src/agent/SessionManager.cpp
-    src/agent/PromptComposer.h
-    src/agent/PromptContextBuilder.h src/agent/PromptContextBuilder.cpp
-    src/agent/Agent.h src/agent/Agent.cpp
-    src/agent/ToolPipeline.h src/agent/ToolPipeline.cpp
-    src/agent/ContextualToolProvider.h src/agent/ContextualToolProvider.cpp
-    src/agent/SubAgent.h src/agent/SubAgent.cpp
-    src/agent/AgentOrchestrator.h src/agent/AgentOrchestrator.cpp
-    src/agent/SubAgentTemplate.h
-    src/agent/TemplateManager.h src/agent/TemplateManager.cpp
+    # core/
+    src/agent/core/Agent.h src/agent/core/Agent.cpp
+    src/agent/core/AgentState.h src/agent/core/AgentState.cpp
+    src/agent/core/CoreLoop.h src/agent/core/CoreLoop.cpp
+    src/agent/core/ExecutionTracer.h src/agent/core/ExecutionTracer.cpp
+    # tool/
+    src/agent/tool/IToolProvider.h src/agent/tool/IToolProvider.cpp
+    src/agent/tool/ToolRegistry.h src/agent/tool/ToolRegistry.cpp
+    src/agent/tool/ToolPipeline.h src/agent/tool/ToolPipeline.cpp
+    src/agent/tool/ProgressiveToolProvider.h src/agent/tool/ProgressiveToolProvider.cpp
+    src/agent/tool/ParameterValidator.h src/agent/tool/ParameterValidator.cpp
+    src/agent/tool/ThreadPool.h
+    # context/
+    src/agent/context/IMemory.h
+    src/agent/context/Memory.h
+    src/agent/context/ContextManagerTypes.h
+    src/agent/context/TokenBudget.h
+    src/agent/context/Compactor.h src/agent/context/Compactor.cpp
+    src/agent/context/ContextAssembler.h src/agent/context/ContextAssembler.cpp
+    # prompt/
+    src/agent/prompt/PromptComposer.h
+    src/agent/prompt/PromptSelector.h src/agent/prompt/PromptSelector.cpp
+    src/agent/prompt/PromptContextBuilder.h src/agent/prompt/PromptContextBuilder.cpp
+    # session/
+    src/agent/session/SessionPersistence.h src/agent/session/SessionPersistence.cpp
+    src/agent/session/SessionManager.h src/agent/session/SessionManager.cpp
+    # index/
+    src/agent/index/IIndexService.h
+    src/agent/index/ProjectIndexService.h src/agent/index/ProjectIndexService.cpp
+    # tools/ (基础工具定义)
     src/agent/tools/BuiltInTool.h src/agent/tools/BuiltInTool.cpp
 )
 
@@ -97,7 +100,6 @@ set(NOVELAGENT_TOOLS
     src/agent/tools/RelevantCharacterTools.h src/agent/tools/RelevantCharacterTools.cpp
     src/agent/tools/RelevantSettingTools.h src/agent/tools/RelevantSettingTools.cpp
     src/agent/tools/RelevantWorldRuleTools.h src/agent/tools/RelevantWorldRuleTools.cpp
-    src/agent/AgentSetup.h src/agent/AgentSetup.cpp
 )
 
 set(NOVELAGENT_CLI
@@ -110,8 +112,8 @@ set(NOVELAGENT_CLI
 )
 
 set(NOVELAGENT_SKILL
-    src/skill/SkillMetadata.h
-    src/skill/ISkillProvider.h
-    src/skill/SkillLoader.h src/skill/SkillLoader.cpp
-    src/skill/SkillRegistry.h src/skill/SkillRegistry.cpp
+    src/agent/skill/SkillMetadata.h
+    src/agent/skill/ISkillProvider.h
+    src/agent/skill/SkillLoader.h src/agent/skill/SkillLoader.cpp
+    src/agent/skill/SkillRegistry.h src/agent/skill/SkillRegistry.cpp
 )

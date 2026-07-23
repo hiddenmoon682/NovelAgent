@@ -1,7 +1,7 @@
 // Memory 类单元测试 — 覆盖 IMemory 接口所有方法的正常路径和边界情况。
 
-#include "llm/Conversation.h"
-#include "llm/IMemory.h"
+#include "agent/context/Memory.h"
+#include "agent/context/IMemory.h"
 
 #include <cassert>
 #include <iostream>

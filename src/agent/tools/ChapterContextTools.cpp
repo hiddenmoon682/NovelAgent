@@ -1,7 +1,7 @@
 /// ChapterContextTools 实现 — 章节级上下文获取工具。
 
 #include "agent/tools/ChapterContextTools.h"
-#include "agent/PromptSelector.h"
+#include "agent/prompt/PromptSelector.h"
 #include "project/Models.h"
 #include "utils/SchemaUtils.h"
 

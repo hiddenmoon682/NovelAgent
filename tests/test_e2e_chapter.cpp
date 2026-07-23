@@ -9,12 +9,11 @@
 //
 // 手动执行：./build/tests/test_e2e_chapter.exe（需 config.json 或环境变量）
 
-#include "agent/Agent.h"
-#include "agent/ContextManager.h"
-#include "agent/ToolRegistry.h"
+#include "agent/core/Agent.h"
+#include "agent/tool/ToolRegistry.h"
 #include "agent/tools/ChapterTools.h"
 #include "config/AppConfig.h"
-#include "llm/Conversation.h"
+#include "agent/context/Memory.h"
 #include "llm/LLMClientFactory.h"
 #include "project/ProjectIO.h"
 

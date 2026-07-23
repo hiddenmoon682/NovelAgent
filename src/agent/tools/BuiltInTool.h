@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agent/tool/IToolProvider.h"
 #include "llm/Message.h"
 #include <nlohmann/json_fwd.hpp>
 #include <functional>
@@ -24,27 +25,6 @@ struct ToolDependencies {
     retrieval::IVectorStore* vector_store = nullptr;
     retrieval::IEmbeddingGenerator* embedding_gen = nullptr;
 };
-
-// ============================================================================
-// ToolCategory — 工具类别
-// ============================================================================
-
-enum class ToolCategory {
-    Project, Character, Content, Setting, Outline, WorldRule, System
-};
-
-inline const char* toolCategoryName(ToolCategory cat) {
-    switch (cat) {
-        case ToolCategory::Project:   return "项目管理";
-        case ToolCategory::Content:   return "内容读写";
-        case ToolCategory::Character: return "角色管理";
-        case ToolCategory::Setting:   return "设定管理";
-        case ToolCategory::Outline:   return "大纲管理";
-        case ToolCategory::WorldRule: return "世界规则";
-        case ToolCategory::System:    return "系统操作";
-    }
-    return "未知";
-}
 
 // ============================================================================
 // BuiltInTool — 内置工具抽象基类（含自注册机制）

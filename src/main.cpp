@@ -1,7 +1,6 @@
 // NovelAgent — AI 写小说助手。Phase 6 前后端分离版。
 // 三种模式: 单体REPL | 后端Server | 单次命令
 #include "NovelAgentApp.h"
-#include "agent/AgentSetup.h"
 #include "cli/AnsiTerminal.h"
 #include "config/AppConfig.h"
 #include "llm/LLMClientFactory.h"

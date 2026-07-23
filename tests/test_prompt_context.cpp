@@ -1,4 +1,4 @@
-#include "agent/PromptContextBuilder.h"
+#include "agent/prompt/PromptContextBuilder.h"
 #include "project/ProjectIO.h"
 #include "utils/FileUtils.h"
 

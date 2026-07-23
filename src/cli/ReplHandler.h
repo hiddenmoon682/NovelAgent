@@ -8,7 +8,7 @@
 // - /load <path> 打开已有项目
 // - 彩色状态栏 + ANSI 主题
 
-#include "agent/Agent.h"
+#include "agent/core/Agent.h"
 #include "cli/CommandParser.h"
 #include "cli/IOutputChannel.h"
 #include "cli/TerminalGUI.h"

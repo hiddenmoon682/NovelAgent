@@ -18,9 +18,9 @@ endforeach()
 
 # 依赖 core + tools 的测试
 foreach(name test_tool_registry test_agent test_chapter_tools
-             test_character_tools test_sub_agent test_shell_tools
+             test_character_tools test_shell_tools
              test_setting_tools test_world_rule_tools
-             test_outline_tools test_style_tools test_tool_call_loop)
+             test_outline_tools test_style_tools test_core_loop)
     add_novelagent_test(${name} "novelagent_core;novelagent_tools")
 endforeach()
 
@@ -31,9 +31,9 @@ if(EXISTS "D:/SoftWare/msys2/mingw64/bin")
                    test_context_manager test_retrieval test_file_utils test_app_config
                    test_parameter_validator test_thread_pool test_memory)
     set(TOOLS_TESTS test_tool_registry test_agent test_chapter_tools
-                    test_character_tools test_sub_agent test_shell_tools
+                    test_character_tools test_shell_tools
                     test_setting_tools test_world_rule_tools
-                    test_outline_tools test_style_tools test_tool_call_loop)
+                    test_outline_tools test_style_tools test_core_loop)
     set_property(TEST ${CORE_TESTS} ${TOOLS_TESTS}
         APPEND PROPERTY ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:D:/SoftWare/msys2/mingw64/bin")

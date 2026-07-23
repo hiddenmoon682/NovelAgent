@@ -1,5 +1,5 @@
 #include "agent/tools/SettingTools.h"
-#include "agent/ToolRegistry.h"
+#include "agent/tool/ToolRegistry.h"
 #include "project/ProjectIO.h"
 
 #include <cassert>

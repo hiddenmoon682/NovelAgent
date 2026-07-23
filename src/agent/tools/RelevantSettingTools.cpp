@@ -1,7 +1,7 @@
 /// RelevantSettingTools 实现 — 按章节获取关联设定/地点。
 
 #include "agent/tools/RelevantSettingTools.h"
-#include "agent/PromptSelector.h"
+#include "agent/prompt/PromptSelector.h"
 #include "project/Models.h"
 #include "utils/SchemaUtils.h"
 

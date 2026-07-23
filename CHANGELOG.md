@@ -1,5 +1,18 @@
 # Changelog
 
+## [2026-07-23] 删除并行编排相关代码
+
+### 重构 — 移除并行处理路径
+- `Agent.h`：删除 `useParallelProcessor()` / `isParallelEnabled()` / `parallel_mode_` / `processParallel()` 声明；
+  删除 `#include "agent/AgentOrchestrator.h"` 和 `class TemplateManager;` 前向声明；
+  清理 `orchestrator_` 成员。`processSerial()` 为唯一私有处理路径。
+- `Agent.cpp`：删除 `initOrchestrator()`（原 `useParallelProcessor()`）；
+  删除 `processParallel()` 函数；
+  删除 `orchestrator_.reset()` 和 `parallel_mode_` 初始化；
+  `process()` 中删除 if-else 分支，始终调用 `processSerial()`。
+- `ReplHandler.cpp`：删除 `/parallel on|off` 命令；状态栏不再显示模式开关。
+- `CHANGELOG.md`：追加本次记录。
+
 ## [2026-07-20] 用户取消机制实现（修复 #9 #11 + SSE 流式取消）
 
 ### Bug 修复

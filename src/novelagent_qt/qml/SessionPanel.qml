@@ -151,26 +151,7 @@ ColumnLayout {
                 font.pixelSize: Theme.sizeUi
                 color: Theme.textPrimary
             }
-        }
-
-        // 运行模式（只读展示，当前仅串行）
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: Theme.gapXs
-            Label {
-                text: "运行模式"
-                font.family: Theme.fontUi
-                font.pixelSize: Theme.sizeCaption
-                color: Theme.textFaint
-            }
-            Label {
-                text: "串行"
-                font.family: Theme.fontUi
-                font.pixelSize: Theme.sizeUi
-                color: Theme.textPrimary
-            }
-        }
-    }
+        }    }
 
     Item { Layout.fillHeight: true }
 }

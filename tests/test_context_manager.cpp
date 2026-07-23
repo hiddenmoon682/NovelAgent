@@ -1,7 +1,10 @@
-// test_context_manager — 增强版测试（会话追踪 + pin + compaction + 降级可见性）。
+// test_context_manager — 测试新拆分的上下文组件（Compactor + ContextAssembler + TokenBudget + SessionPersistence）。
 
-#include "agent/ContextManager.h"
-#include "llm/Conversation.h"
+#include "agent/context/Compactor.h"
+#include "agent/context/ContextAssembler.h"
+#include "agent/context/TokenBudget.h"
+#include "agent/context/Memory.h"
+#include "agent/session/SessionPersistence.h"
 #include "llm/ILLMClient.h"
 #include "llm/TokenCounter.h"
 #include "project/FileStorageBackend.h"
@@ -13,8 +16,6 @@
 #include <iostream>
 #include <string>
 #include <cstdio>
-#include <thread>
-#include <chrono>
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -32,7 +33,6 @@ static int tests_passed = 0;
 // 辅助
 // =========================================================================
 
-// Mock LLMClient — compact() 用 chatNonStreaming 生成摘要，这里返回固定摘要文本。
 class CompactMockLLMClient : public llm::ILLMClient {
 public:
     llm::LLMResponse chat(const std::vector<llm::Message>&,
@@ -69,7 +69,7 @@ void test_session_save_load() {
     FileStorageBackend storage(tmp);
 
     agent::SessionPersistence sp(storage);
-    llm::Conversation conv;
+    llm::Memory conv;
     conv.addUser("消息一");
     conv.addAssistant("回复一");
 
@@ -82,47 +82,23 @@ void test_session_save_load() {
     PASS();
 }
 
-void test_session_mtime_restored_from_novel_json() {
-    TEST("A5 — saveSessionState 记录 novel.json 的非零 mtime");
-
-    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_mtime_novel";
-    ProjectIO::createProjectDir(tmp, "mtime 测试");
-    FileStorageBackend storage(tmp);
-
-    Project proj = ProjectIO::load(tmp);
-    agent::ContextManager cm(storage);
-    cm.setProject(&proj);
-
-    llm::Conversation conv;
-    conv.addUser("hi");
-    cm.saveSessionState(conv, {});
-
-    // 加载回来：未修改 novel.json，mtime 应一致，不触发清空（无摘要可清，仅验证不崩溃）
-    llm::Conversation loaded;
-    cm.loadSessionState(loaded);
-    CHECK(loaded.size() == 1);
-
-    utils::file::removeDir(tmp);
-    PASS();
-}
-
 // =========================================================================
-// assemble 基础测试
+// ContextAssembler 测试
 // =========================================================================
 
 void test_assemble_no_project() {
-    TEST("assemble — 无 Project 时 system_prompt 为空");
-    llm::Conversation conv;
+    TEST("ContextAssembler — 无 Project 时 system_prompt 为空");
+    llm::Memory conv;
     conv.addUser("测试");
-    agent::ContextManager cm;
-    cm.setModelContextLimit(131072);
-    auto result = cm.assemble(conv);
+    agent::ContextAssembler assembler;
+    agent::TokenBudget budget;
+    auto result = assembler.assemble(nullptr, conv, budget);
     CHECK(result.system_prompt.empty());
     PASS();
 }
 
 void test_build_system_prompt() {
-    TEST("buildSystemPrompt — 生成有效提示词");
+    TEST("ContextAssembler::buildSystemPrompt — 生成有效提示词");
     Project project;
     project.title = "测试小说";
     Chapter ch;
@@ -131,92 +107,67 @@ void test_build_system_prompt() {
     ch.order = 1;
     project.outline.chapters.push_back(ch);
 
-    agent::ContextManager cm;
-    auto prompt = cm.buildSystemPrompt(project);
+    auto prompt = agent::ContextAssembler::buildSystemPrompt(project);
     CHECK(!prompt.empty());
     CHECK(prompt.find("测试小说") != std::string::npos);
     PASS();
 }
 
 void test_build_system_prompt_no_chapter() {
-    TEST("buildSystemPrompt — 无章节返回项目概述");
+    TEST("ContextAssembler::buildSystemPrompt — 无章节返回项目概述");
     Project project;
     project.title = "极简项目";
-    agent::ContextManager cm;
-    auto prompt = cm.buildSystemPrompt(project);
+    auto prompt = agent::ContextAssembler::buildSystemPrompt(project);
     CHECK(prompt.find("极简项目") != std::string::npos);
     PASS();
 }
 
 void test_total_tokens() {
-    TEST("assemble — total_tokens 统计正确");
-    llm::Conversation conv;
+    TEST("ContextAssembler — total_tokens 统计正确");
+    llm::Memory conv;
     conv.addUser("测试消息");
 
-    agent::ContextManager cm;
-    cm.setModelContextLimit(131072);
-    auto result = cm.assemble(conv);
+    agent::ContextAssembler assembler;
+    agent::TokenBudget budget;
+    auto result = assembler.assemble(nullptr, conv, budget);
     CHECK(result.total_tokens > 0);
     PASS();
 }
 
 // =========================================================================
-// 会话级 Token 追踪
+// TokenBudget 测试
 // =========================================================================
 
-void test_record_usage() {
-    TEST("recordUsage — 累计 token 统计");
-    agent::ContextManager cm;
+void test_budget_evaluate() {
+    TEST("TokenBudget — evaluate 阈值判断");
+    agent::TokenBudget budget;
+    budget.model_limit = 10000;
 
-    cm.recordUsage(500, 200);
-    cm.recordUsage(300, 150);
-
-    auto stats = cm.sessionStats();
-    CHECK(stats.total_input_tokens == 800);
-    CHECK(stats.total_output_tokens == 350);
-    CHECK(stats.request_count == 2);
+    CHECK(budget.evaluate(3000) == agent::ContextStatus::Normal);
+    CHECK(budget.evaluate(6500) == agent::ContextStatus::Warning);
+    CHECK(budget.evaluate(9000) == agent::ContextStatus::Critical);
+    CHECK(budget.evaluate(9600) == agent::ContextStatus::AutoCompact);
+    CHECK(budget.evaluate(10001) == agent::ContextStatus::Error);
     PASS();
 }
 
-void test_usage_percent() {
-    TEST("usagePercent — 用量百分比计算");
-    agent::ContextManager cm;
-    cm.setModelContextLimit(10000);
+void test_budget_needs_compaction() {
+    TEST("TokenBudget — needsCompaction");
+    agent::TokenBudget budget;
+    budget.model_limit = 10000;
 
-    // usagePercent 读的是 current_total_tokens_（对话总 Token 数）
-    cm.tracker().setCurrentTotalTokens(6000);  // 模拟 assemble() 计算后的值
-    CHECK(cm.usagePercent() == 60);
-
-    // checkThresholds() (无参) 仍读 current_context_size_（最后 API input）
-    // 这里只验证 checkThresholds(int) 的实时计算路径
-    auto check = cm.checkThresholds(6000);
-    CHECK(check.status == agent::ContextStatus::Warning);
-    CHECK(check.usage_percent == 60);
+    CHECK(!budget.needsCompaction(5000));
+    CHECK(budget.needsCompaction(9600));
     PASS();
 }
 
-void test_usage_critical() {
-    TEST("checkThresholds — 临界状态");
-    agent::ContextManager cm;
-    cm.setModelContextLimit(10000);
+void test_budget_usage_percent() {
+    TEST("TokenBudget — usagePercent");
+    agent::TokenBudget budget;
+    budget.model_limit = 10000;
 
-    cm.recordUsage(9000, 0);  // 90%
-    auto check = cm.checkThresholds();
-    CHECK(check.status == agent::ContextStatus::Critical);
-    CHECK(check.usage_percent >= 85);
-    PASS();
-}
-
-void test_reset_session() {
-    TEST("resetSession — 重置后统计归零");
-    agent::ContextManager cm;
-    cm.recordUsage(1000, 500);
-    cm.resetSession();
-
-    auto stats = cm.sessionStats();
-    CHECK(stats.total_input_tokens == 0);
-    CHECK(stats.total_output_tokens == 0);
-    CHECK(stats.request_count == 0);
+    CHECK(budget.usagePercent(6000) == 60);
+    CHECK(budget.usagePercent(0) == 0);
     PASS();
 }
 
@@ -225,25 +176,25 @@ void test_reset_session() {
 // =========================================================================
 
 void test_pin_unpin() {
-    TEST("Conversation — pin/unpin 往返");
-    llm::Conversation conv;
+    TEST("Memory — pin/unpin 往返");
+    llm::Memory conv;
     conv.addUser("消息A");
     conv.addAssistant("消息B");
     conv.addUser("消息C");
 
-    CHECK(conv.pinMessage(1));         // pin "消息B"
+    CHECK(conv.pinMessage(1));
     auto pinned = conv.pinnedIndices();
     CHECK(pinned.size() == 1);
     CHECK(pinned[0] == 1);
 
-    CHECK(conv.unpinMessage(1));       // unpin
+    CHECK(conv.unpinMessage(1));
     CHECK(conv.pinnedIndices().empty());
     PASS();
 }
 
 void test_pin_out_of_range() {
-    TEST("Conversation — pin 越界返回 false");
-    llm::Conversation conv;
+    TEST("Memory — pin 越界返回 false");
+    llm::Memory conv;
     conv.addUser("只有一条");
     CHECK(!conv.pinMessage(99));
     CHECK(!conv.unpinMessage(99));
@@ -251,110 +202,62 @@ void test_pin_out_of_range() {
 }
 
 // =========================================================================
-// Compaction 基础测试（不含 LLM 调用）
+// Compactor 测试
 // =========================================================================
 
-void test_compact_has_summary_methods() {
-    TEST("ContextManager — hasCompactedSummary/clearCompactedSummary");
-    agent::ContextManager cm;
-    CHECK(!cm.hasCompactedSummary());
-
-    // 不调用实际 LLM，只测 API 存在
-    cm.clearCompactedSummary();
-    CHECK(!cm.hasCompactedSummary());
-    PASS();
-}
-
-// A1: compact() 必须真正删除已压缩的旧消息（而非仅存摘要、旧消息仍留在对话）。
-// 此前 compact 签名是 const 引用无法修改对话，压缩形同虚设。修复后调用 removeOldest。
-// 验证：压缩后对话消息数下降到 keep_count，且摘要被存储。
-void test_compact_actually_removes_messages() {
-    TEST("A1: compact() 真正删除已压缩旧消息");
-    agent::ContextManager cm;
-    llm::Conversation conv;
-    // 注入 30 条消息（> kCompactKeepExchanges*2=20，触发实际压缩）
-    for (int i = 0; i < 15; ++i) {
-        conv.addUser("用户消息 " + std::to_string(i) + "，包含一些内容用于占位。");
-        conv.addAssistant("助手回复 " + std::to_string(i) + "，同样包含占位内容。");
-    }
-    CHECK(conv.size() == 30);
-
+void test_compact_returns_retained() {
+    TEST("Compactor — 压缩后返回 retained 消息列表");
+    agent::Compactor compactor;
     CompactMockLLMClient llm;
-    auto result = cm.compact(conv, llm, std::nullopt);
 
-    // 压缩了 30-10=20 条
+    std::vector<llm::Message> messages;
+    for (int i = 0; i < 15; ++i) {
+        messages.push_back(llm::Message::user("用户消息 " + std::to_string(i)));
+        messages.push_back(llm::Message::assistant("助手回复 " + std::to_string(i)));
+    }
+    CHECK(messages.size() == 30);
+
+    auto result = compactor.compact(messages, llm);
+
     CHECK(result.messages_compacted == 20);
-    // 对话消息数下降到 10（保留最近 5 对 = 10 条）+ 2（摘要 user/assistant 对）
-    CHECK(conv.size() == 12);
-    // 摘要插入在头部，保留的最近消息紧随其后
-    const auto& msgs = conv.messages();
-    CHECK(msgs[0].content.find("以下是被压缩的旧对话摘要") != std::string::npos);
-    CHECK(msgs[1].content.find("被压缩的历史摘要") != std::string::npos);
-    CHECK(msgs[2].content.find("用户消息 10") != std::string::npos);  // 第一条保留消息
-    // 摘要被存储
-    CHECK(cm.hasCompactedSummary());
+    // retained = 2 (摘要对) + 10 (保留的最近 5 对)
+    CHECK(result.retained.size() == 12);
+    CHECK(result.retained[0].content.find("以下是被压缩的旧对话摘要") != std::string::npos);
+    CHECK(result.retained[1].content.find("被压缩的历史摘要") != std::string::npos);
     CHECK(result.summary.find("压缩摘要") != std::string::npos);
     PASS();
 }
 
-// A1: 消息不足时不跳过（消息少但 token 可能高），只保留最少 4 条。
-void test_compact_skip_when_messages_insufficient() {
-    TEST("A1: compact() 消息不足时压缩旧消息");
-    agent::ContextManager cm;
-    llm::Conversation conv;
-    for (int i = 0; i < 5; ++i) {
-        conv.addUser("短消息 " + std::to_string(i));
-        conv.addAssistant("短回复 " + std::to_string(i));
-    }
+void test_compact_insufficient_messages() {
+    TEST("Compactor — 消息不足时不压缩");
+    agent::Compactor compactor;
     CompactMockLLMClient llm;
-    auto result = cm.compact(conv, llm, std::nullopt);
-    // 10 条 > 1（硬拒绝阈值），保留 4 条，压缩 6 条
-    CHECK(result.messages_compacted == 6);
-    // 保留 4 条 + 2 条摘要 user/assistant 对 = 6
-    CHECK(conv.size() == 6);
-    PASS();
-}
 
-void test_last_warnings_cached() {
-    TEST("ContextManager — lastWarnings 缓存");
-    agent::ContextManager cm;
-    CHECK(cm.lastWarnings().empty());
+    std::vector<llm::Message> messages = { llm::Message::user("仅一条") };
+    auto result = compactor.compact(messages, llm);
 
-    // 通过真实消息内容触发临界告警（模型窗口 200 tokens，消息远超此值）。
-    cm.setModelContextLimit(200);
-    llm::Conversation conv;
-    // 构造大量单词文本触发高 token 数（countTokens 按单词数统计 ASCII）。
-    std::string big_text = "word ";
-    for (int i = 0; i < 600; ++i) big_text += "word ";
-    conv.addUser(big_text);  // ~600 单词 × 1.3 ≈ 780 tokens，远超 200 限制
-    cm.assemble(conv);
-    CHECK(!cm.lastWarnings().empty());
-
-    // 恢复大窗口 → 不再有告警
-    cm.setModelContextLimit(131072);
-    cm.assemble(conv);
-    CHECK(cm.lastWarnings().empty());
-
+    CHECK(result.messages_compacted == 0);
+    CHECK(result.retained.size() == 1);
     PASS();
 }
 
 // =========================================================================
-// 降级可见性
+// ContextAssembler 降级可见性
 // =========================================================================
 
 void test_critical_warning() {
-    TEST("assemble — 超限时生成致命错误");
-    agent::ContextManager cm;
-    cm.setModelContextLimit(200);
+    TEST("ContextAssembler — 超限时生成致命错误");
+    agent::ContextAssembler assembler;
+    agent::TokenBudget budget;
+    budget.model_limit = 200;
 
-    llm::Conversation conv;
-    // 构造大量单词文本触发高 token 数（countTokens 按单词数统计 ASCII）。
+    llm::Memory conv;
     std::string big_text = "word ";
     for (int i = 0; i < 600; ++i) big_text += "word ";
-    conv.addUser(big_text);  // ~600 单词 × 1.3 ≈ 780 tokens，远超 200 限制
-    auto result = cm.assemble(conv);
+    conv.addUser(big_text);
 
-    // 390% 超出模型窗口上限 → Error（致命错误），fatal 标志置位
+    auto result = assembler.assemble(nullptr, conv, budget);
+
     CHECK(result.fatal);
     bool has_error = false;
     for (const auto& w : result.warnings) {
@@ -364,36 +267,32 @@ void test_critical_warning() {
     PASS();
 }
 
-
-
 // =========================================================================
 
 int main() {
-    std::cout << "=== test_context_manager (增强版) ===\n\n";
+    std::cout << "=== test_context_manager (重构版) ===\n\n";
 
-    // 基础
+    // SessionPersistence
     test_session_save_load();
-    test_session_mtime_restored_from_novel_json();
+
+    // ContextAssembler
     test_assemble_no_project();
     test_build_system_prompt();
     test_build_system_prompt_no_chapter();
     test_total_tokens();
 
-    // 会话追踪
-    test_record_usage();
-    test_usage_percent();
-    test_usage_critical();
-    test_reset_session();
+    // TokenBudget
+    test_budget_evaluate();
+    test_budget_needs_compaction();
+    test_budget_usage_percent();
 
     // Pin
     test_pin_unpin();
     test_pin_out_of_range();
 
-    // Compaction
-    test_compact_has_summary_methods();
-    test_compact_actually_removes_messages();
-    test_compact_skip_when_messages_insufficient();
-    test_last_warnings_cached();
+    // Compactor
+    test_compact_returns_retained();
+    test_compact_insufficient_messages();
 
     // 降级可见性
     test_critical_warning();

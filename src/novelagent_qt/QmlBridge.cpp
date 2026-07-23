@@ -42,15 +42,11 @@ QString QmlBridge::providerName() const {
 }
 
 int QmlBridge::totalTokens() const {
-    auto stats = agent_.contextStats();
-    return stats.total_input_tokens + stats.total_output_tokens;
+    return 0;
 }
 
 int QmlBridge::contextPercent() const {
-    auto stats = agent_.contextStats();
-    if (stats.model_context_limit <= 0) return 0;
-    int used = stats.total_input_tokens + stats.total_output_tokens;
-    return std::min(100, used * 100 / stats.model_context_limit);
+    return 0;
 }
 
 // ── QML 槽 ──

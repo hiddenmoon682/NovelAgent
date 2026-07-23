@@ -1,5 +1,5 @@
 #include "agent/tools/BuiltInTool.h"
-#include "agent/ToolRegistry.h"
+#include "agent/tool/ToolRegistry.h"
 #include <algorithm>
 
 namespace agent {

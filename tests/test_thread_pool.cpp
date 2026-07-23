@@ -1,6 +1,6 @@
 // ThreadPool 测试 — CRIT-3 修复验证 + 基本功能测试。
 
-#include "agent/ThreadPool.h"
+#include "agent/tool/ThreadPool.h"
 
 #include <atomic>
 #include <cassert>

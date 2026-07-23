@@ -2,13 +2,12 @@
 
 #include "cli/ReplHandler.h"
 #include "cli/StreamDisplay.h"
-#include "agent/ContextManager.h"
-#include "agent/IIndexService.h"
+#include "agent/index/IIndexService.h"
 #include "project/FileStorageBackend.h"
 #include "project/Models.h"
 #include "project/ProjectIO.h"
 #include "project/ProjectManager.h"
-#include "skill/ISkillProvider.h"
+#include "agent/skill/ISkillProvider.h"
 
 #include <iostream>
 #include <algorithm>
@@ -101,20 +100,12 @@ void ReplHandler::setupPhase5Commands() {
             if (args[0] == "max_context_tokens") {
                 int w = std::stoi(args[1]);
                 if (w < 1024) { out_.write(Ansi::warning() + "至少需要 1024 tokens\n" + Ansi::reset()); return true; }
-                if (auto* cm = agent_.contextManager()) cm->setModelContextLimit(w);
+                auto budget = agent_.tokenBudget();
+                budget.model_limit = w;
+                agent_.setTokenBudget(budget);
                 out_.write(Ansi::success() + "max_context_tokens → " + std::to_string(w) + "\n" + Ansi::reset());
-            } else if (args[0] == "auto_compact") {
-                if (args[1] == "on") {
-                    if (auto* cm = agent_.contextManager()) cm->setAutoCompact(true);
-                    out_.write(Ansi::success() + "自动压缩已开启（≥70% 自动触发）\n" + Ansi::reset());
-                } else if (args[1] == "off") {
-                    if (auto* cm = agent_.contextManager()) cm->setAutoCompact(false);
-                    out_.write(Ansi::success() + "自动压缩已关闭\n" + Ansi::reset());
-                } else {
-                    out_.write(Ansi::warning() + "用法: /config auto_compact on|off\n" + Ansi::reset());
-                }
             } else {
-                out_.write(Ansi::warning() + "未知配置项，可配置: max_context_tokens, auto_compact\n" + Ansi::reset());
+                out_.write(Ansi::warning() + "未知配置项，可配置: max_context_tokens\n" + Ansi::reset());
             }
         } catch (...) { out_.write(Ansi::error() + "请输入有效数字，例如: /config max_context_tokens 131072\n" + Ansi::reset()); }
         return true;
@@ -185,34 +176,16 @@ void ReplHandler::setupCommands() {
         out_.write(Ansi::info() + cfg.name + " / " + cfg.model + " / " + std::to_string(cfg.max_context_tokens) + " max_context_tokens\n" + Ansi::reset());
         return true;
     });
-    parser_.registerCommand("parallel", "/parallel on|off — 并行编排", [this](const auto& args) {
-        if (args.empty()) {
-            out_.write(Ansi::dim() + std::string(agent_.isParallelEnabled() ? "并行模式" : "串行模式") + "，/parallel on 或 off 切换\n" + Ansi::reset());
-        } else if (args[0] == "on") { agent_.useParallelProcessor(); out_.write(Ansi::success() + "已切换并行模式\n" + Ansi::reset()); }
-        else if (args[0] == "off") { agent_.useSerialProcessor(); out_.write(Ansi::success() + "已切换串行模式\n" + Ansi::reset()); }
-        return true;
-    });
 
     // ── 上下文管理命令 ──
     parser_.registerCommand("context", "/context — 显示上下文用量明细", [this](const auto&) {
-        auto stats = agent_.contextStats();
-        int pct = 0;
-        if (stats.model_context_limit > 0)
-            pct = (stats.total_input_tokens * 100) / stats.model_context_limit;
+        auto& budget = agent_.tokenBudget();
 
         std::ostringstream ss;
         ss << Ansi::title() << "上下文用量\n" << Ansi::reset();
-        ss << "  累计输入:   " << stats.total_input_tokens << " tokens\n";
-        ss << "  累计输出:   " << stats.total_output_tokens << " tokens\n";
-        ss << "  请求次数:   " << stats.request_count << "\n";
-        ss << "  模型上限:   " << stats.model_context_limit << " tokens\n";
-        ss << "  用量比例:   " << pct << "%";
-        if (pct >= 85) ss << " " << Ansi::error() << "(临界)";
-        else if (pct >= 60) ss << " " << Ansi::warning() << "(偏高)";
-        else ss << " " << Ansi::success() << "(正常)";
-        ss << Ansi::reset() << "\n";
-
+        ss << "  模型上限:   " << budget.model_limit << " tokens\n";
         ss << "  对话消息:   " << agent_.memory().size() << " 条\n";
+        ss << "  压缩阈值:   " << budget.compact_pct << "%\n";
 
         // 显示当前警告
         auto warnings = agent_.contextWarnings();
@@ -421,7 +394,7 @@ void ReplHandler::setupCommands() {
 }
 
 std::vector<std::string> ReplHandler::getCompletions(const std::string& prefix) const {
-    std::vector<std::string> cmds = {"help","exit","clear","model","status","config","export","save","trace","parallel","new","load","context","compact","pin","unpin","pins","rewind","edit"};
+    std::vector<std::string> cmds = {"help","exit","clear","model","status","config","export","save","trace","new","load","context","compact","pin","unpin","pins","rewind","edit"};
     std::vector<std::string> results;
     for (const auto& c : cmds) if (c.find(prefix) == 0) results.push_back(c);
     return results;
@@ -461,7 +434,7 @@ void ReplHandler::run() {
     std::string input;
     while (true) {
         if (project_ && !project_->title.empty())
-            gui_.renderStatusBar(agent_.isParallelEnabled() ? "Parallel" : "Serial", 0, project_->title);
+            gui_.renderStatusBar("", 0, project_->title);
 
         std::cout << Ansi::userInput() << "> " << Ansi::reset() << std::flush;
         if (!std::getline(std::cin, input)) {
@@ -495,22 +468,6 @@ void ReplHandler::run() {
             auto warnings = agent_.contextWarnings();
             for (const auto& w : warnings) {
                 out_.write(Ansi::warning() + "⚠ " + w + Ansi::reset() + "\n");
-            }
-
-            // ── Compaction 自动提醒 ──
-            auto stats = agent_.contextStats();
-            if (stats.request_count > 0) {
-                int pct = stats.model_context_limit > 0
-                    ? (stats.total_input_tokens * 100) / stats.model_context_limit : 0;
-                if (pct >= 75) {
-                    out_.write(Ansi::warning()
-                        + "上下文用量 " + std::to_string(pct) + "%，强烈建议 /compact 释放空间。"
-                        + Ansi::reset() + "\n");
-                } else if (pct >= 50) {
-                    out_.write(Ansi::dim()
-                        + "上下文用量 " + std::to_string(pct) + "%，可考虑 /compact。"
-                        + Ansi::reset() + "\n");
-                }
             }
 
             agent_.saveSessionState();

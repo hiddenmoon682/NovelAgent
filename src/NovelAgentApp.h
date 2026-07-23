@@ -1,17 +1,16 @@
 #pragma once
 
-#include "agent/Agent.h"
-#include "agent/ContextManager.h"
-#include "agent/TemplateManager.h"
-#include "agent/ToolRegistry.h"
+#include "agent/core/Agent.h"
+#include "agent/tool/ToolRegistry.h"
 #include "config/AppConfig.h"
-#include "llm/Conversation.h"
+#include "agent/context/Memory.h"
+#include "agent/session/SessionPersistence.h"
 #include "llm/LLMClientFactory.h"
 #include "llm/TokenCounter.h"
 #include "project/FileStorageBackend.h"
 #include "retrieval/VectorStore.h"
 #include "retrieval/EmbeddingGenerator.h"
-#include "skill/SkillRegistry.h"
+#include "agent/skill/SkillRegistry.h"
 
 #include "cli/IOutputChannel.h"
 
@@ -33,9 +32,7 @@ public:
     void runExec(const std::string& command);
 
     agent::Agent& agent() { return agent_; }
-    agent::ContextManager& contextManager() { return cm_; }
     agent::ToolRegistry& registry() { return registry_; }
-    agent::TemplateManager& templateManager() { return template_mgr_; }
     skill::SkillRegistry& skillRegistry() { return skill_registry_; }
     std::shared_ptr<Project> project() { return project_; }
 
@@ -44,15 +41,14 @@ private:
     IOutputChannel& out_;
     llm::LLMClientFactory client_;
     agent::ToolRegistry registry_;
-    llm::Memory memory_;                              //  记忆（对等组件，注入 Agent）
+    llm::Memory memory_;
     agent::Agent agent_;
     std::shared_ptr<Project> project_;
     llm::TokenCounter calibrator_;
     FileStorageBackend storage_;
-    agent::ContextManager cm_;
+    agent::SessionPersistence persistence_;
     retrieval::VectorStore vector_store_;
     retrieval::EmbeddingGenerator embedding_gen_;
-    agent::TemplateManager template_mgr_;
     std::unique_ptr<agent::ProjectIndexService> index_service_;
     skill::SkillRegistry skill_registry_;
 

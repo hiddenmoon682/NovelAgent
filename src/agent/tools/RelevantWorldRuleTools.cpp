@@ -1,7 +1,7 @@
 /// RelevantWorldRuleTools 实现 — 按章节获取关联世界观规则。
 
 #include "agent/tools/RelevantWorldRuleTools.h"
-#include "agent/PromptSelector.h"
+#include "agent/prompt/PromptSelector.h"
 #include "project/Models.h"
 #include "utils/SchemaUtils.h"
 

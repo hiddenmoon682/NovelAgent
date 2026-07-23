@@ -1,4 +1,4 @@
-#include "agent/ToolRegistry.h"
+#include "agent/tool/ToolRegistry.h"
 #include "agent/tools/BuiltInTool.h"
 #include "utils/SchemaUtils.h"
 

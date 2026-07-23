@@ -10,8 +10,7 @@
 //   auto client = factory.create();  // 每次调用返回全新实例
 //
 // 架构意图：
-//   - Agent / SubAgent 各自持有独立的 LLMClient，互不干扰
-//   - AgentOrchestrator 为每个并行子任务创建独立客户端
+//   - Agent 持有独立的 LLMClient，确保线程隔离
 
 #include "config/AppConfig.h"
 
