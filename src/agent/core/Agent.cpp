@@ -46,7 +46,7 @@ Agent::Agent(llm::LLMClientFactory& factory, ToolRegistry& registry, llm::IMemor
 Agent::~Agent() = default;
 
 void Agent::setSystemPrompt(std::string prompt) {
-    memory_.injectSystemPrompt(std::move(prompt));
+    memory_.setSystemPrompt(std::move(prompt));
 }
 
 void Agent::clearMemory() { memory_.clear(); }
@@ -77,7 +77,7 @@ void Agent::applyCompaction(const CompactionResult& cr) {
     for (auto& msg : cr.retained) {
         memory_.inject(std::move(msg));
     }
-    memory_.injectSystemPrompt(snapshot.system_prompt);
+    memory_.setSystemPrompt(snapshot.system_prompt);
     spdlog::info("[Agent] 压缩已应用: {} 条消息保留", cr.retained.size());
 }
 

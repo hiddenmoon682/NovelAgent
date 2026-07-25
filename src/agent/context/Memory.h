@@ -7,7 +7,7 @@
 //
 // 使用示例：
 //   Memory mem;
-//   mem.injectSystemPrompt("你是一个有用的助手。");
+//   mem.setSystemPrompt("你是一个有用的助手。");
 //   mem.addUser("你好");
 //   mem.addAssistant("你好！有什么可以帮助你的？");
 //
@@ -38,7 +38,7 @@ public:
         }
     }
 
-    void injectSystemPrompt(std::string prompt) override {
+    void setSystemPrompt(std::string prompt) override {
         system_prompt_ = std::move(prompt);
     }
 

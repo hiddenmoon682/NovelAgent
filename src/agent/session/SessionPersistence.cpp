@@ -70,7 +70,7 @@ llm::Memory SessionPersistence::load()
                 msg.tool_calls.push_back(tc);
             }
         }
-        mem.add(std::move(msg));
+        mem.inject(std::move(msg));
     }
     spdlog::info("[SessionPersistence] 会话已加载 ({} 条消息)", mem.size());
     return mem;

@@ -36,7 +36,7 @@ struct MemorySnapshot {
 //
 // 三组方法：
 //   1. 读取：messages(), systemPrompt(), size(), pinnedIndices() 等
-//   2. 注入：inject(Message), injectSystemPrompt(), apply(MemoryDiff), prepend()
+//   2. 注入：inject(Message), setSystemPrompt(), apply(MemoryDiff), prepend()
 //   3. 状态管理：clear(), truncateTo(), pin(), checkpoint(), restore() 等
 class IMemory {
 public:
@@ -76,7 +76,7 @@ public:
     virtual void inject(Message msg) = 0;
 
     // 设置系统提示词（替换旧的）。
-    virtual void injectSystemPrompt(std::string prompt) = 0;
+    virtual void setSystemPrompt(std::string prompt) = 0;
 
     // 批量原子修改。采用 copy-then-swap 模式提供强异常保证。
     virtual void apply(MemoryDiff diff) = 0;
@@ -111,20 +111,14 @@ public:
     virtual void restore(const MemorySnapshot& snapshot) = 0;
 
     // ================================================================
-    // 便捷方法（非虚，委托到核心接口，保持向后兼容）
+    // 便捷方法（非虚，构造 Message 后委托到 inject）
     // ================================================================
 
-    void add(Message msg) { inject(std::move(msg)); }
     void addUser(std::string content) { inject(Message::user(std::move(content))); }
     void addAssistant(std::string content) { inject(Message::assistant(std::move(content))); }
     void addToolResult(std::string call_id, std::string content) {
         inject(Message::toolResult(std::move(call_id), std::move(content)));
     }
-    void setSystemPrompt(std::string content) { injectSystemPrompt(std::move(content)); }
-    void addSystem(std::string content) { injectSystemPrompt(std::move(content)); }
-    bool pinMessage(size_t index) { return pin(index); }
-    bool unpinMessage(size_t index) { return unpin(index); }
-    bool editMessage(size_t index, std::string new_content) { return edit(index, std::move(new_content)); }
     Message operator[](size_t i) const { return at(i); }
 };
 

@@ -61,25 +61,25 @@ void test_inject_order() {
 }
 
 // =========================================================================
-// injectSystemPrompt()
+// setSystemPrompt()
 // =========================================================================
 
 void test_inject_system_prompt() {
-    TEST("injectSystemPrompt — 设置和替换");
+    TEST("setSystemPrompt — 设置和替换");
     llm::Memory mem;
-    mem.injectSystemPrompt("v1");
+    mem.setSystemPrompt("v1");
     CHECK(mem.systemPrompt() == "v1");
-    mem.injectSystemPrompt("v2");
+    mem.setSystemPrompt("v2");
     CHECK(mem.systemPrompt() == "v2");
     CHECK(mem.messages().empty());
     PASS();
 }
 
 void test_inject_system_prompt_empty() {
-    TEST("injectSystemPrompt — 空字符串清除");
+    TEST("setSystemPrompt — 空字符串清除");
     llm::Memory mem;
-    mem.injectSystemPrompt("有内容");
-    mem.injectSystemPrompt("");
+    mem.setSystemPrompt("有内容");
+    mem.setSystemPrompt("");
     CHECK(mem.systemPrompt().empty());
     CHECK(mem.empty());
     PASS();
@@ -159,7 +159,7 @@ void test_prepend_message() {
 void test_prepend_system() {
     TEST("prepend — System 角色覆盖 system_prompt_");
     llm::Memory mem;
-    mem.injectSystemPrompt("旧");
+    mem.setSystemPrompt("旧");
     mem.prepend(llm::Message::system("新"));
     CHECK(mem.systemPrompt() == "新");
     PASS();
@@ -172,14 +172,14 @@ void test_prepend_system() {
 void test_checkpoint_restore_roundtrip() {
     TEST("checkpoint/restore — 快照回滚往返");
     llm::Memory mem;
-    mem.injectSystemPrompt("系统");
+    mem.setSystemPrompt("系统");
     mem.addUser("消息1");
     mem.addAssistant("回复1");
 
     auto snap = mem.checkpoint();
 
     mem.addUser("消息2");
-    mem.injectSystemPrompt("被修改");
+    mem.setSystemPrompt("被修改");
     CHECK(mem.size() == 4);
 
     mem.restore(snap);
@@ -224,7 +224,7 @@ void test_truncate_basic() {
 void test_truncate_zero() {
     TEST("truncateTo(0) — 清空全部");
     llm::Memory mem;
-    mem.injectSystemPrompt("sys");
+    mem.setSystemPrompt("sys");
     mem.addUser("A");
     mem.truncateTo(0);
     CHECK(mem.empty());
@@ -234,7 +234,7 @@ void test_truncate_zero() {
 void test_truncate_with_system_prompt() {
     TEST("truncateTo — 含 system prompt 计数");
     llm::Memory mem;
-    mem.injectSystemPrompt("sys");
+    mem.setSystemPrompt("sys");
     mem.addUser("A");
     mem.addUser("B");
     // size = 3 (system + 2 messages), truncateTo(2) 保留 system + A
@@ -273,7 +273,7 @@ void test_remove_oldest_basic() {
 void test_remove_oldest_all() {
     TEST("removeOldest — count >= size 清空（system 保留）");
     llm::Memory mem;
-    mem.injectSystemPrompt("sys");
+    mem.setSystemPrompt("sys");
     mem.addUser("A");
     mem.addUser("B");
     mem.removeOldest(10);
@@ -325,7 +325,7 @@ void test_edit_tool_message_fails() {
 void test_edit_system_index_fails() {
     TEST("edit — System 索引不允许编辑");
     llm::Memory mem;
-    mem.injectSystemPrompt("sys");
+    mem.setSystemPrompt("sys");
     mem.addUser("A");
     CHECK(!mem.edit(0, "修改"));
     CHECK(mem.systemPrompt() == "sys");
@@ -377,7 +377,7 @@ void test_pin_out_of_range() {
 void test_pin_system_fails() {
     TEST("pin — System 索引返回 false");
     llm::Memory mem;
-    mem.injectSystemPrompt("sys");
+    mem.setSystemPrompt("sys");
     mem.addUser("A");
     CHECK(!mem.pin(0));  // index 0 = system
     CHECK(mem.pin(1));   // index 1 = 第一条消息
@@ -402,7 +402,7 @@ void test_unpin_roundtrip() {
 void test_at_with_system() {
     TEST("at — 有 system prompt 时偏移");
     llm::Memory mem;
-    mem.injectSystemPrompt("sys");
+    mem.setSystemPrompt("sys");
     mem.addUser("A");
     auto msg0 = mem.at(0);
     CHECK(msg0.role == llm::MessageRole::System);
@@ -426,7 +426,7 @@ void test_at_without_system() {
 void test_operator_bracket() {
     TEST("operator[] — 委托到 at()");
     llm::Memory mem;
-    mem.injectSystemPrompt("sys");
+    mem.setSystemPrompt("sys");
     mem.addUser("A");
     CHECK(mem[0].role == llm::MessageRole::System);
     CHECK(mem[1].content == "A");
@@ -440,7 +440,7 @@ void test_operator_bracket() {
 void test_all_with_system() {
     TEST("all — 含 system prompt");
     llm::Memory mem;
-    mem.injectSystemPrompt("sys");
+    mem.setSystemPrompt("sys");
     mem.addUser("A");
     auto all = mem.all();
     CHECK(all.size() == 2);
@@ -473,7 +473,7 @@ void test_all_empty() {
 void test_size_with_system() {
     TEST("size — 含 system prompt 时 +1");
     llm::Memory mem;
-    mem.injectSystemPrompt("sys");
+    mem.setSystemPrompt("sys");
     CHECK(mem.size() == 1);
     mem.addUser("A");
     CHECK(mem.size() == 2);
@@ -493,7 +493,7 @@ void test_empty() {
     TEST("empty — 两者都空才 true");
     llm::Memory mem;
     CHECK(mem.empty());
-    mem.injectSystemPrompt("sys");
+    mem.setSystemPrompt("sys");
     CHECK(!mem.empty());
     mem.clear();
     CHECK(mem.empty());
@@ -521,40 +521,6 @@ void test_convenience_add_methods() {
     PASS();
 }
 
-void test_convenience_system_methods() {
-    TEST("便捷方法 — setSystemPrompt/addSystem");
-    llm::Memory mem;
-    llm::IMemory& iface = mem;
-    iface.setSystemPrompt("v1");
-    CHECK(mem.systemPrompt() == "v1");
-    iface.addSystem("v2");
-    CHECK(mem.systemPrompt() == "v2");
-    PASS();
-}
-
-void test_convenience_add_delegates() {
-    TEST("便捷方法 — add() 委托到 inject()");
-    llm::Memory mem;
-    llm::IMemory& iface = mem;
-    iface.add(llm::Message::user("通过add"));
-    CHECK(mem.messages().size() == 1);
-    CHECK(mem.messages()[0].content == "通过add");
-    PASS();
-}
-
-void test_convenience_pin_delegates() {
-    TEST("便捷方法 — pinMessage/unpinMessage/editMessage 委托");
-    llm::Memory mem;
-    llm::IMemory& iface = mem;
-    iface.addUser("内容");
-    CHECK(iface.pinMessage(0));
-    CHECK(mem.pinnedIndices().size() == 1);
-    CHECK(iface.unpinMessage(0));
-    CHECK(mem.pinnedIndices().empty());
-    CHECK(iface.editMessage(0, "新"));
-    CHECK(mem.messages()[0].content == "新");
-    PASS();
-}
 
 // =========================================================================
 // popBack()
@@ -563,7 +529,7 @@ void test_convenience_pin_delegates() {
 void test_pop_back() {
     TEST("popBack — 删除最后一条非 system 消息");
     llm::Memory mem;
-    mem.injectSystemPrompt("sys");
+    mem.setSystemPrompt("sys");
     mem.addUser("A");
     mem.addUser("B");
     mem.popBack();
@@ -580,7 +546,7 @@ void test_pop_back() {
 void test_iterators() {
     TEST("迭代器 — begin/end 遍历 messages_（不含 system）");
     llm::Memory mem;
-    mem.injectSystemPrompt("sys");
+    mem.setSystemPrompt("sys");
     mem.addUser("A");
     mem.addUser("B");
     int count = 0;
@@ -601,7 +567,7 @@ void test_iterators() {
 void test_clear() {
     TEST("clear — 清空全部状态");
     llm::Memory mem;
-    mem.injectSystemPrompt("sys");
+    mem.setSystemPrompt("sys");
     mem.addUser("A");
     mem.pin(1);
     mem.clear();
@@ -638,7 +604,7 @@ int main() {
     test_inject_non_system_roles();
     test_inject_order();
 
-    // injectSystemPrompt
+    // setSystemPrompt
     test_inject_system_prompt();
     test_inject_system_prompt_empty();
 
@@ -698,9 +664,6 @@ int main() {
 
     // 便捷方法
     test_convenience_add_methods();
-    test_convenience_system_methods();
-    test_convenience_add_delegates();
-    test_convenience_pin_delegates();
 
     // popBack
     test_pop_back();

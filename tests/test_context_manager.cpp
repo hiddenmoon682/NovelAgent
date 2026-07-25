@@ -146,12 +146,12 @@ void test_pin_unpin() {
     conv.addAssistant("消息B");
     conv.addUser("消息C");
 
-    CHECK(conv.pinMessage(1));
+    CHECK(conv.pin(1));
     auto pinned = conv.pinnedIndices();
     CHECK(pinned.size() == 1);
     CHECK(pinned[0] == 1);
 
-    CHECK(conv.unpinMessage(1));
+    CHECK(conv.unpin(1));
     CHECK(conv.pinnedIndices().empty());
     PASS();
 }
@@ -160,8 +160,8 @@ void test_pin_out_of_range() {
     TEST("Memory — pin 越界返回 false");
     llm::Memory conv;
     conv.addUser("只有一条");
-    CHECK(!conv.pinMessage(99));
-    CHECK(!conv.unpinMessage(99));
+    CHECK(!conv.pin(99));
+    CHECK(!conv.unpin(99));
     PASS();
 }
 
