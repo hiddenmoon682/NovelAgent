@@ -44,7 +44,8 @@ public:
                       std::string description,
                       const nlohmann::json& parameters,
                       ToolCategory category,
-                      std::function<nlohmann::json(const nlohmann::json&)> fn);
+                      std::function<nlohmann::json(const nlohmann::json&)> fn,
+                      std::string brief = {});
 
     // 注册内置工具类实例（复杂、有状态）。
     // 内部将 BuiltInTool::execute 包装为函数式回调。
@@ -93,6 +94,7 @@ public:
     struct ToolSummary {
         std::string name;
         std::string description;
+        std::string brief;
         ToolCategory category;
     };
 
@@ -124,6 +126,7 @@ private:
     struct ToolEntry {
         std::string name;
         std::string description;
+        std::string brief;
         nlohmann::json parameters;
         ToolCategory category;
         std::function<nlohmann::json(const nlohmann::json&)> fn;

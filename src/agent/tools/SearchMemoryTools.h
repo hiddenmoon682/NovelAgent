@@ -26,6 +26,7 @@ public:
                "返回最匹配的章节片段及其相似度分数。"
                "当你需要确认过去的设定、情节细节或对话内容时主动调用。";
     }
+    std::string brief() const override { return "语义搜索已写内容"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::System; }

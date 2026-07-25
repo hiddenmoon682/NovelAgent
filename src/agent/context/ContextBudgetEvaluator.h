@@ -27,12 +27,14 @@ struct BudgetEvaluationResult {
 class ContextBudgetEvaluator {
 public:
     // 评估上下文：统计 token 数、判断用量状态。
-    // memory:     会话记忆，提供消息列表
-    // budget:     token 预算，用于评估上下文用量是否超限
-    // model_name: 模型名，用于校准 token 计数
-    // calibrator: 可选的 TokenCounter 校准器
+    // memory:        会话记忆，提供消息列表
+    // budget:        token 预算，用于评估上下文用量是否超限
+    // system_prompt: 实际发送给 API 的完整 system prompt（含静态部分和动态附加文本）
+    // model_name:    模型名，用于校准 token 计数
+    // calibrator:    可选的 TokenCounter 校准器
     BudgetEvaluationResult evaluate(const llm::IMemory& memory,
                                     const TokenBudget& budget,
+                                    const std::string& system_prompt,
                                     const std::string& model_name = {},
                                     const llm::TokenCounter* calibrator = nullptr) const;
 };

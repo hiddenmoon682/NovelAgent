@@ -11,6 +11,7 @@ public:
     explicit GetSettingTool(std::shared_ptr<Project> p) : project_(p) {}
     std::string name() const override { return "get_setting"; }
     std::string description() const override { return "根据 ID 查询世界观设定的详细信息"; }
+    std::string brief() const override { return "查询单个设定详情"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Setting; }
@@ -23,6 +24,7 @@ public:
     explicit ListSettingsTool(std::shared_ptr<Project> p) : project_(p) {}
     std::string name() const override { return "get_settings"; }
     std::string description() const override { return "列出所有世界观设定（ID/名称/类别/描述）"; }
+    std::string brief() const override { return "列出所有设定摘要"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Setting; }
@@ -35,6 +37,7 @@ public:
     explicit UpdateSettingTool(std::shared_ptr<Project> p) : project_(p) {}
     std::string name() const override { return "update_setting"; }
     std::string description() const override { return "更新指定设定的字段（name/category/description/story_function 等）"; }
+    std::string brief() const override { return "更新设定字段"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Setting; }
@@ -51,6 +54,7 @@ public:
         return "创建新的世界观设定（地点/组织/物品等）。"
                "可填写描述、故事功能、感官描写等字段。";
     }
+    std::string brief() const override { return "创建新设定"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Setting; }
@@ -65,6 +69,7 @@ public:
     std::string description() const override {
         return "删除指定世界观设定（地点/组织/物品），自动清理所有引用。";
     }
+    std::string brief() const override { return "删除设定并清理引用"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Setting; }

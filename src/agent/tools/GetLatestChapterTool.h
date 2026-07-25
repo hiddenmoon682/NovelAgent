@@ -17,6 +17,7 @@ public:
         return "获取当前最新章节的基本信息，包括顺序号、标题、状态和概要。"
                "在开始写作前调用此工具了解当前进度，无需自行追踪章节 ID。";
     }
+    std::string brief() const override { return "获取最新章节信息"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Outline; }

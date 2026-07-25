@@ -11,6 +11,7 @@ public:
     explicit GetWorldRuleTool(std::shared_ptr<Project> p) : project_(p) {}
     std::string name() const override { return "get_world_rule"; }
     std::string description() const override { return "根据 ID 查询世界规则的详细信息"; }
+    std::string brief() const override { return "查询单条世界规则详情"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::WorldRule; }
@@ -23,6 +24,7 @@ public:
     explicit ListWorldRulesTool(std::shared_ptr<Project> p) : project_(p) {}
     std::string name() const override { return "get_world_rules"; }
     std::string description() const override { return "列出所有世界规则（ID/名称/概要）"; }
+    std::string brief() const override { return "列出所有世界规则"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::WorldRule; }
@@ -35,6 +37,7 @@ public:
     explicit UpdateWorldRuleTool(std::shared_ptr<Project> p) : project_(p) {}
     std::string name() const override { return "update_world_rule"; }
     std::string description() const override { return "更新指定世界规则的字段（name/summary/limitations/costs 等）"; }
+    std::string brief() const override { return "更新世界规则字段"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::WorldRule; }
@@ -51,6 +54,7 @@ public:
         return "创建新的世界规则（魔法体系、科技限制、社会法则等）。"
                "可填写概要、限制条件、代价、例外情况、知晓者等字段。";
     }
+    std::string brief() const override { return "创建新世界规则"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::WorldRule; }
@@ -65,6 +69,7 @@ public:
     std::string description() const override {
         return "删除指定世界规则（魔法体系、社会法则等），自动清理关联 setting 的引用。";
     }
+    std::string brief() const override { return "删除世界规则并清理引用"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::WorldRule; }

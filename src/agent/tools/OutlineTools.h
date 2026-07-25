@@ -12,6 +12,7 @@ public:
     explicit GetOutlineTool(std::shared_ptr<Project> p) : project_(p) {}
     std::string name() const override { return "get_outline"; }
     std::string description() const override { return "获取当前小说的大纲信息（前提、故事结构、幕摘要等）"; }
+    std::string brief() const override { return "查看大纲"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Outline; }
@@ -24,6 +25,7 @@ public:
     explicit GetProjectStatusTool(std::shared_ptr<Project> p) : project_(p) {}
     std::string name() const override { return "get_project_status"; }
     std::string description() const override { return "获取当前项目的概况（标题/logline/主题/目标读者/内容评级等）"; }
+    std::string brief() const override { return "查看项目概况"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Project; }
@@ -38,6 +40,7 @@ public:
     std::string description() const override {
         return "创建新的卷（故事叙事弧线）。可指定标题、主题、目标、起始/结束章节等。";
     }
+    std::string brief() const override { return "创建新卷"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Outline; }
@@ -52,6 +55,7 @@ public:
     std::string description() const override {
         return "更新指定卷的字段（title/summary/theme/goal/order/key_events 等）。";
     }
+    std::string brief() const override { return "更新卷字段"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Outline; }
@@ -66,6 +70,7 @@ public:
     std::string description() const override {
         return "创建新的剧情线（主线/支线/伏笔）。可指定类型、优先级、风险、中心问题等。";
     }
+    std::string brief() const override { return "创建新剧情线"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Outline; }
@@ -80,6 +85,7 @@ public:
     std::string description() const override {
         return "更新指定剧情线的字段（name/description/type/status/priority 等）。";
     }
+    std::string brief() const override { return "更新剧情线字段"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Outline; }

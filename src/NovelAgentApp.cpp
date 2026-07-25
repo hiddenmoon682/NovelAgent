@@ -50,6 +50,9 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
             system_prompt += "\n\n## 可用技能\n" + skill_ctx;
     }
 
+    // 延迟工具存根（静态）一次性注入，避免运行时拼接破坏 KV cache
+    system_prompt += agent_.deferredToolsStub();
+
     agent_.setSystemPrompt(std::move(system_prompt));
 
     // 注入上下文管理组件

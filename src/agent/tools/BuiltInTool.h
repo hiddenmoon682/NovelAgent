@@ -36,6 +36,9 @@ public:
 
     virtual std::string name() const = 0;
     virtual std::string description() const = 0;
+    // 极简描述（一句话），用于延迟工具存根注入 system prompt。
+    // 默认回退到 description()，工具可覆写提供更短的版本。
+    virtual std::string brief() const { return description(); }
     virtual nlohmann::json parameters() const = 0;
     virtual nlohmann::json execute(const nlohmann::json& args) = 0;
     virtual ToolCategory category() const = 0;

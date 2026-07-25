@@ -25,6 +25,7 @@ namespace agent {
 BudgetEvaluationResult ContextBudgetEvaluator::evaluate(
     const llm::IMemory& memory,
     const TokenBudget& budget,
+    const std::string& system_prompt,
     const std::string& model_name,
     const llm::TokenCounter* calibrator) const
 {
@@ -35,7 +36,7 @@ BudgetEvaluationResult ContextBudgetEvaluator::evaluate(
         memory.messages(), model_name, calibrator);
 
     // system prompt 也会发送给 API，需要计入总用量
-    int system_tokens = llm::TokenCounter::countTokens(memory.systemPrompt());
+    int system_tokens = llm::TokenCounter::countTokens(system_prompt);
     result.total_tokens = result.message_tokens + system_tokens;
 
     // 仅在设置了 model_limit 时评估上下文用量

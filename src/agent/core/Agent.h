@@ -38,6 +38,8 @@ public:
     ~Agent();
 
     void setSystemPrompt(std::string prompt);
+    // 返回延迟工具存根（静态文本，供 setup 时注入 system prompt）。
+    std::string deferredToolsStub() const { return progressive_tools_.deferredToolsStub(); }
     void setExecutionConfig(AgentExecutionConfig config) { exec_config_ = config; }
     const AgentExecutionConfig& executionConfig() const { return exec_config_; }
 

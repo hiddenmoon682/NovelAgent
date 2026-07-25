@@ -164,17 +164,14 @@ Agent::InternalResult Agent::processSerial(
 {
     memory.addUser(input);
 
-    // 配置渐进式工具加载
+    // 配置渐进式工具加载（控制 getDefinitions 暴露哪些工具）
     progressive_tools_.setEnabled(exec_config_.progressive_tool_loading);
 
-    // 构建最终提示词（静态部分已在 setup 时注入 memory，此处只拼动态部分）
-    std::string effective_system_prompt = memory.systemPrompt();
-    if (progressive_tools_.isEnabled()) {
-        effective_system_prompt += progressive_tools_.deferredToolsStub();
-    }
+    // system prompt 已在 setup 时完整注入 memory（含静态延迟工具存根），直接使用
+    const std::string& effective_system_prompt = memory.systemPrompt();
 
-    // 发送前评估上下文用量，超限则自动压缩
-    auto eval = budget_evaluator_.evaluate(memory_, budget_,
+    // 发送前评估上下文用量（含完整 system prompt），超限则自动压缩
+    auto eval = budget_evaluator_.evaluate(memory_, budget_, effective_system_prompt,
                                            client_->config().model, calibrator_);
     last_warnings_ = eval.warnings;
     if (eval.status >= ContextStatus::AutoCompact) {
@@ -328,7 +325,8 @@ llm::LLMResponse Agent::execute(const std::string& command,
     const std::string& effective_system_prompt = memory_.systemPrompt();
 
     last_warnings_ = budget_evaluator_.evaluate(
-        memory_, budget_, client_->config().model, calibrator_).warnings;
+        memory_, budget_, effective_system_prompt,
+        client_->config().model, calibrator_).warnings;
 
     try {
         auto response = client_->chat(messages, tools, effective_system_prompt, std::move(callbacks));

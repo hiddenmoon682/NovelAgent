@@ -26,6 +26,7 @@ public:
                "文风、对话风格、感官聚焦、章节结构偏好、禁用短语和套路清单等。"
                "在开始写作或修订前调用，确保输出符合项目风格要求。";
     }
+    std::string brief() const override { return "读取写作风格配置"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Setting; }
@@ -43,6 +44,7 @@ public:
         return "更新当前项目的写作风格配置。可修改语调、叙事视角、文风、对话密度、"
                "章节长度目标、禁用短语清单等。通过 fields 对象批量更新。";
     }
+    std::string brief() const override { return "更新写作风格配置"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Setting; }

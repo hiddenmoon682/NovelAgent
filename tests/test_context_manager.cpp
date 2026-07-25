@@ -93,7 +93,7 @@ void test_evaluate_total_tokens() {
 
     agent::ContextBudgetEvaluator evaluator;
     agent::TokenBudget budget;
-    auto result = evaluator.evaluate(conv, budget);
+    auto result = evaluator.evaluate(conv, budget, conv.systemPrompt());
     CHECK(result.total_tokens > 0);
     PASS();
 }
@@ -220,7 +220,7 @@ void test_critical_warning() {
     for (int i = 0; i < 600; ++i) big_text += "word ";
     conv.addUser(big_text);
 
-    auto result = evaluator.evaluate(conv, budget);
+    auto result = evaluator.evaluate(conv, budget, conv.systemPrompt());
 
     CHECK(result.fatal);
     bool has_error = false;

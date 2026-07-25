@@ -15,6 +15,7 @@ public:
         return "获取与指定章节最相关的世界观规则完整信息。规则通过本章相关的设定地点反向关联，"
                "确保只返回本章实际需要遵守的规则。";
     }
+    std::string brief() const override { return "获取本章相关世界规则"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::WorldRule; }

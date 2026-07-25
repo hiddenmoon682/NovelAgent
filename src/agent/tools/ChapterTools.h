@@ -16,6 +16,7 @@ public:
     std::string description() const override {
         return "读取指定章节的 Markdown 全文内容";
     }
+    std::string brief() const override { return "读取章节全文"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Content; }
@@ -32,6 +33,7 @@ public:
     std::string description() const override {
         return "覆写指定章节的 Markdown 内容（会替换原有全部内容）";
     }
+    std::string brief() const override { return "覆写章节内容"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Content; }
@@ -48,6 +50,7 @@ public:
     std::string description() const override {
         return "在指定章节末尾追加 Markdown 内容，保留原有内容";
     }
+    std::string brief() const override { return "在章节末尾追加内容"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Content; }
@@ -64,6 +67,7 @@ public:
     std::string description() const override {
         return "列出当前项目所有章节的 ID、标题、顺序、文件路径和摘要";
     }
+    std::string brief() const override { return "列出所有章节"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Content; }
@@ -82,6 +86,7 @@ public:
         return "创建新章节：在 outline 中新增条目并创建对应的 Markdown 文件。"
                "可选填写叙事简报字段（目标、冲突、转折点、伏笔等）。";
     }
+    std::string brief() const override { return "创建新章节"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Content; }
@@ -101,6 +106,7 @@ public:
                "伏笔、POV角色、关键事件等）。通过 fields 对象批量更新，"
                "不在白名单中的字段会被忽略。";
     }
+    std::string brief() const override { return "更新章节简报字段"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Content; }
@@ -117,6 +123,7 @@ public:
     std::string description() const override {
         return "删除指定章节（含 .md 文件），自动清理大纲/角色/剧情线中对该章节的引用。";
     }
+    std::string brief() const override { return "删除章节并清理引用"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Content; }
@@ -133,6 +140,7 @@ public:
     std::string description() const override {
         return "完整替换指定章节的场景列表（每项含 goal/conflict/turning_point 等戏剧单元字段）。";
     }
+    std::string brief() const override { return "替换章节场景列表"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Content; }
