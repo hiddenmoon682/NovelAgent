@@ -230,35 +230,6 @@ std::optional<PromptContext> PromptContextBuilder::buildLightweight(
     return context;
 }
 
-// ============================================================
-// renderToolUseInstructions
-// ============================================================
-std::string PromptContextBuilder::renderToolUseInstructions() {
-    return R"(
-【按需获取上下文指南】
-以下是你可用的上下文获取工具，请在需要时随时调用，无需一次获取全部：
-
-- get_latest_chapter() → 获取当前最新章节信息（开始写作前调用了解进度）
-- get_chapter_context(chapter_id) → 获取本章核心上下文（剧情线、卷信息）
-- get_relevant_characters(chapter_id, max_count) → 获取本章最相关的角色详情
-- get_relevant_settings(chapter_id, max_count) → 获取本章最相关的设定/地点
-- get_relevant_world_rules(chapter_id, max_count) → 获取本章最相关的世界观规则
-- get_character(character_id) → 查询单个角色完整档案（当需要角色深度信息时）
-- get_setting(setting_id) → 查询单个设定完整信息
-- get_world_rule(rule_id) → 查询单条规则完整信息
-- get_outline() → 查看完整大纲视图
-- read_style() → 查看完整风格指南
-- read_chapter(chapter_id) → 阅读章节全文（确认上下文或修改前阅读）
-- search_memory(query) → 语义搜索已写内容
-
-写作流程建议：
-1. 先调用 get_latest_chapter() 确认当前写作进度
-2. 调用 get_chapter_context() 了解本章要写什么
-2. 调用 get_relevant_characters() 了解本章涉及的角色
-3. 调用 get_relevant_settings() / get_relevant_world_rules() 了解场景设定
-4. 如有需要，用 get_character() / get_setting() 获取单个实体详情
-5. 写入完成后用 write_chapter() 保存内容)";
-}
 
 // ============================================================
 // renderPrompt — 将 JSON payload 渲染为纯文本 Markdown

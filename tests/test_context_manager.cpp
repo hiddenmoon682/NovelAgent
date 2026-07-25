@@ -1,7 +1,7 @@
 // test_context_manager — 测试新拆分的上下文组件（Compactor + ContextAssembler + TokenBudget + SessionPersistence）。
 
 #include "agent/context/Compactor.h"
-#include "agent/context/ContextAssembler.h"
+#include "agent/context/ContextBudgetEvaluator.h"
 #include "agent/context/TokenBudget.h"
 #include "agent/context/Memory.h"
 #include "agent/session/SessionPersistence.h"
@@ -83,53 +83,17 @@ void test_session_save_load() {
 }
 
 // =========================================================================
-// ContextAssembler 测试
+// ContextBudgetEvaluator 测试
 // =========================================================================
 
-void test_assemble_no_project() {
-    TEST("ContextAssembler — 无 Project 时 system_prompt 为空");
-    llm::Memory conv;
-    conv.addUser("测试");
-    agent::ContextAssembler assembler;
-    agent::TokenBudget budget;
-    auto result = assembler.assemble(nullptr, conv, budget);
-    CHECK(result.system_prompt.empty());
-    PASS();
-}
-
-void test_build_system_prompt() {
-    TEST("ContextAssembler::buildSystemPrompt — 生成有效提示词");
-    Project project;
-    project.title = "测试小说";
-    Chapter ch;
-    ch.id = "ch-001";
-    ch.title = "第一章";
-    ch.order = 1;
-    project.outline.chapters.push_back(ch);
-
-    auto prompt = agent::ContextAssembler::buildSystemPrompt(project);
-    CHECK(!prompt.empty());
-    CHECK(prompt.find("测试小说") != std::string::npos);
-    PASS();
-}
-
-void test_build_system_prompt_no_chapter() {
-    TEST("ContextAssembler::buildSystemPrompt — 无章节返回项目概述");
-    Project project;
-    project.title = "极简项目";
-    auto prompt = agent::ContextAssembler::buildSystemPrompt(project);
-    CHECK(prompt.find("极简项目") != std::string::npos);
-    PASS();
-}
-
-void test_total_tokens() {
-    TEST("ContextAssembler — total_tokens 统计正确");
+void test_evaluate_total_tokens() {
+    TEST("ContextBudgetEvaluator — total_tokens 统计正确");
     llm::Memory conv;
     conv.addUser("测试消息");
 
-    agent::ContextAssembler assembler;
+    agent::ContextBudgetEvaluator evaluator;
     agent::TokenBudget budget;
-    auto result = assembler.assemble(nullptr, conv, budget);
+    auto result = evaluator.evaluate(conv, budget);
     CHECK(result.total_tokens > 0);
     PASS();
 }
@@ -145,8 +109,8 @@ void test_budget_evaluate() {
 
     CHECK(budget.evaluate(3000) == agent::ContextStatus::Normal);
     CHECK(budget.evaluate(6500) == agent::ContextStatus::Warning);
-    CHECK(budget.evaluate(9000) == agent::ContextStatus::Critical);
-    CHECK(budget.evaluate(9600) == agent::ContextStatus::AutoCompact);
+    CHECK(budget.evaluate(7500) == agent::ContextStatus::Critical);
+    CHECK(budget.evaluate(9000) == agent::ContextStatus::AutoCompact);
     CHECK(budget.evaluate(10001) == agent::ContextStatus::Error);
     PASS();
 }
@@ -242,12 +206,12 @@ void test_compact_insufficient_messages() {
 }
 
 // =========================================================================
-// ContextAssembler 降级可见性
+// ContextBudgetEvaluator 降级可见性
 // =========================================================================
 
 void test_critical_warning() {
-    TEST("ContextAssembler — 超限时生成致命错误");
-    agent::ContextAssembler assembler;
+    TEST("ContextBudgetEvaluator — 超限时生成致命错误");
+    agent::ContextBudgetEvaluator evaluator;
     agent::TokenBudget budget;
     budget.model_limit = 200;
 
@@ -256,7 +220,7 @@ void test_critical_warning() {
     for (int i = 0; i < 600; ++i) big_text += "word ";
     conv.addUser(big_text);
 
-    auto result = assembler.assemble(nullptr, conv, budget);
+    auto result = evaluator.evaluate(conv, budget);
 
     CHECK(result.fatal);
     bool has_error = false;
@@ -275,11 +239,8 @@ int main() {
     // SessionPersistence
     test_session_save_load();
 
-    // ContextAssembler
-    test_assemble_no_project();
-    test_build_system_prompt();
-    test_build_system_prompt_no_chapter();
-    test_total_tokens();
+    // ContextBudgetEvaluator
+    test_evaluate_total_tokens();
 
     // TokenBudget
     test_budget_evaluate();

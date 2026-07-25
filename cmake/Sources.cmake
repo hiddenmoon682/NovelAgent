@@ -71,9 +71,9 @@ set(NOVELAGENT_AGENT
     src/agent/context/ContextManagerTypes.h
     src/agent/context/TokenBudget.h
     src/agent/context/Compactor.h src/agent/context/Compactor.cpp
-    src/agent/context/ContextAssembler.h src/agent/context/ContextAssembler.cpp
+    src/agent/context/ContextBudgetEvaluator.h src/agent/context/ContextBudgetEvaluator.cpp
     # prompt/
-    src/agent/prompt/PromptComposer.h
+    src/agent/prompt/Prompts.h src/agent/prompt/Prompts.cpp
     src/agent/prompt/PromptSelector.h src/agent/prompt/PromptSelector.cpp
     src/agent/prompt/PromptContextBuilder.h src/agent/prompt/PromptContextBuilder.cpp
     # session/

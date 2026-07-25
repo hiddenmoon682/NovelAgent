@@ -2,7 +2,7 @@
 
 #include "agent/tools/BuiltInTool.h"
 #include "agent/index/ProjectIndexService.h"
-#include "agent/prompt/PromptComposer.h"
+#include "agent/prompt/Prompts.h"
 #include "cli/ConsoleOutput.h"
 #include "cli/ReplHandler.h"
 #include "cli/StreamDisplay.h"
@@ -36,31 +36,21 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
         agent::BuiltInTool::registerAllTo(registry_, deps, disabledTools);
     }
 
-    agent::PromptComponents pc;
-    pc.personality =
-        "你是一个专业的网络小说写作助手 NovelAgent。\n\n"
-        "你的能力：\n"
-        "- 使用工具读写章节、管理角色和设定\n"
-        "- 根据大纲和现有内容创作连贯的章节\n"
-        "- 维护角色一致性、剧情连贯性和世界观设定\n\n"
-        "工作原则：\n"
-        "- 【主动获取上下文】使用 get_chapter_context() / get_relevant_characters() 等工具\n"
-        "  按需获取本章相关的设定、角色和规则，不要在 system prompt 中等待被动注入\n"
-        "- 【按需查询】不要一次性获取所有信息。先了解核心上下文，\n"
-        "  写作中需要确认细节时再调用单个查询工具\n"
-        "- 写完后确认内容已正确写入文件\n"
-        "- 保持语言流畅、情节紧凑";
+    std::string system_prompt = agent::prompt::kMainPersonality;
 
     if (project_ && !project_->path.empty()) {
+        system_prompt += "\n\n";
+        system_prompt += agent::prompt::kToolUseInstructions;
+
         skill_registry_.addSearchPath(project_->path + "/skills");
         skill_registry_.addSearchPath(utils::file::homeDir() + "/.novelagent/skills");
         skill_registry_.discoverAll();
         std::string skill_ctx = skill_registry_.getSkillContext();
         if (!skill_ctx.empty())
-            pc.context = "## 可用技能\n" + skill_ctx;
+            system_prompt += "\n\n## 可用技能\n" + skill_ctx;
     }
 
-    agent_.setSystemPrompt(agent::PromptComposer::compose(pc));
+    agent_.setSystemPrompt(std::move(system_prompt));
 
     // 注入上下文管理组件
     agent_.setProject(project_.get());

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "agent/core/AgentState.h"
-#include "agent/context/ContextAssembler.h"
+#include "agent/context/ContextBudgetEvaluator.h"
 #include "agent/context/Compactor.h"
 #include "agent/context/TokenBudget.h"
 #include "agent/tool/ProgressiveToolProvider.h"
@@ -102,7 +102,6 @@ private:
     InternalResult processSerial(const std::string& input,
                                  llm::IMemory& memory,
                                  llm::StreamCallbacks callbacks);
-    std::string buildEffectivePrompt(llm::IMemory& memory);
     void applyCompaction(const CompactionResult& cr);
 
 private:
@@ -113,7 +112,7 @@ private:
     AgentExecutionConfig exec_config_;
 
     // 上下文管理（无状态组件 + 值类型，消灭可空指针）
-    ContextAssembler assembler_;
+    ContextBudgetEvaluator budget_evaluator_;
     Compactor compactor_;
     TokenBudget budget_;
     const Project* project_ = nullptr;

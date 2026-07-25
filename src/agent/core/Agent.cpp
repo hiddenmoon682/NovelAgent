@@ -1,6 +1,5 @@
 #include "agent/core/Agent.h"
 #include "agent/session/SessionPersistence.h"
-#include "agent/prompt/PromptComposer.h"
 #include "agent/core/CoreLoop.h"
 #include "agent/context/Memory.h"
 #include "llm/LLMClientFactory.h"
@@ -152,25 +151,7 @@ void Agent::loadSessionState() {
     memory_.restore(loaded.checkpoint());
 }
 
-// ===========================================================================
-// buildEffectivePrompt — 组装 system prompt
-// ===========================================================================
 
-std::string Agent::buildEffectivePrompt(llm::IMemory& memory)
-{
-    auto result = assembler_.assemble(project_, memory, budget_,
-                                      client_->config().model, calibrator_);
-    last_warnings_ = result.warnings;
-
-    if (result.system_prompt.empty()) {
-        return memory.systemPrompt();
-    }
-
-    PromptComponents pc;
-    pc.personality = memory.systemPrompt();
-    pc.context = result.system_prompt;
-    return PromptComposer::compose(pc);
-}
 
 // ===========================================================================
 // processSerial — LLM tool_call 循环处理
@@ -186,10 +167,24 @@ Agent::InternalResult Agent::processSerial(
     // 配置渐进式工具加载
     progressive_tools_.setEnabled(exec_config_.progressive_tool_loading);
 
-    // 构建最终提示词（含延迟工具存根）
-    auto effective_system_prompt = buildEffectivePrompt(memory);
+    // 构建最终提示词（静态部分已在 setup 时注入 memory，此处只拼动态部分）
+    std::string effective_system_prompt = memory.systemPrompt();
     if (progressive_tools_.isEnabled()) {
         effective_system_prompt += progressive_tools_.deferredToolsStub();
+    }
+
+    // 发送前评估上下文用量，超限则自动压缩
+    auto eval = budget_evaluator_.evaluate(memory_, budget_,
+                                           client_->config().model, calibrator_);
+    last_warnings_ = eval.warnings;
+    if (eval.status >= ContextStatus::AutoCompact) {
+        spdlog::info("[Agent] 发送前上下文已达 {}%, 自动压缩旧历史",
+                     budget_.usagePercent(eval.total_tokens));
+        auto cr = compactor_.compact(memory.messages(), *client_,
+            "自动压缩：发送前上下文超限");
+        if (cr.messages_compacted > 0) {
+            applyCompaction(cr);
+        }
     }
 
     CoreLoop loop(*client_, progressive_tools_, pipeline_, &state_);
@@ -330,14 +325,10 @@ llm::LLMResponse Agent::execute(const std::string& command,
 
     std::vector<llm::Message> messages = { llm::Message::user(command) };
     auto tools = registry_.getToolDefinitions();
-    std::string effective_system_prompt = memory_.systemPrompt();
+    const std::string& effective_system_prompt = memory_.systemPrompt();
 
-    if (project_) {
-        auto result = assembler_.assemble(project_, memory_, budget_,
-                                          client_->config().model, calibrator_);
-        if (!result.system_prompt.empty())
-            effective_system_prompt += "\n\n" + result.system_prompt;
-    }
+    last_warnings_ = budget_evaluator_.evaluate(
+        memory_, budget_, client_->config().model, calibrator_).warnings;
 
     try {
         auto response = client_->chat(messages, tools, effective_system_prompt, std::move(callbacks));

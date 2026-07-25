@@ -1,6 +1,7 @@
 // SessionManager 实现 — 线程安全：每个会话通过工厂创建独立的 Agent/LLMClient。
 
 #include "agent/session/SessionManager.h"
+#include "agent/prompt/Prompts.h"
 #include "llm/LLMClientFactory.h"
 #include "project/Models.h"
 
@@ -44,8 +45,7 @@ std::string SessionManager::createSession() {
     auto session = std::make_shared<Session>();
     session->id = uuid4();
     session->agent = std::make_unique<agent::Agent>(factory_, registry_, session->memory);
-    session->agent->setSystemPrompt(
-        "你是一个专业的网络小说写作助手 NovelAgent。");
+    session->agent->setSystemPrompt(agent::prompt::kSessionPersonality);
     session->state = std::make_unique<agent::StateMachine>();
     session->created = std::chrono::steady_clock::now();
     session->last_active = session->created;
