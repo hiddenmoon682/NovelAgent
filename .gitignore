@@ -6,6 +6,7 @@ cmake-build-*/
 .vs/
 .vscode/
 .idea/
+.qtcreator/
 *.user
 *.suo
 
@@ -52,3 +53,6 @@ _ref/
 
 # Qoder CLI local config
 .qoder/
+
+# MCP 服务配置（个人开发环境相关）
+.mcp.json

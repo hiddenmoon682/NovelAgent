@@ -83,45 +83,64 @@ target_include_directories(novelagent_app PUBLIC src)
 target_link_libraries(novelagent_app PUBLIC novelagent_core novelagent_tools)
 target_precompile_headers(novelagent_app REUSE_FROM novelagent_core)
 
+# ── 构建选项 ──
+option(BUILD_CLI "Build CLI executable (no Qt dependency)" ON)
+option(BUILD_GUI "Build Qt QML GUI executable" ON)
+
+# ── CLI 可执行文件（终端 REPL / 单次命令，不依赖 Qt）──
+if(BUILD_CLI)
+    add_executable(novelagent_cli src/main_cli.cpp)
+    target_include_directories(novelagent_cli PRIVATE src)
+    target_link_libraries(novelagent_cli PRIVATE
+        novelagent_core novelagent_tools novelagent_app
+    )
+    target_precompile_headers(novelagent_cli REUSE_FROM novelagent_core)
+endif()
+
 # ── Qt6 QML GUI 前端 ──
-find_package(Qt6 REQUIRED COMPONENTS Core Quick QuickControls2)
-qt_standard_project_setup(REQUIRES 6.5)
+if(BUILD_GUI)
+    find_package(Qt6 REQUIRED COMPONENTS Core Quick QuickControls2)
+    qt_standard_project_setup(REQUIRES 6.5)
 
-set(NOVELAGENT_QT_SOURCES
-    src/novelagent_qt/QmlBridge.h src/novelagent_qt/QmlBridge.cpp
-    src/novelagent_qt/QmlApp.h src/novelagent_qt/QmlApp.cpp
-)
+    set(NOVELAGENT_QT_SOURCES
+        src/novelagent_qt/QmlBridge.h src/novelagent_qt/QmlBridge.cpp
+        src/novelagent_qt/QmlApp.h src/novelagent_qt/QmlApp.cpp
+    )
 
-set(NOVELAGENT_QML_FILES
-    src/novelagent_qt/qml/MainWindow.qml
-    src/novelagent_qt/qml/AgentPanel.qml
-    src/novelagent_qt/qml/ChatBubble.qml
-    src/novelagent_qt/qml/SessionPanel.qml
-    src/novelagent_qt/qml/ReaderPanel.qml
-    src/novelagent_qt/qml/StatusBar.qml
-    src/novelagent_qt/qml/Theme.qml
-    src/novelagent_qt/qml/qmldir
-)
+    set(NOVELAGENT_QML_FILES
+        src/novelagent_qt/qml/MainWindow.qml
+        src/novelagent_qt/qml/ProjectPanel.qml
+        src/novelagent_qt/qml/AgentPanel.qml
+        src/novelagent_qt/qml/ChatBubble.qml
+        src/novelagent_qt/qml/SessionPanel.qml
+        src/novelagent_qt/qml/ReaderPanel.qml
+        src/novelagent_qt/qml/StatusBar.qml
+        src/novelagent_qt/qml/Theme.qml
+        src/novelagent_qt/qml/qmldir
+    )
 
-add_library(novelagent_qt OBJECT ${NOVELAGENT_QT_SOURCES})
-target_include_directories(novelagent_qt PUBLIC src)
-target_link_libraries(novelagent_qt PUBLIC
-    novelagent_core novelagent_tools novelagent_app
-    Qt6::Core Qt6::Quick Qt6::QuickControls2
-)
-set_target_properties(novelagent_qt PROPERTIES AUTOMOC ON)
+    add_library(novelagent_qt OBJECT ${NOVELAGENT_QT_SOURCES})
+    target_include_directories(novelagent_qt PUBLIC src)
+    target_link_libraries(novelagent_qt PUBLIC
+        novelagent_core novelagent_tools novelagent_app
+        Qt6::Core Qt6::Quick Qt6::QuickControls2
+    )
+    set_target_properties(novelagent_qt PROPERTIES AUTOMOC ON)
 
-qt_add_resources(novelagent_qt "qml_resources"
-    PREFIX "/qml"
-    BASE src/novelagent_qt/qml
-    FILES ${NOVELAGENT_QML_FILES}
-)
+    qt_add_resources(novelagent_qt "qml_resources"
+        PREFIX "/qml"
+        BASE src/novelagent_qt/qml
+        FILES ${NOVELAGENT_QML_FILES}
+    )
 
-add_executable(novelagent src/main.cpp)
-target_link_libraries(novelagent PRIVATE
-    novelagent_core novelagent_tools novelagent_app novelagent_qt
-    Qt6::Core Qt6::Quick Qt6::QuickControls2
-)
+    add_executable(novelagent_gui src/main_gui.cpp)
+    target_include_directories(novelagent_gui PRIVATE src)
+    target_link_libraries(novelagent_gui PRIVATE
+        novelagent_core novelagent_tools novelagent_app novelagent_qt
+        Qt6::Core Qt6::Quick Qt6::QuickControls2
+    )
+    target_precompile_headers(novelagent_gui REUSE_FROM novelagent_core)
+endif()
 
 # ── 自动复制 MSYS2 DLL（双击 exe 无需配置 PATH）──
 if(WIN32 AND EXISTS "D:/SoftWare/msys2/mingw64/bin")
@@ -131,13 +150,24 @@ if(WIN32 AND EXISTS "D:/SoftWare/msys2/mingw64/bin")
         libspdlog-1.17.dll libwinpthread-1.dll
         libgcc_s_seh-1.dll libstdc++-6.dll
     )
-    foreach(dll ${NEEDED_DLLS})
-        add_custom_command(TARGET novelagent POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${MSYS2_BIN}/${dll}" "$<TARGET_FILE_DIR:novelagent>"
-            COMMENT "Copy ${dll} -> build/"
-        )
-    endforeach()
+    if(BUILD_CLI)
+        foreach(dll ${NEEDED_DLLS})
+            add_custom_command(TARGET novelagent_cli POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${MSYS2_BIN}/${dll}" "$<TARGET_FILE_DIR:novelagent_cli>"
+                COMMENT "Copy ${dll} -> novelagent_cli/"
+            )
+        endforeach()
+    endif()
+    if(BUILD_GUI)
+        foreach(dll ${NEEDED_DLLS})
+            add_custom_command(TARGET novelagent_gui POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${MSYS2_BIN}/${dll}" "$<TARGET_FILE_DIR:novelagent_gui>"
+                COMMENT "Copy ${dll} -> novelagent_gui/"
+            )
+        endforeach()
+    endif()
 endif()
 
 enable_testing()

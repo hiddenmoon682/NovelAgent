@@ -213,6 +213,10 @@ CoreLoopResult CoreLoop::runImpl(
 
     // 达到最大轮数
     spdlog::warn("[CoreLoop] 达到最大轮数 ({})", config.max_rounds);
+    // 剥离 tool_calls：最后一轮的工具已在循环内执行完毕（tool_result 已入 memory），
+    // 若保留 tool_calls，processSerial 会再追加一条 assistant(tool_calls) 但无对应
+    // tool_result，导致下次 API 调用 400。
+    response.tool_calls.clear();
     r.response = response;
     r.rounds_executed = config.max_rounds;
     return r;

@@ -2,21 +2,18 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// AgentPanel — 中栏对话面板。
-// 消息气泡列表 + 输入框，流式逐 token 追加，自动滚底。
 ColumnLayout {
     id: root
     spacing: 0
 
-    // ── 消息模型 ──
     ListModel { id: chatModel }
 
-    // ── 消息列表 ──
     ListView {
         id: chatView
         Layout.fillWidth: true
         Layout.fillHeight: true
         clip: true
+        interactive: true
         spacing: Theme.gapMd
         topMargin: Theme.gapLg
         bottomMargin: Theme.gapLg
@@ -25,25 +22,33 @@ ColumnLayout {
 
         model: chatModel
         delegate: ChatBubble {
-            width: chatView.width - Theme.gapLg * 2
+            height: implicitHeight
             role: model.role
             content: model.content
             streaming: model.streaming === true
         }
 
-        // 新消息淡入
         add: Transition {
             NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.animNormal }
-            NumberAnimation { property: "y"; from: chatView.height; duration: Theme.animNormal; easing.type: Easing.OutCubic }
         }
 
-        // 自动滚底
+        property bool userAtBottom: true
+
+        onContentYChanged: {
+            if (moving || flicking)
+                userAtBottom = atYEnd
+        }
+
         onContentHeightChanged: {
-            if (contentHeight > height)
-                contentY = contentHeight - height
+            if (userAtBottom)
+                contentY = Math.max(0, contentHeight - height)
         }
 
-        // 空状态提示
+        onHeightChanged: {
+            if (userAtBottom)
+                contentY = Math.max(0, contentHeight - height)
+        }
+
         Label {
             anchors.centerIn: parent
             visible: chatModel.count === 0
@@ -56,9 +61,10 @@ ColumnLayout {
 
     // ── 输入区 ──
     Rectangle {
+        id: inputRect
         Layout.fillWidth: true
         Layout.margins: Theme.gapMd
-        height: inputRow.implicitHeight + Theme.gapMd * 2
+        implicitHeight: inputField.height + sendRow.height + Theme.gapMd * 2 + Theme.gapSm
         radius: Theme.radiusMd
         color: Theme.bgElevated
         border.color: inputField.activeFocus ? Theme.accent : Theme.divider
@@ -66,40 +72,72 @@ ColumnLayout {
 
         Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
 
-        RowLayout {
-            id: inputRow
+        MouseArea {
+            anchors.fill: parent
+            onClicked: (mouse) => { inputField.forceActiveFocus() }
+        }
+
+        TextArea {
+            id: inputField
             anchors {
-                fill: parent
-                margins: Theme.gapSm
+                top: parent.top
+                left: parent.left
+                right: parent.right
+                topMargin: Theme.gapMd
+                leftMargin: Theme.gapMd
+                rightMargin: Theme.gapMd
             }
-            spacing: Theme.gapSm
+            height: Math.min(Math.max(implicitHeight, 24), 120)
+            placeholderText: ""
+            color: Theme.textPrimary
+            font.family: Theme.fontUi
+            font.pixelSize: Theme.sizeBody
+            wrapMode: TextEdit.Wrap
+            selectByMouse: true
+            leftPadding: 0
+            rightPadding: 0
+            topPadding: 4
+            bottomPadding: 4
+            background: Item {}
 
-            TextArea {
-                id: inputField
-                Layout.fillWidth: true
-                Layout.maximumHeight: 120
-                placeholderText: "输入指令或问题..."
-                placeholderTextColor: Theme.textFaint
-                color: Theme.textPrimary
-                font.family: Theme.fontUi
-                font.pixelSize: Theme.sizeUi
-                wrapMode: TextEdit.Wrap
-                selectByMouse: true
-                background: Item {}
-                padding: Theme.gapXs
-
-                Keys.onPressed: (event) => {
-                    if (event.key === Qt.Key_Return && !event.modifiers) {
-                        event.accepted = true
-                        sendCurrentMessage()
-                    }
+            Keys.onPressed: (event) => {
+                if (event.key === Qt.Key_Return && !event.modifiers) {
+                    event.accepted = true
+                    sendCurrentMessage()
                 }
             }
+        }
+
+        Label {
+            anchors {
+                left: inputField.left
+                top: inputField.top
+                topMargin: inputField.topPadding
+            }
+            visible: inputField.text.length === 0 && !inputField.activeFocus
+            text: "输入指令或问题..."
+            font.family: Theme.fontUi
+            font.pixelSize: Theme.sizeBody
+            color: Theme.textFaint
+        }
+
+        RowLayout {
+            id: sendRow
+            anchors {
+                top: inputField.bottom
+                left: parent.left
+                right: parent.right
+                topMargin: Theme.gapSm
+                leftMargin: Theme.gapMd
+                rightMargin: Theme.gapMd
+                bottomMargin: Theme.gapSm
+            }
+
+            Item { Layout.fillWidth: true }
 
             Button {
                 id: sendBtn
                 text: bridge.busy ? "取消" : "发送"
-                Layout.alignment: Qt.AlignBottom
                 enabled: bridge.busy || inputField.text.trim().length > 0
                 onClicked: {
                     if (bridge.busy) {
@@ -130,7 +168,6 @@ ColumnLayout {
         }
     }
 
-    // ── 流式信号接线 ──
     Connections {
         target: bridge
 
@@ -138,13 +175,15 @@ ColumnLayout {
             if (chatModel.count === 0) return
             var last = chatModel.get(chatModel.count - 1)
             if (last.role === "assistant") {
+                if (!last.streaming && last.content.length > 0)
+                    last.content += "\n\n"
+                last.streaming = true
                 last.content += delta
                 chatModel.set(chatModel.count - 1, last)
             }
         }
 
         function onReasoningReceived(delta) {
-            // 推理过程暂不显示在主气泡中（可后续扩展为折叠区）
         }
 
         function onResponseComplete(fullText) {
@@ -152,8 +191,6 @@ ColumnLayout {
             var last = chatModel.get(chatModel.count - 1)
             if (last.role === "assistant") {
                 last.streaming = false
-                if (fullText.length > 0)
-                    last.content = fullText
                 chatModel.set(chatModel.count - 1, last)
             }
         }
@@ -163,14 +200,11 @@ ColumnLayout {
         }
     }
 
-    // ── 发送逻辑 ──
     function sendCurrentMessage() {
         var text = inputField.text.trim()
         if (text.length === 0 || bridge.busy) return
 
-        // 追加用户消息
         chatModel.append({ role: "user", content: text, streaming: false })
-        // 追加空的 assistant 占位（流式填充）
         chatModel.append({ role: "assistant", content: "", streaming: true })
 
         inputField.text = ""

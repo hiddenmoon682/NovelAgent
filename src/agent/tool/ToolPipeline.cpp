@@ -57,30 +57,30 @@ llm::MemoryDiff ToolPipeline::execute(const std::vector<llm::ToolCall>& tool_cal
         return diff;
     }
 
-    // 并发路径：只读工具提交到 ThreadPool，写工具在主线程串行
+    // 并发路径：写工具先串行执行，只读工具再并发。
+    // 顺序保证：写工具修改 Project 时无线程并发读，消除数据竞争。
     // results[i] 对应 tool_calls[i] 的执行结果
     std::vector<std::string> results(n);
     std::vector<std::future<std::string>> futures(n);
     std::vector<bool> is_async(n, false);
 
+    // 写工具在主线程按序执行（保证 Project 修改的顺序性，且此时无并发读）
     for (size_t i = 0; i < n; ++i) {
-        const auto& tc = tool_calls[i];
-        if (isReadOnly(tc.function_name)) {
-            // 只读工具：异步执行
-            is_async[i] = true;
-            futures[i] = pool_->submit([this, &tc]() -> std::string {
-                return executeOne(tc);
-            });
-        }
-    }
-
-    // 写工具在主线程按序执行（保证 Project 修改的顺序性）
-    for (size_t i = 0; i < n; ++i) {
-        if (is_async[i])
+        if (isReadOnly(tool_calls[i].function_name))
             continue;
         const auto& tc = tool_calls[i];
         spdlog::info("[ToolPipeline] 串行执行: {} (id={})", tc.function_name, tc.id);
         results[i] = executeOne(tc);
+    }
+
+    // 写工具完成后，只读工具提交到 ThreadPool 并发执行
+    for (size_t i = 0; i < n; ++i) {
+        if (!isReadOnly(tool_calls[i].function_name))
+            continue;
+        is_async[i] = true;
+        futures[i] = pool_->submit([this, &tc = tool_calls[i]]() -> std::string {
+            return executeOne(tc);
+        });
     }
 
     // 收集异步结果
