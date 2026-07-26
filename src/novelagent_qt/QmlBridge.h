@@ -16,6 +16,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QVariantList>
 
 #include <atomic>
 #include <memory>
@@ -54,17 +55,24 @@ public:
     Q_INVOKABLE void cancelRequest();
     Q_INVOKABLE void newSession();
     Q_INVOKABLE void refreshProject();
+    // 章节列表（按 order 升序）：[{id, title, order, wordCount}, ...]；项目未打开返回空。
+    Q_INVOKABLE QVariantList chapterList() const;
+    // 读取章节正文 Markdown；失败返回空串并 emit errorOccurred。
+    Q_INVOKABLE QString loadChapter(const QString& chapterId);
 
 signals:
     // 流式输出（逐 token 推送到 QML）
     void tokenReceived(const QString& delta);
     void reasoningReceived(const QString& delta);
     void toolCallStarted(const QString& toolName);
+    void toolCallFinished(const QString& toolName, bool ok);
     void responseComplete(const QString& fullText);
     void errorOccurred(const QString& message);
 
     // 状态变化
     void projectChanged();
+    // 章节数据可能变化（响应完成 / 手动刷新项目后发射）
+    void chaptersChanged();
     void statusChanged(const QString& text);
     void busyChanged();
     void modelChanged();

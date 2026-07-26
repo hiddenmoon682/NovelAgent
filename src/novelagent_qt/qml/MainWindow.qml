@@ -12,10 +12,30 @@ ApplicationWindow {
     title: "墨染 · AI小说创作助手"
     flags: Qt.FramelessWindowHint | Qt.Window
 
-    color: Theme.bgDeep
+    color: Theme.bgSidebar
 
     Material.theme: Material.Dark
     Material.accent: Theme.accent
+
+    component WinButton: Button {
+        property color hoverColor: Theme.bgHover
+        property color hoverText: Theme.textPrimary
+        flat: true
+        implicitWidth: 36
+        implicitHeight: 28
+        contentItem: Text {
+            text: parent.text
+            font.pixelSize: 12
+            color: parent.hovered ? parent.hoverText : Theme.textSecondary
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+        background: Rectangle {
+            radius: Theme.radiusSm
+            color: parent.hovered ? parent.hoverColor : "transparent"
+            Behavior on color { ColorAnimation { duration: Theme.animFast } }
+        }
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -25,7 +45,7 @@ ApplicationWindow {
         Rectangle {
             Layout.fillWidth: true
             height: 32
-            color: Theme.bgDeep
+            color: Theme.bgSidebar
 
             MouseArea {
                 anchors.fill: parent
@@ -51,72 +71,41 @@ ApplicationWindow {
 
                 Item { Layout.fillWidth: true }
 
-                Button {
-                    text: "\u2500"
-                    flat: true
-                    onClicked: window.showMinimized()
-                    contentItem: Text {
-                        text: parent.text
-                        font.pixelSize: 12
-                        color: Theme.textSecondary
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    implicitWidth: 36
-                    implicitHeight: 28
-                }
-                Button {
+                WinButton { text: "\u2500"; onClicked: window.showMinimized() }
+                WinButton {
                     text: "\u25A1"
-                    flat: true
                     onClicked: {
                         if (window.visibility === Window.Maximized)
                             window.showNormal()
                         else
                             window.showMaximized()
                     }
-                    contentItem: Text {
-                        text: parent.text
-                        font.pixelSize: 12
-                        color: Theme.textSecondary
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    implicitWidth: 36
-                    implicitHeight: 28
                 }
-                Button {
+                WinButton {
                     text: "\u2715"
-                    flat: true
+                    hoverColor: Theme.accent
+                    hoverText: "#f5efe2"
                     onClicked: window.close()
-                    contentItem: Text {
-                        text: parent.text
-                        font.pixelSize: 12
-                        color: Theme.textSecondary
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    implicitWidth: 36
-                    implicitHeight: 28
                 }
             }
         }
 
-        // ── 主体四栏布局 ──
+        // ── 主体三栏布局 ──
         SplitView {
             Layout.fillWidth: true
             Layout.fillHeight: true
             orientation: Qt.Horizontal
 
-            ProjectPanel {
-                SplitView.preferredWidth: 200
-                SplitView.minimumWidth: 160
-                SplitView.maximumWidth: 280
+            handle: Rectangle {
+                implicitWidth: 1
+                implicitHeight: 1
+                color: Theme.divider
             }
 
-            SessionPanel {
-                SplitView.preferredWidth: 220
-                SplitView.minimumWidth: 180
-                SplitView.maximumWidth: 300
+            SidebarPanel {
+                SplitView.preferredWidth: 240
+                SplitView.minimumWidth: 200
+                SplitView.maximumWidth: 320
             }
 
             AgentPanel {

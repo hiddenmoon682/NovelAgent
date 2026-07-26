@@ -20,6 +20,8 @@ namespace llm {
 //   on_content        — 收到普通回复内容增量（每次一个 text token）
 //   on_reasoning      — 收到思考/推理过程增量（DeepSeek R1 等模型的 CoT token）
 //   on_tool_call_start— 开始调用工具（Agent 可据此切换 UI 状态）
+//   on_tool_start     — 单个工具执行前触发，携带工具名（由 CoreLoop 触发）
+//   on_tool_finish    — 单个工具执行后触发，携带工具名与成功标志（由 CoreLoop 触发）
 //   on_complete       — 流式响应结束，携带完整的 LLMResponse
 //   on_error          — 流式过程中发生错误，携带错误描述
 //
@@ -30,6 +32,9 @@ struct StreamCallbacks {
     std::function<void(const std::string& delta)> on_content;
     std::function<void(const std::string& delta)> on_reasoning;
     std::function<void()> on_tool_call_start;
+    // 工具执行生命周期（由 CoreLoop 在执行工具前后触发，携带工具名；UI 可据此展示状态卡片）
+    std::function<void(const std::string& tool_name)> on_tool_start;
+    std::function<void(const std::string& tool_name, bool ok)> on_tool_finish;
     std::function<void(const LLMResponse& response)> on_complete;
     std::function<void(const std::string& error)> on_error;
 };

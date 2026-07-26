@@ -7,7 +7,7 @@ import QtQuick.Layouts
 Rectangle {
     id: root
     height: 28
-    color: Theme.bgDeep
+    color: Theme.bgSidebar
 
     property string statusText: bridge.statusText
 
@@ -50,25 +50,36 @@ Rectangle {
             color: Theme.textFaint
         }
 
-        // 上下文百分比
-        Label {
-            text: "上下文: " + bridge.contextPercent + "%"
-            font.family: Theme.fontUi
-            font.pixelSize: Theme.sizeCaption
-            color: bridge.contextPercent > 80 ? Theme.warning : Theme.textFaint
+        // 上下文占用：迷你进度条 + 百分比（>80% 变琥珀警示）
+        RowLayout {
+            spacing: Theme.gapXs
+
+            Rectangle {
+                width: 60
+                height: 4
+                radius: 2
+                color: Theme.bgHover
+
+                Rectangle {
+                    width: parent.width * Math.min(bridge.contextPercent, 100) / 100
+                    height: parent.height
+                    radius: 2
+                    color: bridge.contextPercent > 80 ? Theme.warning : Theme.agentTint
+                    Behavior on width { NumberAnimation { duration: Theme.animNormal } }
+                }
+            }
+
+            Label {
+                text: bridge.contextPercent + "%"
+                font.family: Theme.fontUi
+                font.pixelSize: Theme.sizeCaption
+                color: bridge.contextPercent > 80 ? Theme.warning : Theme.textFaint
+            }
         }
 
-        // 模型名
+        // Provider · 模型
         Label {
-            text: bridge.modelName
-            font.family: Theme.fontUi
-            font.pixelSize: Theme.sizeCaption
-            color: Theme.textFaint
-        }
-
-        // Provider
-        Label {
-            text: bridge.providerName
+            text: bridge.providerName + " · " + bridge.modelName
             font.family: Theme.fontUi
             font.pixelSize: Theme.sizeCaption
             color: Theme.textFaint

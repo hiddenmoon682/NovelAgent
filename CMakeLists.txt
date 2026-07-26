@@ -109,10 +109,10 @@ if(BUILD_GUI)
 
     set(NOVELAGENT_QML_FILES
         src/novelagent_qt/qml/MainWindow.qml
-        src/novelagent_qt/qml/ProjectPanel.qml
+        src/novelagent_qt/qml/SidebarPanel.qml
         src/novelagent_qt/qml/AgentPanel.qml
         src/novelagent_qt/qml/ChatBubble.qml
-        src/novelagent_qt/qml/SessionPanel.qml
+        src/novelagent_qt/qml/ToolCallCard.qml
         src/novelagent_qt/qml/ReaderPanel.qml
         src/novelagent_qt/qml/StatusBar.qml
         src/novelagent_qt/qml/Theme.qml

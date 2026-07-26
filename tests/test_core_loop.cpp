@@ -299,6 +299,56 @@ void test_reasoning_content_preserved() {
     PASS();
 }
 
+void test_tool_lifecycle_callbacks() {
+    TEST("CoreLoop — on_tool_start/on_tool_finish 回调");
+    MockSeqLLMClient client;
+    // 第 1 轮：返回 1 个 tool_call
+    {
+        llm::LLMResponse r;
+        r.finish_reason = "tool_calls";
+        llm::ToolCall tc;
+        tc.id = "call_1";
+        tc.function_name = "read_chapter";
+        tc.arguments = "{}";
+        r.tool_calls.push_back(tc);
+        client.addResponse(r);
+    }
+    // 第 2 轮：返回文本
+    {
+        llm::LLMResponse r;
+        r.content = "完成";
+        r.finish_reason = "stop";
+        client.addResponse(r);
+    }
+
+    agent::ToolRegistry registry;
+    auto mockTool = std::make_unique<MockReadTool>();
+    registry.registerBuiltInTool(std::move(mockTool));
+
+    llm::Memory conv;
+    conv.addUser("读一下第一章");
+
+    std::vector<std::string> started;
+    std::vector<std::string> finished;
+    bool all_ok = true;
+    llm::StreamCallbacks cb;
+    cb.on_tool_start = [&](const std::string& name) { started.push_back(name); };
+    cb.on_tool_finish = [&](const std::string& name, bool ok) {
+        finished.push_back(name);
+        all_ok = all_ok && ok;
+    };
+
+    agent::ToolPipeline pipeline(registry, 0);
+    agent::CoreLoop loop(client, registry, pipeline);
+    auto result = loop.run(conv, registry.getToolDefinitions(), "", cb, {});
+    CHECK(result.rounds_executed == 2);
+    CHECK(started.size() == 1);
+    CHECK(started[0] == "read_chapter");
+    CHECK(finished == started);
+    CHECK(all_ok);
+    PASS();
+}
+
 int main() {
     std::cout << "CoreLoop 测试:\n";
 
@@ -307,6 +357,7 @@ int main() {
     test_reasoning_content_preserved();
     test_cancellation();
     test_state_machine_transitions();
+    test_tool_lifecycle_callbacks();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 通过\n";
     return (tests_run == tests_passed) ? 0 : 1;

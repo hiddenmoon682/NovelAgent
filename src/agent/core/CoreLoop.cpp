@@ -200,10 +200,17 @@ CoreLoopResult CoreLoop::runImpl(
 
         if (state_) state_->transition(AgentState::AwaitingTool);
 
+        for (const auto& tc : response.tool_calls)
+            if (callbacks.on_tool_start) callbacks.on_tool_start(tc.function_name);
+
         try {
             auto diff = pipeline_.execute(response.tool_calls);
             memory.apply(diff);
+            for (const auto& tc : response.tool_calls)
+                if (callbacks.on_tool_finish) callbacks.on_tool_finish(tc.function_name, true);
         } catch (...) {
+            for (const auto& tc : response.tool_calls)
+                if (callbacks.on_tool_finish) callbacks.on_tool_finish(tc.function_name, false);
             memory.popBack();
             throw;
         }

@@ -1,32 +1,33 @@
 pragma Singleton
 import QtQuick
 
-// Theme — 全局主题常量（深色写作主题）。
+// Theme — 全局主题常量（「墨染书房」暖墨主题）。
 // 单一事实来源：所有 QML 组件从此处读取颜色/字体/间距。
 QtObject {
-    // ── 背景层级（由深到浅，构建空间感）──
-    readonly property color bgDeep:      "#0d1117"   // 最深：窗口底色
-    readonly property color bgPanel:     "#161b22"   // 面板底色
-    readonly property color bgElevated:  "#1c2330"   // 悬浮/输入区
-    readonly property color bgHover:     "#232c3d"   // hover 高亮
+    // ── 背景层级（按栏位语义化，左深右浅突出对话区）──
+    readonly property color bgSidebar:   "#231f1a"   // 左侧栏（最深）
+    readonly property color bgChat:      "#322c24"   // 对话区（最浅，视觉焦点）
+    readonly property color bgReader:    "#2a251e"   // 阅读区
+    readonly property color bgElevated:  "#3d362b"   // 输入框/悬浮卡片
+    readonly property color bgHover:     "#4a4234"   // hover 高亮
 
     // ── 文字 ──
-    readonly property color textPrimary:   "#e6edf3"
-    readonly property color textSecondary: "#8b949e"
-    readonly property color textFaint:     "#5b6570"
+    readonly property color textPrimary:   "#f0eadd"   // 宣纸色
+    readonly property color textSecondary: "#aca293"
+    readonly property color textFaint:     "#7f7565"
 
     // ── 强调色 ──
-    readonly property color accent:        "#4f8cff"   // 主强调（用户消息/按钮）
-    readonly property color accentSoft:    "#2d4a7a"   // 弱化强调（边框/选中）
-    readonly property color agentTint:     "#3fb98f"   // Agent 标识色
-    readonly property color warning:       "#d29922"
-    readonly property color danger:        "#f85149"
+    readonly property color accent:        "#c9553e"   // 朱砂：按钮/选中/用户标识
+    readonly property color accentSoft:    "#8c3f2e"   // 用户消息气泡底
+    readonly property color agentTint:     "#a3b48a"   // 青竹：Agent 标识/工具卡片
+    readonly property color warning:       "#d4a373"   // 琥珀警示
+    readonly property color danger:        "#c0392b"
 
     // ── 分割线 ──
-    readonly property color divider:       "#21262d"
+    readonly property color divider:       "#453d30"
 
     // ── 字体 ──
-    readonly property string fontDisplay:  "Noto Serif SC"   // 标题/正文（衬线）
+    readonly property string fontDisplay:  "Noto Serif SC"       // 标题/正文（衬线）
     readonly property string fontUi:       "Microsoft YaHei UI"  // UI 控件（无衬线）
 
     // ── 字号 ──

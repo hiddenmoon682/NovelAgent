@@ -265,8 +265,8 @@ std::string ProgressiveToolProvider::deferredToolsStub() const {
     }
     if (count == 0) return "";
 
-    stub += "\n**工具加载规则（必须遵守）：**\n";
-    stub += "1. 上述工具当前不可直接调用，必须先通过 tool_search 加载\n";
+    stub += "\n**工具加载规则：**\n";
+    stub += "1. 上述工具当前不可直接调用，需要先通过 tool_search 加载\n";
     stub += "2. 调用 tool_search(query=\"关键词\") 搜索，或 tool_search(query=\"select:工具名\") 精确加载\n";
     stub += "3. 加载后工具将在后续轮次自动出现在可用工具列表中\n";
     stub += "4. 禁止猜测未加载工具的参数格式，必须先加载查看完整 schema\n";
