@@ -1,31 +1,131 @@
-// QmlBridge 实现 — 串行模式下 Agent 与 QML 的线程安全桥接。
+// QmlBridge 实现 — 拥有 NovelAgentApp 生命周期 + 串行模式线程安全桥接。
 
 #include "novelagent_qt/QmlBridge.h"
 
+#include "Bootstrap.h"
+#include "NovelAgentApp.h"
 #include "project/Models/Project.h"
 #include "project/ProjectIO.h"
+#include "project/ProjectManager.h"
 
 #include <QMetaObject>
+#include <QUrl>
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cstdlib>
 
 namespace qtui {
 
-QmlBridge::QmlBridge(agent::Agent& agent, std::shared_ptr<Project> project,
-                       QObject* parent)
+namespace {
+
+// QML FolderDialog / FileDialog 返回 file:///D:/... 形式 URL，统一转本地路径。
+std::string toLocalPath(const QString& pathOrUrl) {
+    if (pathOrUrl.startsWith(QStringLiteral("file:")))
+        return QUrl(pathOrUrl).toLocalFile().toStdString();
+    return pathOrUrl.toStdString();
+}
+
+// 占位 API Key 检测（与原 Bootstrap 校验 3 一致）。
+bool isPlaceholderKey(const std::string& key) {
+    return key.find("请替换") != std::string::npos ||
+           key.find("your-") != std::string::npos ||
+           key.find("placeholder") != std::string::npos;
+}
+
+} // namespace
+
+// ── 生命周期 ──
+
+QmlBridge::QmlBridge(QObject* parent)
     : QObject(parent)
-    , agent_(agent)
-    , project_(std::move(project))
 {
-    status_text_ = "就绪";
+    config_ = AppConfig::load();
+
+    // 环境变量优先：DEEPSEEK_API_KEY / KIMI_API_KEY / CLAUDE_API_KEY
+    // 覆盖配置文件中的值（仅运行时生效；用户在设置里保存才会落盘）
+    for (const auto& name : {"DEEPSEEK", "KIMI", "CLAUDE"}) {
+        if (const char* key = std::getenv((std::string(name) + "_API_KEY").c_str())) {
+            std::string lower = name;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            config_.setApiKey(lower, key);
+        }
+    }
+
+    // 首次启动时补齐三家 provider 模板，供设置界面/向导下拉展示
+    config_.ensureDefaultProviders();
+
+    if (config_.verbose) spdlog::set_level(spdlog::level::debug);
+
+    status_text_ = QStringLiteral("等待初始化");
 }
 
 QmlBridge::~QmlBridge() {
     cancel_requested_.store(true);
+    if (app_) {
+        // 若仍在生成，请求取消后等待工作线程退出，避免回调竞态
+        // （app_ 成员销毁晚于本函数体，worker 引用的 Agent 仍有效）
+        bootstrap::g_cancel_flag.store(nullptr);
+    }
+    joinWorker();
+}
+
+void QmlBridge::joinWorker() {
     if (worker_.joinable())
         worker_.join();
+}
+
+bool QmlBridge::rebuildApp(const std::string& providerName,
+                           std::shared_ptr<Project> project, QString* error) {
+    if (busy_.load()) {
+        if (error) *error = QStringLiteral("Agent 正在生成中，请稍后再切换配置");
+        return false;
+    }
+
+    const ProviderConfig* prov = config_.getProvider(providerName);
+    if (!prov) {
+        if (error) *error = QStringLiteral("未找到 provider: ")
+                            + QString::fromStdString(providerName);
+        return false;
+    }
+    if (prov->api_key.empty() || isPlaceholderKey(prov->api_key)) {
+        if (error) *error = QStringLiteral("provider '%1' 尚未配置有效 API Key")
+                            .arg(QString::fromStdString(providerName));
+        return false;
+    }
+
+    joinWorker();
+
+    // 先解除 SIGINT 对旧 Agent 取消标志的引用，再销毁旧实例
+    bootstrap::g_cancel_flag.store(nullptr);
+    app_.reset();
+
+    try {
+        app_ = std::make_unique<NovelAgentApp>(*prov, std::move(project));
+    } catch (const std::exception& e) {
+        if (error) *error = QStringLiteral("初始化失败: ") + QString::fromUtf8(e.what());
+        emit agentReadyChanged();
+        emit projectChanged();
+        setStatus(QStringLiteral("初始化失败"));
+        return false;
+    }
+
+    project_ = app_->project();
+    bootstrap::g_cancel_flag.store(app_->agent().cancelFlag());
+
+    emit agentReadyChanged();
+    emit projectChanged();
+    emit chaptersChanged();
+    emit modelChanged();
+    emit usageChanged();
+    setStatus(QStringLiteral("就绪"));
+    return true;
+}
+
+std::string QmlBridge::activeProviderName() const {
+    if (app_) return app_->agent().client().config().name;
+    return config_.default_provider;
 }
 
 // ── 属性读取 ──
@@ -36,12 +136,21 @@ QString QmlBridge::projectName() const {
     return QStringLiteral("未打开项目");
 }
 
+QString QmlBridge::projectPath() const {
+    if (project_ && !project_->path.empty())
+        return QString::fromStdString(project_->path);
+    return {};
+}
+
 QString QmlBridge::modelName() const {
-    return QString::fromStdString(agent_.client().config().model);
+    if (app_) return QString::fromStdString(app_->agent().client().config().model);
+    if (const auto* p = config_.getDefaultProvider())
+        return QString::fromStdString(p->model);
+    return {};
 }
 
 QString QmlBridge::providerName() const {
-    return QString::fromStdString(agent_.client().config().name);
+    return QString::fromStdString(activeProviderName());
 }
 
 int QmlBridge::totalTokens() const {
@@ -56,6 +165,10 @@ int QmlBridge::contextPercent() const {
 
 void QmlBridge::sendMessage(const QString& text) {
     if (text.trimmed().isEmpty()) return;
+    if (!app_) {
+        emit errorOccurred(QStringLiteral("尚未完成初始化，请先在设置中配置模型"));
+        return;
+    }
     if (busy_.load()) {
         spdlog::warn("[QmlBridge] 忽略重复请求（Agent 正忙）");
         return;
@@ -64,15 +177,15 @@ void QmlBridge::sendMessage(const QString& text) {
 }
 
 void QmlBridge::cancelRequest() {
-    if (busy_.load()) {
-        agent_.requestCancel();
+    if (app_ && busy_.load()) {
+        app_->agent().requestCancel();
         setStatus(QStringLiteral("正在取消..."));
     }
 }
 
 void QmlBridge::newSession() {
-    if (busy_.load()) return;
-    agent_.resetSession();
+    if (!app_ || busy_.load()) return;
+    app_->agent().resetSession();
     emit usageChanged();
     setStatus(QStringLiteral("新会话已创建"));
 }
@@ -133,9 +246,11 @@ void QmlBridge::setStatus(const QString& text) {
 }
 
 void QmlBridge::runAgent(std::string input) {
+    joinWorker();  // 回收上一次已结束的线程
+
     busy_.store(true);
     cancel_requested_.store(false);
-    agent_.resetCancel();
+    app_->agent().resetCancel();
     emit busyChanged();
     setStatus(QStringLiteral("思考中..."));
 
@@ -185,7 +300,7 @@ void QmlBridge::runAgent(std::string input) {
         };
 
         try {
-            auto response = agent_.process(input, std::move(cb));
+            auto response = app_->agent().process(input, std::move(cb));
 
             QString fullText = QString::fromStdString(response.content);
             QString finishReason = QString::fromStdString(response.finish_reason);
@@ -213,8 +328,20 @@ void QmlBridge::runAgent(std::string input) {
             emit busyChanged();
         }, Qt::QueuedConnection);
     });
-
-    worker_.detach();
 }
+
+// ── 以下方法在 Task 3 / Task 4 中实现 ──
+bool QmlBridge::tryAutoStart() { return false; }
+bool QmlBridge::initialize(const QString&) { return false; }
+QStringList QmlBridge::listProviders() const { return {}; }
+QVariantMap QmlBridge::providerInfo(const QString&) const { return {}; }
+bool QmlBridge::saveProvider(const QString&, const QVariantMap&) { return false; }
+QString QmlBridge::defaultProvider() const { return {}; }
+bool QmlBridge::hasUsableApiKey(const QString&) const { return false; }
+QString QmlBridge::validateProjectDir(const QString&) const { return {}; }
+bool QmlBridge::openProject(const QString&) { return false; }
+bool QmlBridge::createProject(const QString&, const QString&) { return false; }
+QString QmlBridge::lastProjectPath() const { return {}; }
+void QmlBridge::setVerbose(bool) {}
 
 } // namespace qtui
