@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================================
-// Bootstrap — CLI 和 GUI 入口共享的启动逻辑。
+// Bootstrap — GUI 入口的启动逻辑。
 //
 // 职责：
 //   1. 解析命令行参数（CLI11）
@@ -13,13 +13,12 @@
 // 使用方式：
 //   auto ctx = bootstrap::run(argc, argv);
 //   if (ctx.exitCode != -1) return ctx.exitCode;
-//   // 根据 ctx.cliMode 选择 REPL 或 GUI 模式
+//   return qtui::runQmlApp(argc, argv, *ctx.app);
 //
 // 注意：所有函数均为 inline，无需对应的 .cpp 文件。
 // ============================================================================
 
 #include "NovelAgentApp.h"
-#include "cli/AnsiTerminal.h"
 #include "config/AppConfig.h"
 #include "project/ProjectManager.h"
 
@@ -106,19 +105,13 @@ extern "C" inline void sigint_handler(int) {
 // bootstrap::run() 的返回结果。
 // 调用方根据此结构体决定后续流程：
 //   - exitCode != -1 → 直接退出（错误或帮助信息已打印）
-//   - cliMode == true → 进入终端 REPL 循环
-//   - cliMode == false → 启动 QML GUI（未来）
+//   - exitCode == -1 → 启动 QML GUI
 struct Context {
     std::unique_ptr<NovelAgentApp> app;
-    std::string execCommand;
-    bool cliMode = false;
     int exitCode = -1;
 };
 
 inline Context run(int argc, char** argv) {
-    // ---- 阶段 0: 前置初始化 ----
-    // 启用 Windows 终端 ANSI 转义序列支持（彩色输出）
-    Ansi::enableWindowsAnsi();
     Context ctx;
 
     // ---- 阶段 1: 命令行参数解析 ----
@@ -128,13 +121,9 @@ inline Context run(int argc, char** argv) {
 
     // 项目路径：指定已有项目目录或新项目创建位置
     cli.add_option("-p,--project", projectPath, "项目目录路径");
-    // 单次执行模式：执行一条命令后直接退出（用于脚本调用）
-    cli.add_option("-e,--exec", ctx.execCommand, "执行单次命令后退出");
     // LLM 提供商选择：与 config.json 中的 provider 名称对应
     cli.add_option("--provider", providerName, "LLM provider (deepseek, kimi, claude)");
     cli.add_flag("-v,--verbose", verbose, "启用调试日志");
-    // --cli 标志：强制使用终端交互模式，不检测 QML 是否可用
-    cli.add_flag("--cli", ctx.cliMode, "强制使用终端 REPL 模式（不启动 QML GUI）");
 
     try { cli.parse(argc, argv); }
     catch (const CLI::ParseError& e) { ctx.exitCode = cli.exit(e); return ctx; }
@@ -142,7 +131,6 @@ inline Context run(int argc, char** argv) {
     // ---- 阶段 2: 编码转换 ----
     // Windows 下 argv 可能是本地编码（如 GBK），统一转为 UTF-8
     projectPath = argToUtf8(projectPath);
-    ctx.execCommand = argToUtf8(ctx.execCommand);
 
     // ---- 阶段 3: 日志级别设置 ----
     if (verbose) spdlog::set_level(spdlog::level::debug);
@@ -164,20 +152,17 @@ inline Context run(int argc, char** argv) {
         // 校验 1: 检查 provider 是否存在
         auto* provider = config.getProvider(providerName);
         if (!provider) {
-            std::cerr << Ansi::error() << "错误: 未找到 provider '"
-                      << providerName << "'\n" << Ansi::reset();
+            std::cerr << "[错误] 未找到 provider '"
+                      << providerName << "'\n";
             ctx.exitCode = 1;
             return ctx;
         }
 
         // 校验 2: 检查 API Key 是否为空
         if (provider->api_key.empty()) {
-            std::cerr << Ansi::error()
-                      << "错误: 未配置 API Key。\n" << Ansi::reset()
-                      << Ansi::dim()
+            std::cerr << "[错误] 未配置 API Key。\n"
                       << "请编辑 ~/.novelagent/config.json，\n"
-                      << "将 provider." << providerName << ".api_key 设为真实密钥。\n"
-                      << Ansi::reset();
+                      << "将 provider." << providerName << ".api_key 设为真实密钥。\n";
             ctx.exitCode = 1;
             return ctx;
         }
@@ -186,12 +171,9 @@ inline Context run(int argc, char** argv) {
         if (provider->api_key.find("请替换") != std::string::npos ||
             provider->api_key.find("your-") != std::string::npos ||
             provider->api_key.find("placeholder") != std::string::npos) {
-            std::cerr << Ansi::warning()
-                      << "警告: 检测到占位 API Key，请替换为真实的密钥。\n" << Ansi::reset()
-                      << Ansi::dim()
+            std::cerr << "[警告] 检测到占位 API Key，请替换为真实的密钥。\n"
                       << "配置文件位置: ~/.novelagent/config.json\n"
-                      << "编辑 provider." << providerName << ".api_key 字段即可。\n"
-                      << Ansi::reset();
+                      << "编辑 provider." << providerName << ".api_key 字段即可。\n";
         }
 
         // ---- 阶段 5: 项目打开/创建 ----
@@ -200,8 +182,8 @@ inline Context run(int argc, char** argv) {
             ProjectManager pm;
             Project project = pm.openOrCreate(projectPath);
             if (project.title.empty()) {
-                std::cerr << Ansi::error() << "错误: 无法打开/创建项目 "
-                          << projectPath << "\n" << Ansi::reset();
+                std::cerr << "[错误] 无法打开/创建项目 "
+                          << projectPath << "\n";
                 ctx.exitCode = 1;
                 return ctx;
             }
@@ -222,13 +204,11 @@ inline Context run(int argc, char** argv) {
 
     } catch (const std::exception& e) {
         // 捕获所有标准异常，打印友好错误信息
-        std::cerr << Ansi::error() << "\n致命错误: " << e.what()
-                  << Ansi::reset() << "\n";
+        std::cerr << "[错误] 致命错误: " << e.what() << "\n";
         ctx.exitCode = 1;
     } catch (...) {
         // 捕获非标准异常（如 Windows SEH），兜底处理
-        std::cerr << Ansi::error() << "\n发生未知错误，程序将退出。\n"
-                  << Ansi::reset();
+        std::cerr << "[错误] 发生未知错误，程序将退出。\n";
         ctx.exitCode = 1;
     }
 

@@ -3,7 +3,7 @@
 // QmlApp — QML 应用入口。
 //
 // 创建 QGuiApplication + QQmlApplicationEngine，注册 QmlBridge 到 QML context，
-// 加载 MainWindow.qml。由 main.cpp 在非 --cli 模式下调用。
+// 加载 MainWindow.qml。由 main_gui.cpp 调用。
 
 #include <memory>
 

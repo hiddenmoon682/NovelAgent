@@ -12,8 +12,6 @@
 #include "retrieval/EmbeddingGenerator.h"
 #include "agent/skill/SkillRegistry.h"
 
-#include "cli/IOutputChannel.h"
-
 struct Project;
 namespace agent { class ProjectIndexService; }
 #include <memory>
@@ -24,12 +22,8 @@ namespace agent { class ProjectIndexService; }
 class NovelAgentApp {
 public:
     NovelAgentApp(const ProviderConfig& provider, std::shared_ptr<Project> project,
-                  IOutputChannel* out = nullptr,
                   std::vector<std::string> disabledTools = {});
     ~NovelAgentApp();
-
-    void runRepl(const std::string& welcomeMessage = "");
-    void runExec(const std::string& command);
 
     agent::Agent& agent() { return agent_; }
     agent::ToolRegistry& registry() { return registry_; }
@@ -37,8 +31,6 @@ public:
     std::shared_ptr<Project> project() { return project_; }
 
 private:
-    std::unique_ptr<IOutputChannel> ownedOutput_;
-    IOutputChannel& out_;
     llm::LLMClientFactory client_;
     agent::ToolRegistry registry_;
     llm::Memory memory_;

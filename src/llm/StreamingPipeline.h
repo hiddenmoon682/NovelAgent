@@ -70,7 +70,7 @@ public:
         });
     }
 
-    // 设置外部回调（转发给调用方——Agent / StreamDisplay）。
+    // 设置外部回调（转发给调用方——Agent / QmlBridge）。
     // 可在首次 feed() 之前或之后调用。
     void setCallbacks(const StreamCallbacks& cb) { callbacks_ = cb; }
 
@@ -105,7 +105,7 @@ public:
 private:
     SSEParser parser_;                // SSE 解析器，将原始 SSE 文本解析为 StreamChunk
     StreamAccumulator accumulator_;   // 流累积器，将多个 StreamChunk 累积为完整的 LLMResponse
-    StreamCallbacks callbacks_;       // 外部回调函数集，转发给 Agent / StreamDisplay
+    StreamCallbacks callbacks_;       // 外部回调函数集，转发给 Agent / QmlBridge
     LLMResponse response_;            // 累积完成的完整 LLM 响应
     bool completed_ = false;          // 标记流是否已正常结束（收到 finish_reason 或 [DONE]）
     bool tool_call_seen_ = false;     // 标记是否已触发 on_tool_call_start，确保只触发一次

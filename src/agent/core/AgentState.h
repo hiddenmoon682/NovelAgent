@@ -3,7 +3,7 @@
 // Agent 显式状态机 — Phase 5.4。
 //
 // 使 Agent 的状态转换可追踪、可查询、可日志化。
-// StreamDisplay 根据状态切换界面提示（如 "Thinking..."、"Executing tool..."）。
+// UI 层根据状态切换界面提示（如 "Thinking..."、"Executing tool..."）。
 
 #include <string>
 

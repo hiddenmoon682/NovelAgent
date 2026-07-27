@@ -102,15 +102,6 @@ set(NOVELAGENT_TOOLS
     src/agent/tools/RelevantWorldRuleTools.h src/agent/tools/RelevantWorldRuleTools.cpp
 )
 
-set(NOVELAGENT_CLI
-    src/cli/AnsiTerminal.h
-    src/cli/IOutputChannel.h src/cli/ConsoleOutput.h
-    src/cli/TerminalGUI.h src/cli/TerminalGUI.cpp
-    src/cli/CommandParser.h src/cli/CommandParser.cpp
-    src/cli/StreamDisplay.h src/cli/StreamDisplay.cpp
-    src/cli/ReplHandler.h src/cli/ReplHandler.cpp
-)
-
 set(NOVELAGENT_SKILL
     src/agent/skill/SkillMetadata.h
     src/agent/skill/ISkillProvider.h

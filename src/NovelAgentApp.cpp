@@ -3,21 +3,13 @@
 #include "agent/tools/BuiltInTool.h"
 #include "agent/index/ProjectIndexService.h"
 #include "agent/prompt/Prompts.h"
-#include "cli/ConsoleOutput.h"
-#include "cli/ReplHandler.h"
-#include "cli/StreamDisplay.h"
 #include "project/Models/Project.h"
 #include "utils/FileUtils.h"
 
-#include <iostream>
-
 NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
                                std::shared_ptr<Project> project,
-                               IOutputChannel* out,
                                std::vector<std::string> disabledTools)
-    : ownedOutput_(out ? nullptr : std::make_unique<ConsoleOutput>())
-    , out_(out ? *out : *ownedOutput_)
-    , client_(provider)
+    : client_(provider)
     , agent_(client_, registry_, memory_)
     , project_(project ? std::move(project) : std::make_shared<Project>())
     , storage_(project_ ? project_->path : "")
@@ -71,40 +63,4 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
 
     index_service_ = std::make_unique<agent::ProjectIndexService>(
         project_, vector_store_, embedding_gen_);
-}
-
-void NovelAgentApp::runRepl(const std::string& welcomeMessage)
-{
-    ReplHandler repl(agent_, out_, project_);
-    repl.setIndexService(index_service_.get());
-    repl.setSkillProvider(&skill_registry_);
-    if (!welcomeMessage.empty()) {
-        repl.setWelcomeMessage(welcomeMessage);
-    } else {
-        repl.setWelcomeMessage(
-            "欢迎使用 NovelAgent！\n"
-            "你可以让我帮你写章节、创建角色、管理设定等。"
-        );
-    }
-    repl.run();
-}
-
-void NovelAgentApp::runExec(const std::string& command)
-{
-    out_.write("执行: " + command + "\n\n");
-    try {
-        auto callbacks = StreamDisplay::create(out_);
-        agent_.execute(command, callbacks);
-        out_.write("\n");
-    } catch (const std::exception& e) {
-        std::string err = e.what();
-        if (err.find("401") != std::string::npos || err.find("API Key") != std::string::npos)
-            out_.writeError("错误: API Key 无效，请检查 config.json 中的密钥配置。\n");
-        else if (err.find("Connection") != std::string::npos || err.find("连接") != std::string::npos)
-            out_.writeError("错误: 网络连接失败，请检查网络后重试。\n");
-        else if (err.find("json.exception") != std::string::npos)
-            out_.writeError("错误: API 响应解析失败，请检查 API 密钥和网络连接。\n");
-        else
-            out_.writeError("错误: " + err + "\n");
-    }
 }

@@ -1,8 +1,8 @@
 #pragma once
 
-// 索引服务抽象接口 — 解耦 ReplHandler 对 NovelAgentApp 的反向依赖（Issue 6）。
+// 索引服务抽象接口 — 解耦上层对 NovelAgentApp 的反向依赖。
 //
-// NovelAgentApp 实现此接口，ReplHandler 通过此接口访问索引功能，
+// 调用方通过此接口访问索引功能，
 // 不再持有 NovelAgentApp* 反向指针。
 
 #include <functional>

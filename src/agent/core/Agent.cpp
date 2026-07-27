@@ -67,7 +67,7 @@ CompactionResult Agent::compactConversation(std::optional<std::string> focus) {
     if (cr.messages_compacted > 0) {
         applyCompaction(cr);
     }
-    // 转换为旧接口兼容（ReplHandler 使用）
+    // 转换为调用方可用的结果格式
     return cr;
 }
 

@@ -52,7 +52,7 @@ include(Sources)  # Fix #1: 模块化源文件列表
 set(CORE_SOURCES
     ${NOVELAGENT_CONFIG} ${NOVELAGENT_UTILS} ${NOVELAGENT_PROJECT}
     ${NOVELAGENT_LLM} ${NOVELAGENT_RETRIEVAL} ${NOVELAGENT_AGENT}
-    ${NOVELAGENT_CLI} ${NOVELAGENT_SKILL}
+    ${NOVELAGENT_SKILL}
 )
 set(TOOLS_SOURCES ${NOVELAGENT_TOOLS})
 
@@ -84,18 +84,7 @@ target_link_libraries(novelagent_app PUBLIC novelagent_core novelagent_tools)
 target_precompile_headers(novelagent_app REUSE_FROM novelagent_core)
 
 # ── 构建选项 ──
-option(BUILD_CLI "Build CLI executable (no Qt dependency)" ON)
 option(BUILD_GUI "Build Qt QML GUI executable" ON)
-
-# ── CLI 可执行文件（终端 REPL / 单次命令，不依赖 Qt）──
-if(BUILD_CLI)
-    add_executable(novelagent_cli src/main_cli.cpp)
-    target_include_directories(novelagent_cli PRIVATE src)
-    target_link_libraries(novelagent_cli PRIVATE
-        novelagent_core novelagent_tools novelagent_app
-    )
-    target_precompile_headers(novelagent_cli REUSE_FROM novelagent_core)
-endif()
 
 # ── Qt6 QML GUI 前端 ──
 if(BUILD_GUI)
@@ -150,15 +139,6 @@ if(WIN32 AND EXISTS "D:/SoftWare/msys2/mingw64/bin")
         libspdlog-1.17.dll libwinpthread-1.dll
         libgcc_s_seh-1.dll libstdc++-6.dll
     )
-    if(BUILD_CLI)
-        foreach(dll ${NEEDED_DLLS})
-            add_custom_command(TARGET novelagent_cli POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${MSYS2_BIN}/${dll}" "$<TARGET_FILE_DIR:novelagent_cli>"
-                COMMENT "Copy ${dll} -> novelagent_cli/"
-            )
-        endforeach()
-    endif()
     if(BUILD_GUI)
         foreach(dll ${NEEDED_DLLS})
             add_custom_command(TARGET novelagent_gui POST_BUILD
