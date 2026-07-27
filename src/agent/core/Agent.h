@@ -12,6 +12,7 @@
 #include "llm/ILLMClient.h"
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -52,6 +53,11 @@ public:
     void setCalibrator(llm::TokenCounter* cal) { calibrator_ = cal; }
     // 注入会话持久化（非拥有，可选）。
     void setPersistence(SessionPersistence* p) { persistence_ = p; }
+    // 注入压缩摘要汇聚回调（可选）。每次应用压缩后携摘要文本调用，
+    // 用于将会话摘要沉淀到长期记忆，避免压缩丢失的信息永久不可找回。
+    void setSummarySink(std::function<void(const std::string&)> sink) {
+        summary_sink_ = std::move(sink);
+    }
 
     llm::LLMResponse process(const std::string& input,
                               llm::StreamCallbacks callbacks = {});
@@ -120,6 +126,7 @@ private:
     const Project* project_ = nullptr;
     llm::TokenCounter* calibrator_ = nullptr;
     SessionPersistence* persistence_ = nullptr;
+    std::function<void(const std::string&)> summary_sink_;   // 压缩摘要沉淀回调
     std::vector<std::string> last_warnings_;
 
     ProgressiveToolProvider progressive_tools_;

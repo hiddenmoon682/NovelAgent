@@ -27,7 +27,7 @@ json SearchMemoryTool::parameters() const {
 
 json SearchMemoryTool::execute(const json& args) {
     if (!vector_store_ || !embedding_gen_) {
-        return {{"error", "向量检索后端未初始化。请先执行 /index 命令构建索引。"}};
+        return {{"error", "向量检索后端未初始化（项目未打开）。"}};
     }
 
     std::string query = args.value("query", "");
@@ -51,8 +51,16 @@ json SearchMemoryTool::execute(const json& args) {
             item["id"]         = r.id;
             item["similarity"] = r.similarity;
             item["text"]       = r.metadata.value("text", "");
+            item["type"]       = r.metadata.value("type", "");
             if (r.metadata.contains("chapter_id")) {
                 item["chapter_id"] = r.metadata["chapter_id"];
+            }
+            // 长期记忆条目附带类型与创建时间，供 LLM 判断新旧
+            if (r.metadata.contains("kind")) {
+                item["kind"] = r.metadata["kind"];
+            }
+            if (r.metadata.contains("created_at")) {
+                item["created_at"] = r.metadata["created_at"];
             }
             arr.push_back(std::move(item));
         }

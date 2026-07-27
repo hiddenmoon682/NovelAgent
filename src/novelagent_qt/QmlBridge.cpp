@@ -4,6 +4,7 @@
 
 #include "Bootstrap.h"
 #include "NovelAgentApp.h"
+#include "agent/index/IIndexService.h"
 #include "project/Models/Project.h"
 #include "project/ProjectIO.h"
 #include "project/ProjectManager.h"
@@ -196,6 +197,34 @@ void QmlBridge::refreshProject() {
     emit chaptersChanged();
 }
 
+void QmlBridge::rebuildIndex() {
+    if (!app_) {
+        emit errorOccurred(QStringLiteral("尚未完成初始化，无法重建索引"));
+        return;
+    }
+    if (!project_ || project_->path.empty()) {
+        emit errorOccurred(QStringLiteral("未打开项目，无法重建索引"));
+        return;
+    }
+    if (busy_.load()) {
+        spdlog::warn("[QmlBridge] 忽略重建索引请求（Agent 正忙）");
+        return;
+    }
+
+    joinWorker();
+    busy_.store(true);
+    emit busyChanged();
+    setStatus(QStringLiteral("正在重建索引..."));
+
+    worker_ = std::thread([this]() {
+        runIndexUpdate(/*force=*/true);
+        QMetaObject::invokeMethod(this, [this]() {
+            busy_.store(false);
+            emit busyChanged();
+        }, Qt::QueuedConnection);
+    });
+}
+
 QVariantList QmlBridge::chapterList() const {
     QVariantList list;
     if (!project_) return list;
@@ -324,11 +353,53 @@ void QmlBridge::runAgent(std::string input) {
             }, Qt::QueuedConnection);
         }
 
+        // 响应完成后自动增量索引：内容哈希未变的源会被跳过，
+        // 无变更时开销仅为哈希比对，不产生嵌入请求。
+        if (project_ && !project_->path.empty() && !cancel_requested_.load())
+            runIndexUpdate(/*force=*/false);
+
         QMetaObject::invokeMethod(this, [this]() {
             busy_.store(false);
             emit busyChanged();
         }, Qt::QueuedConnection);
     });
+}
+
+void QmlBridge::runIndexUpdate(bool force) {
+    try {
+        // 仅手动重建时上报进度；自动增量索引静默执行，不覆盖“就绪”状态
+        std::function<void(const std::string&)> progress;
+        if (force) {
+            progress = [this](const std::string& msg) {
+                QString m = QString::fromStdString(msg);
+                QMetaObject::invokeMethod(this, [this, m]() {
+                    setStatus(m);
+                }, Qt::QueuedConnection);
+            };
+        }
+        auto result = app_->indexService()->indexAll(progress, force);
+        if (!result.ok()) {
+            spdlog::warn("[QmlBridge] 索引更新失败: {}", result.error);
+            if (force) {
+                QString e = QString::fromStdString(result.error);
+                QMetaObject::invokeMethod(this, [this, e]() {
+                    emit errorOccurred(QStringLiteral("索引重建失败: ") + e);
+                    setStatus(QStringLiteral("索引重建失败"));
+                }, Qt::QueuedConnection);
+            }
+            return;
+        }
+        spdlog::info("[QmlBridge] 索引更新完成: 更新 {} / 跳过 {} / 清理 {}",
+                     result.updated_sources, result.skipped_sources,
+                     result.removed_sources);
+        if (force) {
+            QMetaObject::invokeMethod(this, [this]() {
+                setStatus(QStringLiteral("索引重建完成"));
+            }, Qt::QueuedConnection);
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("[QmlBridge] 索引更新异常（不影响会话）: {}", e.what());
+    }
 }
 
 // ── Provider 配置 ──

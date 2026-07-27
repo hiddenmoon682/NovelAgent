@@ -16,6 +16,8 @@ class IEmbeddingGenerator;
 
 namespace agent {
 
+class LongTermMemoryStore;
+
 // ============================================================================
 // ToolDependencies — 工具构造所需的共享依赖集合
 // ============================================================================
@@ -24,6 +26,7 @@ struct ToolDependencies {
     std::shared_ptr<Project> project;
     retrieval::IVectorStore* vector_store = nullptr;
     retrieval::IEmbeddingGenerator* embedding_gen = nullptr;
+    LongTermMemoryStore* memory_store = nullptr;   // 长期记忆日志（可选）
 };
 
 // ============================================================================
