@@ -65,6 +65,9 @@ public:
     Q_INVOKABLE void sendMessage(const QString& text);
     Q_INVOKABLE void cancelRequest();
     Q_INVOKABLE void newSession();
+    // 当前内存中的对话历史（启动恢复后供 QML 重建聊天流）：
+    // [{role: "user"|"assistant", content, reasoning}, ...]，跳过工具消息与空消息。
+    Q_INVOKABLE QVariantList conversationHistory() const;
     Q_INVOKABLE void refreshProject();
     // 章节列表（按 order 升序）：[{id, title, order, wordCount}, ...]；项目未打开返回空。
     Q_INVOKABLE QVariantList chapterList() const;
@@ -103,6 +106,8 @@ signals:
     void toolCallFinished(const QString& toolName, bool ok);
     void responseComplete(const QString& fullText);
     void errorOccurred(const QString& message);
+    // 新会话已创建（旧对话已归档），QML 据此清空聊天流
+    void sessionReset();
 
     // 状态变化
     void agentReadyChanged();

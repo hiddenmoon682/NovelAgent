@@ -186,9 +186,29 @@ void QmlBridge::cancelRequest() {
 
 void QmlBridge::newSession() {
     if (!app_ || busy_.load()) return;
-    app_->agent().resetSession();
+    app_->agent().resetSession();  // 内部先归档旧对话再清空（保留 system prompt）
+    emit sessionReset();
     emit usageChanged();
-    setStatus(QStringLiteral("新会话已创建"));
+    setStatus(QStringLiteral("新会话已创建（旧对话已归档）"));
+}
+
+QVariantList QmlBridge::conversationHistory() const {
+    QVariantList list;
+    if (!app_) return list;
+
+    for (const auto& msg : app_->agent().memory().messages()) {
+        const bool isUser = msg.role == llm::MessageRole::User;
+        const bool isAssistant = msg.role == llm::MessageRole::Assistant;
+        if (!isUser && !isAssistant) continue;          // 跳过 tool 结果消息
+        if (msg.content.empty()) continue;              // 跳过纯 tool_calls 占位消息
+        QVariantMap m;
+        m.insert(QStringLiteral("role"), isUser ? QStringLiteral("user")
+                                                : QStringLiteral("assistant"));
+        m.insert(QStringLiteral("content"), QString::fromStdString(msg.content));
+        m.insert(QStringLiteral("reasoning"), QString::fromStdString(msg.reasoning_content));
+        list.push_back(m);
+    }
+    return list;
 }
 
 void QmlBridge::refreshProject() {

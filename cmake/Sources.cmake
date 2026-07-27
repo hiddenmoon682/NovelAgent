@@ -78,7 +78,6 @@ set(NOVELAGENT_AGENT
     src/agent/prompt/PromptContextBuilder.h src/agent/prompt/PromptContextBuilder.cpp
     # session/
     src/agent/session/SessionPersistence.h src/agent/session/SessionPersistence.cpp
-    src/agent/session/SessionManager.h src/agent/session/SessionManager.cpp
     # index/
     src/agent/index/IIndexService.h
     src/agent/index/ProjectIndexService.h src/agent/index/ProjectIndexService.cpp

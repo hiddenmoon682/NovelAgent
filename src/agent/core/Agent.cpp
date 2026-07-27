@@ -52,10 +52,33 @@ void Agent::setSystemPrompt(std::string prompt) {
 void Agent::clearMemory() { memory_.clear(); }
 
 void Agent::resetSession() {
+    // 先归档旧对话，避免下一轮 saveSessionState() 静默覆盖 conversation.json
+    if (persistence_) {
+        try {
+            persistence_->archive(memory_);
+        } catch (const std::exception& e) {
+            spdlog::warn("[Agent] 归档旧会话失败（继续重置）: {}", e.what());
+        }
+    }
+
+    // 保留 system prompt：它由 NovelAgentApp 装配（人格/工具指令/技能），
+    // 只在构造时注入一次，clear() 不能连它一起清掉
+    std::string prompt = memory_.systemPrompt();
     memory_.clear();
+    memory_.setSystemPrompt(std::move(prompt));
+
     tracer_.clear();
     last_warnings_.clear();
     progressive_tools_.reset();
+
+    // 立即落盘空对话，防止重启后恢复出已归档的旧会话
+    if (persistence_) {
+        try {
+            persistence_->save(memory_);
+        } catch (const std::exception& e) {
+            spdlog::warn("[Agent] 重置后落盘失败: {}", e.what());
+        }
+    }
 }
 
 // ===========================================================================
@@ -146,9 +169,13 @@ void Agent::saveSessionState() {
 
 void Agent::loadSessionState() {
     if (!persistence_) return;
-    memory_.clear();
     auto loaded = persistence_->load();
-    memory_.restore(loaded.checkpoint());
+    if (loaded.messages().empty()) return;  // 无历史可恢复，保持当前状态
+
+    // 只恢复对话消息；system prompt 以本次启动装配的为准（文件中也不存储 system）
+    auto snapshot = loaded.checkpoint();
+    snapshot.system_prompt = memory_.systemPrompt();
+    memory_.restore(snapshot);
 }
 
 
@@ -287,9 +314,9 @@ llm::LLMResponse Agent::process(const std::string& input,
         tracer_.record("done", result.raw_response.total_tokens, total_ms);
 
         try {
-            saveSessionState();
+            saveSessionState();  // 每轮结束全量落盘（原子写）
         } catch (const std::exception& e) {
-            spdlog::warn("[Agent] 会话增量保存失败（不影响本轮回复）: {}", e.what());
+            spdlog::warn("[Agent] 会话落盘失败（不影响本轮回复）: {}", e.what());
         }
 
         return result.raw_response;

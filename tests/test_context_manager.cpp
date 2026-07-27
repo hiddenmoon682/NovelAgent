@@ -82,6 +82,35 @@ void test_session_save_load() {
     PASS();
 }
 
+void test_session_fidelity() {
+    TEST("SessionPersistence — system 不落盘 + reasoning/preserved 往返");
+
+    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_session_fidelity";
+    ProjectIO::createProjectDir(tmp, "测试");
+    FileStorageBackend storage(tmp);
+
+    agent::SessionPersistence sp(storage);
+    llm::Memory conv;
+    conv.setSystemPrompt("旧的 system prompt");
+    conv.addUser("问题");
+    llm::Message assistant = llm::Message::assistant("回答");
+    assistant.reasoning_content = "推理过程";
+    conv.inject(std::move(assistant));
+    conv.pin(1);  // pin user 消息（含 system 偏移，对应 messages()[0]）
+
+    sp.save(conv);
+    auto loaded = sp.load();
+
+    // system prompt 不应被持久化；两条对话消息完整恢复
+    CHECK(loaded.systemPrompt().empty());
+    CHECK(loaded.messages().size() == 2);
+    CHECK(loaded.messages()[0].preserved);
+    CHECK(loaded.messages()[1].reasoning_content == "推理过程");
+
+    utils::file::removeDir(tmp);
+    PASS();
+}
+
 // =========================================================================
 // ContextBudgetEvaluator 测试
 // =========================================================================
@@ -238,6 +267,7 @@ int main() {
 
     // SessionPersistence
     test_session_save_load();
+    test_session_fidelity();
 
     // ContextBudgetEvaluator
     test_evaluate_total_tokens();

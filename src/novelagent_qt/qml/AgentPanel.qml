@@ -40,6 +40,20 @@ Rectangle {
         return it.type === "tool" ? "assistant" : it.role
     }
 
+    // 从 bridge 重建聊天流（启动恢复上次对话 / 切换项目后刷新）。
+    function reloadHistory() {
+        chatModel.clear()
+        if (!bridge.agentReady) return
+        var hist = bridge.conversationHistory()
+        for (var i = 0; i < hist.length; ++i) {
+            chatModel.append({ type: "message", role: hist[i].role, content: hist[i].content,
+                               reasoning: hist[i].reasoning, streaming: false,
+                               toolName: "", toolStatus: "" })
+        }
+    }
+
+    Component.onCompleted: reloadHistory()
+
     function sendCurrentMessage() {
         var text = inputField.text.trim()
         if (text.length === 0 || bridge.busy) return
@@ -315,6 +329,14 @@ Rectangle {
 
     Connections {
         target: bridge
+
+        function onAgentReadyChanged() {
+            root.reloadHistory()
+        }
+
+        function onSessionReset() {
+            chatModel.clear()
+        }
 
         function onTokenReceived(delta) {
             var idx = root.lastStreamingAssistant()

@@ -50,7 +50,11 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
     // 注入上下文管理组件
     agent_.setProject(project_.get());
     agent_.setCalibrator(&calibrator_);
-    agent_.setPersistence(&persistence_);
+    // 仅项目已打开时启用持久化（避免空路径时写到盘符根目录 /.novelagent）
+    if (project_ && !project_->path.empty()) {
+        agent_.setPersistence(&persistence_);
+        agent_.loadSessionState();  // 启动时恢复上次对话（system prompt 以本次装配为准）
+    }
 
     agent::TokenBudget budget;
     budget.model_limit = client_.config().max_context_tokens;
