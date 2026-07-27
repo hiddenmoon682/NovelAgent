@@ -4,7 +4,9 @@
 #include "agent/skill/SkillLoader.h"
 
 #include <filesystem>
+#include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -21,7 +23,7 @@ public:
     const SkillMetadata* get(const std::string& name) const;
 
     // 按需加载技能正文（供 use_skill 工具使用）。
-    // 技能不存在或已被禁用时返回 nullopt。
+    // 技能不存在、已被禁用或正文读取失败时返回 nullopt。
     std::optional<std::string> loadContent(const std::string& name) const;
 
     // 启用/禁用技能（返回技能是否存在）。禁用集合在 discoverAll 后仍保持。
@@ -40,6 +42,9 @@ private:
     mutable std::vector<SkillMetadata> skills_;
     // 用户禁用的技能名（持久化由调用方负责，这里只管运行时状态）
     std::unordered_set<std::string> disabled_names_;
+    // 保护 skills_/disabled_names_：worker 线程（save_skill→discoverAll、
+    // use_skill→loadContent）与 UI 线程（skillList/setEnabled）并发访问
+    mutable std::shared_mutex mutex_;
 };
 
 } // namespace skill

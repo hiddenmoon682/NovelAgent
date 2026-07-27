@@ -68,9 +68,11 @@ void Agent::resetSession() {
         }
     }
 
-    // 保留 system prompt：它由 NovelAgentApp 装配（人格/工具指令/技能），
-    // 只在构造时注入一次，clear() 不能连它一起清掉
-    std::string prompt = memory_.systemPrompt();
+    // system prompt 由 NovelAgentApp 装配（人格/工具指令/技能），clear()
+    // 不能连它一起清掉。会话边界优先经提供者重建，使运行期变化
+    //（如 save_skill 新增的技能目录）在新会话生效；无提供者时沿用旧值
+    std::string prompt = system_prompt_provider_ ? system_prompt_provider_()
+                                                 : memory_.systemPrompt();
     memory_.clear();
     memory_.setSystemPrompt(std::move(prompt));
 
@@ -110,7 +112,9 @@ bool Agent::deleteSession(const std::string& id) {
 }
 
 void Agent::reloadActiveSession() {
-    std::string prompt = memory_.systemPrompt();
+    // 会话边界：同 resetSession，prompt 优先经提供者重建
+    std::string prompt = system_prompt_provider_ ? system_prompt_provider_()
+                                                 : memory_.systemPrompt();
     memory_.clear();
     memory_.setSystemPrompt(std::move(prompt));
 

@@ -66,6 +66,12 @@ public:
     void setSummarySink(std::function<void(const std::string&)> sink) {
         summary_sink_ = std::move(sink);
     }
+    // 注入 system prompt 提供者（可选）。会话边界（新建/切换/删除重载）
+    // 时重新生成 prompt，使运行期变化的成分（如 save_skill 新增的技能目录）
+    // 在下个会话生效；会话中途不重建，保持 KV cache 稳定。
+    void setSystemPromptProvider(std::function<std::string()> provider) {
+        system_prompt_provider_ = std::move(provider);
+    }
 
     llm::LLMResponse process(const std::string& input,
                               llm::StreamCallbacks callbacks = {});
@@ -148,6 +154,7 @@ private:
     llm::TokenCounter* calibrator_ = nullptr;
     SessionPersistence* persistence_ = nullptr;
     std::function<void(const std::string&)> summary_sink_;   // 压缩摘要沉淀回调
+    std::function<std::string()> system_prompt_provider_;    // 会话边界 prompt 重建
     std::vector<std::string> last_warnings_;
     ContextUsage usage_;
 

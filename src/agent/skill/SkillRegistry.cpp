@@ -1,5 +1,6 @@
 #include "agent/skill/SkillRegistry.h"
 
+#include <mutex>
 #include <sstream>
 #include <unordered_set>
 
@@ -9,10 +10,12 @@ SkillRegistry::SkillRegistry(SkillLoader loader)
     : loader_(std::move(loader)) {}
 
 void SkillRegistry::addSearchPath(std::filesystem::path dir) {
+    std::unique_lock lock(mutex_);
     search_paths_.push_back(std::move(dir));
 }
 
 void SkillRegistry::discoverAll() {
+    std::unique_lock lock(mutex_);
     skills_.clear();
     std::unordered_set<std::string> seen;
 
@@ -28,6 +31,9 @@ void SkillRegistry::discoverAll() {
 }
 
 const SkillMetadata* SkillRegistry::get(const std::string& name) const {
+    // 注意：返回的指针仅在下次 discoverAll 前有效，且不受锁保护，
+    // 跨线程场景请用 listSkills/loadContent 的值语义接口。
+    std::unique_lock lock(mutex_);
     for (auto& s : skills_) {
         if (s.name == name) {
             loader_.ensureLoaded(s);
@@ -38,26 +44,31 @@ const SkillMetadata* SkillRegistry::get(const std::string& name) const {
 }
 
 std::optional<std::string> SkillRegistry::loadContent(const std::string& name) const {
+    std::unique_lock lock(mutex_);  // ensureLoaded 会写入缓存
     for (auto& s : skills_) {
         if (s.name != name)
             continue;
         if (!s.enabled)
             return std::nullopt; // 禁用技能对 LLM 不可见
         loader_.ensureLoaded(s);
+        if (!s.content_loaded)
+            return std::nullopt; // SKILL.md 读取失败（已被删除/移动）
         return s.content;
     }
     return std::nullopt;
 }
 
 bool SkillRegistry::setEnabled(const std::string& name, bool enabled) {
-    if (enabled)
-        disabled_names_.erase(name);
-    else
-        disabled_names_.insert(name);
-
+    std::unique_lock lock(mutex_);
+    // 先查找再改集合：避免不存在的名字污染 disabled_names_
+    //（否则会随下次合法 toggle 一起写进 skills.json）
     for (auto& s : skills_) {
         if (s.name == name) {
             s.enabled = enabled;
+            if (enabled)
+                disabled_names_.erase(name);
+            else
+                disabled_names_.insert(name);
             return true;
         }
     }
@@ -65,6 +76,7 @@ bool SkillRegistry::setEnabled(const std::string& name, bool enabled) {
 }
 
 void SkillRegistry::setDisabledSkills(const std::vector<std::string>& names) {
+    std::unique_lock lock(mutex_);
     disabled_names_.clear();
     disabled_names_.insert(names.begin(), names.end());
     for (auto& s : skills_)
@@ -72,16 +84,19 @@ void SkillRegistry::setDisabledSkills(const std::vector<std::string>& names) {
 }
 
 std::vector<std::string> SkillRegistry::disabledSkills() const {
+    std::shared_lock lock(mutex_);
     return {disabled_names_.begin(), disabled_names_.end()};
 }
 
 std::vector<SkillMetadata> SkillRegistry::listSkills() const {
+    std::shared_lock lock(mutex_);
     return skills_;
 }
 
 // 渐进式披露：always 技能全文常驻；其余启用技能仅列入目录，
 // 由 LLM 调用 use_skill 工具按需加载全文，避免技能增多时上下文膨胀。
 std::string SkillRegistry::getSkillContext() const {
+    std::unique_lock lock(mutex_);  // 常驻技能的 ensureLoaded 会写入缓存
     std::ostringstream catalog;  // 按需技能目录
     std::ostringstream resident; // 常驻技能全文
 
@@ -136,6 +151,7 @@ std::string SkillRegistry::getSkillContext() const {
 }
 
 bool SkillRegistry::hasSkill(const std::string& name) const {
+    std::shared_lock lock(mutex_);
     for (const auto& s : skills_) {
         if (s.name == name)
             return true;
@@ -144,6 +160,7 @@ bool SkillRegistry::hasSkill(const std::string& name) const {
 }
 
 std::vector<SkillCommand> SkillRegistry::getAllCommands() const {
+    std::shared_lock lock(mutex_);
     std::vector<SkillCommand> cmds;
     for (const auto& s : skills_) {
         if (!s.enabled)

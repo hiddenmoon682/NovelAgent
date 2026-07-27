@@ -39,6 +39,20 @@ bool isValidSkillName(const std::string& name) {
     return true;
 }
 
+// frontmatter 单行字段消毒：换行会注入任意元数据字段（如 always: true
+// 提权常驻、bins 触发命令执行），"---" 行会提前终结 frontmatter。
+std::string sanitizeFrontmatterValue(const std::string& raw) {
+    std::string out;
+    out.reserve(raw.size());
+    for (char c : raw) {
+        if (c == '\n' || c == '\r')
+            out += ' ';
+        else if (c != '"')  // 引号可逃逸带引号字段（如 emoji）
+            out += c;
+    }
+    return out;
+}
+
 } // namespace
 
 // ── use_skill ──
@@ -56,7 +70,7 @@ json UseSkillTool::execute(const json& args) {
     const std::string name = args.value("name", "");
     auto content = registry_->loadContent(name);
     if (!content)
-        return {{"error", "技能不存在或已被禁用: " + name}};
+        return {{"error", "技能不存在、已被禁用或正文不可读: " + name}};
 
     spdlog::info("[use_skill] 加载技能 '{}' ({} 字节)", name, content->size());
     return {{"name", name}, {"content", *content}};
@@ -81,9 +95,9 @@ json SaveSkillTool::execute(const json& args) {
         return {{"error", "未打开项目，无法保存技能"}};
 
     const std::string name = args.value("name", "");
-    const std::string description = args.value("description", "");
+    const std::string description = sanitizeFrontmatterValue(args.value("description", ""));
     const std::string content = args.value("content", "");
-    const std::string emoji = args.value("emoji", "");
+    const std::string emoji = sanitizeFrontmatterValue(args.value("emoji", ""));
     const bool always = args.value("always", false);
 
     if (!isValidSkillName(name))
@@ -115,7 +129,8 @@ json SaveSkillTool::execute(const json& args) {
         out << "\n";
     out.close();
 
-    // 刷新注册表，新技能立即出现在目录中（system prompt 下一轮会话生效）
+    // 刷新注册表，新技能立即出现在目录中；system prompt 的
+    // <available_skills> 目录在下次新建/切换会话时由 prompt 提供者刷新
     registry_->discoverAll();
 
     const std::string path = (dir / "SKILL.md").string();

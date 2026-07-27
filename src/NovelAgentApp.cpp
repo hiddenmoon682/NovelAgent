@@ -52,6 +52,9 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
     }
 
     agent_.setSystemPrompt(buildSystemPrompt());
+    // 会话边界（新建/切换）时重建 prompt：save_skill 新增的技能目录
+    // 才能在下个会话对 LLM 可见（会话中途不重建，保 KV cache 稳定）
+    agent_.setSystemPromptProvider([this] { return buildSystemPrompt(); });
 
     // 注入上下文管理组件
     agent_.setProject(project_.get());
