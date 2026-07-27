@@ -10,10 +10,11 @@
 #include "project/FileStorageBackend.h"
 #include "retrieval/VectorStore.h"
 #include "retrieval/EmbeddingGenerator.h"
+#include "agent/memory/LongTermMemoryStore.h"
 #include "agent/skill/SkillRegistry.h"
 
 struct Project;
-namespace agent { class ProjectIndexService; }
+namespace agent { class ProjectIndexService; class IIndexService; }
 #include <memory>
 #include <string>
 #include <vector>
@@ -29,6 +30,7 @@ public:
     agent::ToolRegistry& registry() { return registry_; }
     skill::SkillRegistry& skillRegistry() { return skill_registry_; }
     std::shared_ptr<Project> project() { return project_; }
+    agent::IIndexService* indexService();  // 项目未打开时仍返回有效指针
 
 private:
     llm::LLMClientFactory client_;
@@ -41,6 +43,7 @@ private:
     agent::SessionPersistence persistence_;
     retrieval::VectorStore vector_store_;
     retrieval::EmbeddingGenerator embedding_gen_;
+    agent::LongTermMemoryStore ltm_store_;
     std::unique_ptr<agent::ProjectIndexService> index_service_;
     skill::SkillRegistry skill_registry_;
 

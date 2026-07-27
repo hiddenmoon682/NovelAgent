@@ -21,10 +21,20 @@ NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
 
 NovelAgentApp::~NovelAgentApp() = default;
 
+agent::IIndexService* NovelAgentApp::indexService()
+{
+    return index_service_.get();
+}
+
 void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
 {
+    // 长期记忆日志先于工具注册初始化（save_memory 依赖已初始化的 store）
+    if (project_ && !project_->path.empty()) {
+        ltm_store_.init(project_->path + "/.novelagent/memories.json");
+    }
+
     if (project_ && !project_->title.empty()) {
-        agent::ToolDependencies deps{project_, &vector_store_, &embedding_gen_};
+        agent::ToolDependencies deps{project_, &vector_store_, &embedding_gen_, &ltm_store_};
         agent::BuiltInTool::registerAllTo(registry_, deps, disabledTools);
     }
 
@@ -67,6 +77,12 @@ void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
         vector_store_.init(vec_path);
     }
 
+    // 会话压缩摘要自动沉淀到长期记忆日志
+    agent_.setSummarySink([this](const std::string& summary) {
+        if (ltm_store_.initialized())
+            ltm_store_.append(summary, "summary");
+    });
+
     index_service_ = std::make_unique<agent::ProjectIndexService>(
-        project_, vector_store_, embedding_gen_);
+        project_, vector_store_, embedding_gen_, &ltm_store_);
 }

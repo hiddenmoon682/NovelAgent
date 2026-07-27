@@ -49,6 +49,9 @@ public:
     // 返回嵌入向量的维度（首次调用后确定）。
     int dimension() const override { return dimension_; }
 
+    // 返回嵌入模型名称。
+    std::string modelName() const override { return embed_config_.model; }
+
     // 返回当前嵌入配置。
     const EmbeddingConfig& embedConfig() const { return embed_config_; }
 

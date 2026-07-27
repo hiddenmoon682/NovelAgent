@@ -75,6 +75,8 @@ public:
     // [{role: "user"|"assistant", content, reasoning}, ...]，跳过工具消息与空消息。
     Q_INVOKABLE QVariantList conversationHistory() const;
     Q_INVOKABLE void refreshProject();
+    // 强制全量重建向量索引（清空后重嵌入全部源），后台执行，走 busy_ 串行机制。
+    Q_INVOKABLE void rebuildIndex();
     // 章节列表（按 order 升序）：[{id, title, order, wordCount}, ...]；项目未打开返回空。
     Q_INVOKABLE QVariantList chapterList() const;
     // 读取章节正文 Markdown；失败返回空串并 emit errorOccurred。
@@ -131,6 +133,8 @@ signals:
 private:
     void setStatus(const QString& text);
     void runAgent(std::string input);
+    // 在当前线程同步执行一次索引（调用方负责线程/busy 约束），异常已内部吐掉。
+    void runIndexUpdate(bool force);
     void joinWorker();
     // 整体重建 NovelAgentApp。providerName 必须存在于 config_ 且有 API Key；
     // project 可为 nullptr（无项目状态）。失败时保持 app_ == nullptr 并写 error。

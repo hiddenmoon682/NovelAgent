@@ -80,7 +80,10 @@ set(NOVELAGENT_AGENT
     src/agent/session/SessionPersistence.h src/agent/session/SessionPersistence.cpp
     # index/
     src/agent/index/IIndexService.h
+    src/agent/index/IndexManifest.h src/agent/index/IndexManifest.cpp
     src/agent/index/ProjectIndexService.h src/agent/index/ProjectIndexService.cpp
+    # memory/
+    src/agent/memory/LongTermMemoryStore.h src/agent/memory/LongTermMemoryStore.cpp
     # tools/ (基础工具定义)
     src/agent/tools/BuiltInTool.h src/agent/tools/BuiltInTool.cpp
 )
@@ -93,6 +96,7 @@ set(NOVELAGENT_TOOLS
     src/agent/tools/OutlineTools.h src/agent/tools/OutlineTools.cpp
     src/agent/tools/ShellTools.h src/agent/tools/ShellTools.cpp
     src/agent/tools/SearchMemoryTools.h src/agent/tools/SearchMemoryTools.cpp
+    src/agent/tools/SaveMemoryTool.h src/agent/tools/SaveMemoryTool.cpp
     src/agent/tools/StyleTools.h src/agent/tools/StyleTools.cpp
     src/agent/tools/ChapterContextTools.h src/agent/tools/ChapterContextTools.cpp
     src/agent/tools/GetLatestChapterTool.h src/agent/tools/GetLatestChapterTool.cpp

@@ -142,6 +142,15 @@ void Agent::applyCompaction(const CompactionResult& cr) {
     }
     memory_.setSystemPrompt(snapshot.system_prompt);
     spdlog::info("[Agent] 压缩已应用: {} 条消息保留", cr.retained.size());
+
+    // 摘要沉淀：让被压缩掉的信息进入长期记忆，而非永久丢失
+    if (summary_sink_ && !cr.summary.empty()) {
+        try {
+            summary_sink_(cr.summary);
+        } catch (const std::exception& e) {
+            spdlog::warn("[Agent] 摘要沉淀失败（不影响会话）: {}", e.what());
+        }
+    }
 }
 
 // ===========================================================================
