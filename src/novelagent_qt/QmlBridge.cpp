@@ -330,18 +330,87 @@ void QmlBridge::runAgent(std::string input) {
     });
 }
 
-// ── 以下方法在 Task 3 / Task 4 中实现 ──
+// ── Provider 配置 ──
+
+QStringList QmlBridge::listProviders() const {
+    QStringList list;
+    for (const auto& [name, cfg] : config_.providers)
+        list << QString::fromStdString(name);
+    return list;
+}
+
+QVariantMap QmlBridge::providerInfo(const QString& name) const {
+    QVariantMap m;
+    const ProviderConfig* p = config_.getProvider(name.toStdString());
+    if (!p) return m;
+    m.insert(QStringLiteral("name"), QString::fromStdString(p->name));
+    m.insert(QStringLiteral("api_key"), QString::fromStdString(p->api_key));
+    m.insert(QStringLiteral("base_url"), QString::fromStdString(p->base_url));
+    m.insert(QStringLiteral("model"), QString::fromStdString(p->model));
+    m.insert(QStringLiteral("temperature"), p->temperature);
+    m.insert(QStringLiteral("max_tokens"), p->max_tokens);
+    m.insert(QStringLiteral("enable_thinking"), p->enable_thinking);
+    m.insert(QStringLiteral("hasKey"),
+             !p->api_key.empty() && !isPlaceholderKey(p->api_key));
+    m.insert(QStringLiteral("isDefault"), config_.default_provider == p->name);
+    return m;
+}
+
+bool QmlBridge::saveProvider(const QString& name, const QVariantMap& v) {
+    const std::string key = name.toStdString();
+    if (key.empty()) return false;
+    ProviderConfig& p = config_.providers[key];
+    p.name = key;
+    if (v.contains(QStringLiteral("api_key")))
+        p.api_key = v[QStringLiteral("api_key")].toString().toStdString();
+    if (v.contains(QStringLiteral("base_url")))
+        p.base_url = v[QStringLiteral("base_url")].toString().toStdString();
+    if (v.contains(QStringLiteral("model")))
+        p.model = v[QStringLiteral("model")].toString().toStdString();
+    if (v.contains(QStringLiteral("temperature")))
+        p.temperature = v[QStringLiteral("temperature")].toDouble();
+    if (v.contains(QStringLiteral("max_tokens")))
+        p.max_tokens = v[QStringLiteral("max_tokens")].toInt();
+    if (v.contains(QStringLiteral("enable_thinking")))
+        p.enable_thinking = v[QStringLiteral("enable_thinking")].toBool();
+    config_.save();
+    emit providersChanged();
+    return true;
+}
+
+QString QmlBridge::defaultProvider() const {
+    return QString::fromStdString(config_.default_provider);
+}
+
+bool QmlBridge::hasUsableApiKey(const QString& name) const {
+    const ProviderConfig* p = config_.getProvider(name.toStdString());
+    return p && !p->api_key.empty() && !isPlaceholderKey(p->api_key);
+}
+
+bool QmlBridge::initialize(const QString& providerName) {
+    const std::string name = providerName.toStdString();
+    QString err;
+    // 沿用当前项目（可为 nullptr，即“无项目”状态）
+    if (!rebuildApp(name, project_, &err)) {
+        emit errorOccurred(err);
+        return false;
+    }
+    config_.default_provider = name;
+    config_.save();
+    return true;
+}
+
+void QmlBridge::setVerbose(bool enabled) {
+    config_.verbose = enabled;
+    spdlog::set_level(enabled ? spdlog::level::debug : spdlog::level::info);
+    config_.save();
+}
+
+// ── 以下方法在 Task 4 中实现 ──
 bool QmlBridge::tryAutoStart() { return false; }
-bool QmlBridge::initialize(const QString&) { return false; }
-QStringList QmlBridge::listProviders() const { return {}; }
-QVariantMap QmlBridge::providerInfo(const QString&) const { return {}; }
-bool QmlBridge::saveProvider(const QString&, const QVariantMap&) { return false; }
-QString QmlBridge::defaultProvider() const { return {}; }
-bool QmlBridge::hasUsableApiKey(const QString&) const { return false; }
 QString QmlBridge::validateProjectDir(const QString&) const { return {}; }
 bool QmlBridge::openProject(const QString&) { return false; }
 bool QmlBridge::createProject(const QString&, const QString&) { return false; }
 QString QmlBridge::lastProjectPath() const { return {}; }
-void QmlBridge::setVerbose(bool) {}
 
 } // namespace qtui
