@@ -1,6 +1,6 @@
 # NovelAgent 审查状态总览
 
-> 最后更新：2026-07-27（新增 SIGINT_HANDLING_REVIEW + CLI_REMOVAL_PLAN）
+> 最后更新：2026-07-27（新增 SIGINT_HANDLING_REVIEW + CLI_REMOVAL_PLAN + BOOTSTRAP_SLIM_PLAN）
 
 ---
 
@@ -115,7 +115,27 @@
 
 ---
 
-## 四、SIGINT 信号处理审查（SIGINT_HANDLING_REVIEW_2026-07-27.md）
+## 四、Bootstrap.h 瘦身方案（BOOTSTRAP_SLIM_PLAN_2026-07-27.md）
+
+| 状态 | 说明 |
+|------|------|
+| 📋 待定 | 方向已确认（激进方案），尚未执行 |
+
+### 核心思想
+- Bootstrap.h 瘦到只剩构造 NovelAgentApp + SIGINT 注册
+- 所有配置迁移到 QML 前端，实现"配置一次，永久生效"
+- 自动记住上次打开的项目、默认 Provider、API Key 等
+
+### 执行阶段
+1. **QmlBridge 增强** — 新增 initialize/createProject/openProject 等方法
+2. **QML 设置 UI** — SettingsDialog / WelcomeWizard / ProjectPicker
+3. **NovelAgentApp 延迟初始化** — 支持先构造后配置
+4. **Bootstrap.h 瘦身** — 移除 CLI11/AppConfig/ProjectManager 依赖
+5. **细节补充** — 窗口状态持久化、自动加载上次项目
+
+---
+
+## 五、SIGINT 信号处理审查（SIGINT_HANDLING_REVIEW_2026-07-27.md）
 
 | 状态 | 说明 |
 |------|------|
