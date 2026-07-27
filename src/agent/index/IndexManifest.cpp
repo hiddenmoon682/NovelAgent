@@ -89,6 +89,9 @@ void IndexManifest::save(const std::string& path) const
 
 void IndexManifest::setModelFingerprint(std::string model, int dimension)
 {
+    // 维度 0 = 嵌入器尚未发过请求（未知）：同模型下不得覆盖清单已知的真实维度，
+    // 否则重启后首次无变更索引会清零指纹，使维度校验永久静默失效
+    if (dimension == 0 && model == embedding_model_ && dimension_ > 0) return;
     embedding_model_ = std::move(model);
     dimension_ = dimension;
 }

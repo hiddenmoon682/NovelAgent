@@ -99,6 +99,29 @@ std::string deriveTitle(const nlohmann::json& messages)
     return {};
 }
 
+// 从会话 id 反推创建时间："s-20260727T031500Z[-n]" → "2026-07-27T03:15:00Z"；
+// 格式不符时返回空（重建索引时的时间戳兜底）。
+std::string timestampFromId(const std::string& id)
+{
+    if (id.size() < 18 || id.compare(0, 2, "s-") != 0) return {};
+    const std::string c = id.substr(2, 16);  // 期望形如 20260727T031500Z
+    if (c.size() != 16 || c[8] != 'T' || c[15] != 'Z') return {};
+    for (int i : {0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14}) {
+        if (c[i] < '0' || c[i] > '9') return {};
+    }
+    return c.substr(0, 4) + "-" + c.substr(4, 2) + "-" + c.substr(6, 2) + "T" +
+           c.substr(9, 2) + ":" + c.substr(11, 2) + ":" + c.substr(13, 2) + "Z";
+}
+
+// 安全读取字符串字段：类型不符（如 title 是数字）时返回默认值而非抛异常。
+std::string getStringField(const nlohmann::json& j, const char* key,
+                            const std::string& fallback)
+{
+    if (j.is_object() && j.contains(key) && j[key].is_string())
+        return j[key].get<std::string>();
+    return fallback;
+}
+
 } // namespace
 
 // ── 路径与索引 ──
@@ -123,7 +146,13 @@ std::string SessionPersistence::makeSessionId(const std::string& timestamp) cons
     std::string base = "s-" + compact;
     std::string candidate = base;
     int n = 2;
-    while (utils::file::exists(sessionFile(candidate)))
+    // 同时查重 archive/：已删除会话的 id 若同秒被复用，日后归档会覆盖旧归档文件
+    const std::string archive_dir = utils::file::joinPath(storage_.agentDir(), kArchiveDir);
+    auto taken = [&](const std::string& id) {
+        return utils::file::exists(sessionFile(id))
+            || utils::file::exists(utils::file::joinPath(archive_dir, id + ".json"));
+    };
+    while (taken(candidate))
         candidate = base + "-" + std::to_string(n++);
     return candidate;
 }
@@ -132,24 +161,99 @@ nlohmann::json SessionPersistence::loadIndex()
 {
     std::string index_path = utils::file::joinPath(sessionsDir(), kIndexFile);
     nlohmann::json idx = storage_.loadJson(index_path);
-    if (idx.is_object() && idx.contains("active") &&
-        idx.contains("sessions") && idx["sessions"].is_array()) {
-        return idx;
-    }
+    if (indexValid(idx)) return idx;
 
-    // 初次使用：建立含单个空会话的索引
+    // 索引缺失（初次使用）或损坏：扫描目录重建，绝不直接重置——
+    // 直接重置会将磁盘上既有的 sessions/<id>.json 全部孤儿化（静默丢数据）。
+    if (utils::file::exists(index_path)) {
+        spdlog::warn("[SessionPersistence] index.json 无效或损坏，扫描目录重建索引");
+    }
+    return rebuildIndexFromDisk(idx);
+}
+
+bool SessionPersistence::indexValid(const nlohmann::json& idx) const
+{
+    if (!idx.is_object()) return false;
+    if (!idx.contains("active") || !idx["active"].is_string()) return false;
+    if (!idx.contains("sessions") || !idx["sessions"].is_array()) return false;
+
+    // 每条 entry 必须含非空字符串 id，且 active 必须引用存在的会话
+    bool active_found = false;
+    for (const auto& e : idx["sessions"]) {
+        if (!e.is_object() || !e.contains("id") || !e["id"].is_string() ||
+            e["id"].get<std::string>().empty())
+            return false;
+        if (e["id"] == idx["active"]) active_found = true;
+    }
+    return active_found;
+}
+
+nlohmann::json SessionPersistence::rebuildIndexFromDisk(const nlohmann::json& damaged)
+{
     utils::file::createDirs(sessionsDir());
-    idx = nlohmann::json::object();
+
+    // 从损坏索引中回收指定 id 的元数据（title/created_at/updated_at）
+    auto metaFor = [&damaged](const std::string& id) -> nlohmann::json {
+        if (damaged.is_object() && damaged.contains("sessions") &&
+            damaged["sessions"].is_array()) {
+            for (const auto& e : damaged["sessions"]) {
+                if (e.is_object() && e.contains("id") && e["id"].is_string() &&
+                    e["id"].get<std::string>() == id)
+                    return e;
+            }
+        }
+        return nlohmann::json::object();
+    };
+
+    nlohmann::json idx = nlohmann::json::object();
     idx["sessions"] = nlohmann::json::array();
 
-    std::string ts = storage_.nowTimestamp();
-    std::string id = makeSessionId(ts);
-    nlohmann::json entry = {
-        {"id", id}, {"title", ""}, {"created_at", ts}, {"updated_at", ts}};
-    storage_.saveJson(sessionFile(id), nlohmann::json::array());
+    for (const auto& name : utils::file::listDir(sessionsDir())) {
+        if (name == kIndexFile) continue;
+        if (name.size() <= 5 || name.compare(name.size() - 5, 5, ".json") != 0) continue;
+        const std::string id = name.substr(0, name.size() - 5);
+        nlohmann::json content = storage_.loadJson(sessionFile(id));
+        if (!content.is_array()) continue;  // 非会话文件，跳过
 
-    idx["sessions"].push_back(entry);
-    idx["active"] = id;
+        nlohmann::json meta = metaFor(id);
+        std::string fallback_ts = timestampFromId(id);
+        if (fallback_ts.empty()) fallback_ts = storage_.nowTimestamp();
+        idx["sessions"].push_back({
+            {"id", id},
+            {"title", getStringField(meta, "title", deriveTitle(content))},
+            {"created_at", getStringField(meta, "created_at", fallback_ts)},
+            {"updated_at", getStringField(meta, "updated_at", fallback_ts)}});
+    }
+
+    auto& arr = idx["sessions"];
+    if (arr.empty()) {
+        // 磁盘上没有任何会话文件：按初次使用处理，新建单个空会话
+        std::string ts = storage_.nowTimestamp();
+        std::string id = makeSessionId(ts);
+        storage_.saveJson(sessionFile(id), nlohmann::json::array());
+        arr.push_back({
+            {"id", id}, {"title", ""}, {"created_at", ts}, {"updated_at", ts}});
+        idx["active"] = id;
+    } else {
+        // 优先沿用损坏索引中的 active（若仍指向存在的会话），否则取最近更新的
+        std::string active = getStringField(damaged, "active", std::string{});
+        bool active_ok = false;
+        for (const auto& e : arr) {
+            if (e["id"] == active) { active_ok = true; break; }
+        }
+        if (!active_ok) {
+            size_t best = 0;
+            for (size_t i = 1; i < arr.size(); ++i) {
+                if (getStringField(arr[i], "updated_at", {}) >
+                    getStringField(arr[best], "updated_at", {}))
+                    best = i;
+            }
+            active = arr[best]["id"].get<std::string>();
+        }
+        idx["active"] = active;
+        spdlog::info("[SessionPersistence] 索引重建完成：恢复 {} 个会话，active={}",
+                     arr.size(), active);
+    }
     saveIndex(idx);
     return idx;
 }

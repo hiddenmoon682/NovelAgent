@@ -162,6 +162,114 @@ void test_multi_session_lifecycle() {
     PASS();
 }
 
+void test_delete_last_session() {
+    TEST("SessionPersistence — 删除唯一会话自动新建 + 删除非 active 会话");
+
+    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_del_last_session";
+    if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
+    ProjectIO::createProjectDir(tmp, "测试");
+    FileStorageBackend storage(tmp);
+
+    agent::SessionPersistence sp(storage);
+    llm::Memory conv;
+    conv.addUser("唯一会话的消息");
+    sp.save(conv);
+    const std::string only_id = sp.activeSessionId();
+
+    // 删除唯一会话：自动新建空会话并设为 active
+    CHECK(sp.deleteSession(only_id));
+    auto sessions = sp.listSessions();
+    CHECK(sessions.size() == 1);
+    CHECK(sessions[0].id != only_id);
+    CHECK(sp.activeSessionId() == sessions[0].id);
+    CHECK(sp.load().size() == 0);
+
+    // 删除非 active 会话：active 不变
+    const std::string active_before = sp.activeSessionId();
+    llm::Memory conv2;
+    conv2.addUser("active 会话内容");
+    sp.save(conv2);
+    const std::string other_id = sp.createSession();  // 新会话成为 active
+    CHECK(sp.switchSession(active_before));
+    CHECK(sp.deleteSession(other_id));                // 删除非 active
+    CHECK(sp.activeSessionId() == active_before);
+    CHECK(sp.listSessions().size() == 1);
+
+    utils::file::removeDir(tmp);
+    PASS();
+}
+
+void test_corrupt_index_recovery() {
+    TEST("SessionPersistence — 损坏 index.json 扫描目录重建（不丢会话）");
+
+    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_corrupt_index";
+    if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
+    ProjectIO::createProjectDir(tmp, "测试");
+    FileStorageBackend storage(tmp);
+
+    // 先建两个正常会话
+    std::string first_id, second_id;
+    {
+        agent::SessionPersistence sp(storage);
+        llm::Memory conv;
+        conv.addUser("第一个会话的消息");
+        sp.save(conv);
+        first_id = sp.activeSessionId();
+        second_id = sp.createSession();
+        llm::Memory conv2;
+        conv2.addUser("第二个会话的消息");
+        sp.save(conv2);
+    }
+
+    const std::string index_path = tmp + "/.novelagent/sessions/index.json";
+
+    // 场景 1：active 类型错误（数字）——旧实现会抛 type_error 炸穿启动路径
+    utils::file::writeText(index_path, R"({"active": 123, "sessions": []})");
+    {
+        agent::SessionPersistence sp(storage);
+        auto sessions = sp.listSessions();      // 不得抛异常
+        CHECK(sessions.size() == 2);            // 磁盘上的会话文件全部找回
+        std::string active = sp.activeSessionId();
+        CHECK(active == first_id || active == second_id);
+        // 会话内容完好，标题从消息重新提取
+        bool found_first = false;
+        for (const auto& s : sessions) {
+            if (s.id == first_id) { found_first = true; CHECK(!s.title.empty()); }
+        }
+        CHECK(found_first);
+    }
+
+    // 场景 2：active 悬空引用（不在 sessions 列表中）——旧实现 save 会静默跳过索引更新
+    utils::file::writeText(index_path,
+        R"({"active": "s-ghost", "sessions": [{"id": ")" + first_id +
+        R"(", "title": "旧标题", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}]})");
+    {
+        agent::SessionPersistence sp(storage);
+        std::string active = sp.activeSessionId();
+        CHECK(active == first_id || active == second_id);
+        auto sessions = sp.listSessions();
+        CHECK(sessions.size() == 2);
+        // 重建时从旧索引回收了 first_id 的元数据
+        for (const auto& s : sessions) {
+            if (s.id == first_id) CHECK(s.title == "旧标题");
+        }
+    }
+
+    // 场景 3：非法 JSON —— 同样扫描重建，会话不丢，且 save 不再静默跳过索引更新
+    utils::file::writeText(index_path, "{ 损坏的 json !!!");
+    {
+        agent::SessionPersistence sp(storage);
+        llm::Memory conv;
+        conv.addUser("重建后的新消息");
+        sp.save(conv);                          // 不得抛异常，索引正常更新
+        CHECK(sp.listSessions().size() == 2);
+        CHECK(sp.load().size() == 1);
+    }
+
+    utils::file::removeDir(tmp);
+    PASS();
+}
+
 // =========================================================================
 // ContextBudgetEvaluator 测试
 // =========================================================================
@@ -320,6 +428,8 @@ int main() {
     test_session_save_load();
     test_session_fidelity();
     test_multi_session_lifecycle();
+    test_delete_last_session();
+    test_corrupt_index_recovery();
 
     // ContextBudgetEvaluator
     test_evaluate_total_tokens();

@@ -218,12 +218,17 @@ void Agent::saveSessionState() {
 
 void Agent::loadSessionState() {
     if (!persistence_) return;
-    auto loaded = persistence_->load();
-    if (!loaded.messages().empty()) {
-        // 只恢复对话消息；system prompt 以本次启动装配的为准（文件中也不存储 system）
-        auto snapshot = loaded.checkpoint();
-        snapshot.system_prompt = memory_.systemPrompt();
-        memory_.restore(snapshot);
+    // 启动路径不得抛异常：会话恢复失败降级为空会话，不能阻止应用初始化
+    try {
+        auto loaded = persistence_->load();
+        if (!loaded.messages().empty()) {
+            // 只恢复对话消息；system prompt 以本次启动装配的为准（文件中也不存储 system）
+            auto snapshot = loaded.checkpoint();
+            snapshot.system_prompt = memory_.systemPrompt();
+            memory_.restore(snapshot);
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("[Agent] 会话恢复失败（从空会话开始）: {}", e.what());
     }
     refreshUsage();
 }

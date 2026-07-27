@@ -69,6 +69,7 @@ IndexResult ProjectIndexService::indexAll(
 
     // ── 模型指纹校验：模型/维度变化时整库失效 ──
     const std::string model = embedding_gen_.modelName();
+    bool store_dirty = false;  // 向量库有未落盘的删除时置位（早退分支也需 flush）
     if (force || !manifest.fingerprintMatches(model, embedding_gen_.dimension())) {
         if (!manifest.sources().empty()) {
             report(force ? "强制全量重建索引..."
@@ -78,6 +79,7 @@ IndexResult ProjectIndexService::indexAll(
                 vector_store_.remove(id);
             }
             manifest.clear();
+            store_dirty = true;
         }
     }
 
@@ -193,10 +195,19 @@ IndexResult ProjectIndexService::indexAll(
          + std::to_string(result.removed_sources) + " 个已删除");
 
     if (desired.empty()) {
-        // 无内容变化，仅持久化清理结果
+        // 无内容变化：仅孤儿清理发生时才落盘向量库，避免每次响应后全量重写 vectors.json。
+        // 顺序必须先向量库后清单：清单落后于向量库只会导致下次重嵌入（安全），
+        // 反之哈希跳过机制会让缺失的向量永不被补齐。
+        if (result.removed_sources > 0 || store_dirty) {
+            try {
+                vector_store_.flush();
+            } catch (const std::exception& e) {
+                result.error = std::string("向量库落盘失败: ") + e.what();
+                return result;
+            }
+        }
         manifest.setModelFingerprint(model, embedding_gen_.dimension());
         manifest.save(manifestPath());
-        vector_store_.flush();
         report("向量索引已是最新，无需重建");
         return result;
     }
@@ -251,9 +262,21 @@ IndexResult ProjectIndexService::indexAll(
         vector_store_.insert(chunk.id, embeddings[i], chunk.metadata);
     }
 
+    // 先落盘向量库，成功后再写清单——反序时若 flush 失败/中途崩溃，
+    // 清单已声明“已按新哈希索引”，哈希跳过机制会让缺失的向量永不被补齐
+    try {
+        vector_store_.flush();
+    } catch (const std::exception& e) {
+        result.error = std::string("向量库落盘失败: ") + e.what();
+        return result;
+    }
     manifest.setModelFingerprint(model, embedding_gen_.dimension());
-    manifest.save(manifestPath());
-    vector_store_.flush();
+    try {
+        manifest.save(manifestPath());
+    } catch (const std::exception& e) {
+        // 清单写失败不影响向量正确性：下次索引会重嵌入本批源
+        spdlog::warn("[ProjectIndexService] 清单保存失败（下次将重试）: {}", e.what());
+    }
 
     report("向量索引已更新: " + std::to_string(result.total_chunks) + " 个片段 ("
          + std::to_string(result.updated_sources) + " 个源) → "

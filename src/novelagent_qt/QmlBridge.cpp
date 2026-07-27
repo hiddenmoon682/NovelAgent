@@ -201,16 +201,21 @@ QVariantList QmlBridge::sessionList() const {
     auto* persistence = app_->agent().persistence();
     if (!persistence) return list;  // 未打开项目时无持久化，无会话列表
 
-    const std::string active = persistence->activeSessionId();
-    for (const auto& s : persistence->listSessions()) {
-        QVariantMap m;
-        m.insert(QStringLiteral("id"), QString::fromStdString(s.id));
-        m.insert(QStringLiteral("title"), s.title.empty()
-                     ? QStringLiteral("新会话")
-                     : QString::fromStdString(s.title));
-        m.insert(QStringLiteral("active"), s.id == active);
-        m.insert(QStringLiteral("updatedAt"), QString::fromStdString(s.updated_at));
-        list.push_back(m);
+    // 持久层异常（磁盘 IO/重建失败）不得穿透 Q_INVOKABLE 进 QML 引擎
+    try {
+        const std::string active = persistence->activeSessionId();
+        for (const auto& s : persistence->listSessions()) {
+            QVariantMap m;
+            m.insert(QStringLiteral("id"), QString::fromStdString(s.id));
+            m.insert(QStringLiteral("title"), s.title.empty()
+                         ? QStringLiteral("新会话")
+                         : QString::fromStdString(s.title));
+            m.insert(QStringLiteral("active"), s.id == active);
+            m.insert(QStringLiteral("updatedAt"), QString::fromStdString(s.updated_at));
+            list.push_back(m);
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("[QmlBridge] 读取会话列表失败: {}", e.what());
     }
     return list;
 }
@@ -228,8 +233,14 @@ bool QmlBridge::switchSession(const QString& sessionId) {
 bool QmlBridge::deleteSession(const QString& sessionId) {
     if (!app_ || busy_.load()) return false;
     auto* persistence = app_->agent().persistence();
-    const bool wasActive =
-        persistence && persistence->activeSessionId() == sessionId.toStdString();
+    bool wasActive = false;
+    try {
+        wasActive =
+            persistence && persistence->activeSessionId() == sessionId.toStdString();
+    } catch (const std::exception& e) {
+        spdlog::warn("[QmlBridge] 查询 active 会话失败: {}", e.what());
+        return false;
+    }
     if (!app_->agent().deleteSession(sessionId.toStdString())) return false;
     emit sessionsChanged();
     if (wasActive) {

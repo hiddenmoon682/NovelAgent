@@ -171,11 +171,40 @@ Rectangle {
 
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
 
-        // ── 底部设置入口 ──
+        // ── 底部工具栏：重建索引 + 设置入口 ──
         Rectangle {
             Layout.fillWidth: true
             height: 44
             color: "transparent"
+
+            // 重建索引：强制全量重嵌入（索引损坏/换嵌入模型后的自愈入口）
+            Rectangle {
+                anchors { right: parent.right; rightMargin: Theme.gapMd + 32 + Theme.gapSm; verticalCenter: parent.verticalCenter }
+                width: 32
+                height: 32
+                radius: Theme.radiusSm
+                color: rebuildMa.containsMouse && !bridge.busy ? Theme.bgHover : "transparent"
+                opacity: bridge.busy ? 0.4 : 1.0
+
+                ToolTip.visible: rebuildMa.containsMouse
+                ToolTip.text: bridge.busy ? "Agent 正忙，稍后重试" : "重建向量索引"
+                ToolTip.delay: 300
+
+                Label {
+                    anchors.centerIn: parent
+                    text: "\u27f3"
+                    font.pixelSize: 16
+                    color: rebuildMa.containsMouse && !bridge.busy ? Theme.textPrimary : Theme.textSecondary
+                }
+
+                MouseArea {
+                    id: rebuildMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: bridge.busy ? Qt.ArrowCursor : Qt.PointingHandCursor
+                    onClicked: if (!bridge.busy) bridge.rebuildIndex()
+                }
+            }
 
             Rectangle {
                 anchors { right: parent.right; rightMargin: Theme.gapMd; verticalCenter: parent.verticalCenter }

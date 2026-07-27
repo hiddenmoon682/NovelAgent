@@ -14,6 +14,7 @@
 #include "utils/FileUtils.h"
 
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -38,13 +39,16 @@ class FakeEmbeddingGen : public retrieval::IEmbeddingGenerator {
 public:
     std::string model = "fake-embed-v1";
     int calls = 0;   // 累计嵌入的文本条数（衡量是否真的跳过重嵌入）
+    bool fail = false;  // 置位后嵌入调用抛异常（模拟网络/API 失败）
 
     retrieval::EmbeddingVector generateEmbedding(const std::string& text) override {
+        if (fail) throw std::runtime_error("模拟嵌入失败");
         ++calls;
         return makeVec(text);
     }
     std::vector<retrieval::EmbeddingVector> generateEmbeddings(
         const std::vector<std::string>& texts) override {
+        if (fail) throw std::runtime_error("模拟嵌入失败");
         std::vector<retrieval::EmbeddingVector> out;
         out.reserve(texts.size());
         for (const auto& t : texts) { ++calls; out.push_back(makeVec(t)); }
@@ -58,6 +62,12 @@ private:
         float a = static_cast<float>(t.size() % 17) / 17.0f;
         return {a, 1.0f - a, 0.5f, 0.25f};
     }
+};
+
+// 模拟真实 EmbeddingGenerator：首次嵌入请求前 dimension() 未知（返回 0）。
+class LazyDimEmbeddingGen : public FakeEmbeddingGen {
+public:
+    int dimension() const override { return calls > 0 ? 4 : 0; }
 };
 
 // 建立临时项目目录（含 .novelagent 子目录），返回项目路径。
@@ -449,6 +459,90 @@ void test_index_no_project() {
     PASS();
 }
 
+void test_fingerprint_survives_restart_without_changes() {
+    TEST("ProjectIndexService — 重启后无变更索引不清零维度指纹");
+
+    const std::string dir = makeTempProjectDir("fp_zero");
+    const std::string manifest_path = dir + "/.novelagent/index_manifest.json";
+    auto project = std::make_shared<Project>();
+    project->path = dir;
+    project->title = "测试项目";
+    project->characters.push_back(makeCharacter("c1", "目标一"));
+
+    {
+        retrieval::VectorStore vs;
+        vs.init(dir + "/.novelagent/vectors.json");
+        LazyDimEmbeddingGen eg;
+        agent::ProjectIndexService svc(project, vs, eg);
+        CHECK(svc.indexAll().ok());   // 嵌入后维度已知（4），写入清单
+        vs.close();
+    }
+    {
+        agent::IndexManifest m;
+        m.load(manifest_path);
+        CHECK(m.dimension() == 4);
+    }
+
+    // “重启”：新嵌入器实例 dimension()==0，无内容变更走早退分支
+    {
+        retrieval::VectorStore vs;
+        vs.init(dir + "/.novelagent/vectors.json");
+        LazyDimEmbeddingGen eg;
+        agent::ProjectIndexService svc(project, vs, eg);
+        auto r = svc.indexAll();
+        CHECK(r.ok());
+        CHECK(r.skipped_sources == 1);
+        CHECK(eg.calls == 0);         // 未触发重嵌入
+        vs.close();
+    }
+
+    // 清单中的真实维度必须保留，否则维度校验永久静默失效
+    {
+        agent::IndexManifest m;
+        m.load(manifest_path);
+        CHECK(m.dimension() == 4);
+    }
+
+    utils::file::removeDir(dir);
+    PASS();
+}
+
+void test_index_embed_failure_retry() {
+    TEST("ProjectIndexService — 嵌入失败不写清单，下次重试");
+
+    const std::string dir = makeTempProjectDir("embed_fail");
+    auto project = std::make_shared<Project>();
+    project->path = dir;
+    project->title = "测试项目";
+    project->characters.push_back(makeCharacter("c1", "目标一"));
+
+    retrieval::VectorStore vs;
+    vs.init(dir + "/.novelagent/vectors.json");
+    FakeEmbeddingGen eg;
+    agent::ProjectIndexService svc(project, vs, eg);
+
+    CHECK(svc.indexAll().ok());
+    CHECK(vs.contains("char-c1"));
+
+    // 内容变更 + 嵌入失败：返回错误，旧向量保持可用
+    project->characters[0].goal = "新目标";
+    eg.fail = true;
+    auto r = svc.indexAll();
+    CHECK(!r.ok());
+    CHECK(!r.error.empty());
+    CHECK(vs.contains("char-c1"));   // 旧向量未被破坏
+
+    // 恢复后重试：清单未被失败写坏，该源仍被识别为变更并重嵌入
+    eg.fail = false;
+    auto r2 = svc.indexAll();
+    CHECK(r2.ok());
+    CHECK(r2.updated_sources == 1);
+
+    vs.close();
+    utils::file::removeDir(dir);
+    PASS();
+}
+
 // =========================================================================
 
 int main() {
@@ -472,6 +566,8 @@ int main() {
     test_index_force_rebuild();
     test_index_memory_entries();
     test_index_no_project();
+    test_fingerprint_survives_restart_without_changes();
+    test_index_embed_failure_retry();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;
