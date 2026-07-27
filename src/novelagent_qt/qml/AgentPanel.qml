@@ -270,6 +270,58 @@ Rectangle {
                     bottomMargin: Theme.gapSm
                 }
 
+                // ── 技能入口：展示已启用数，点击打开管理弹窗 ──
+                Rectangle {
+                    id: skillBtn
+                    visible: bridge.agentReady && bridge.projectPath.length > 0
+                    width: skillBtnLabel.width + Theme.gapMd * 2
+                    height: 26
+                    radius: 13
+                    color: skillMa.containsMouse || skillPopup.visible
+                           ? Theme.bgHover : "transparent"
+                    border.width: 1
+                    border.color: skillPopup.visible ? Theme.accent : Theme.divider
+                    Behavior on color { ColorAnimation { duration: Theme.animFast } }
+                    Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
+
+                    property int enabledCount: 0
+                    property int totalCount: 0
+
+                    function refreshCount() {
+                        var list = bridge.skillList()
+                        totalCount = list.length
+                        var n = 0
+                        for (var i = 0; i < list.length; ++i)
+                            if (list[i].enabled) n++
+                        enabledCount = n
+                    }
+
+                    Component.onCompleted: refreshCount()
+                    Connections {
+                        target: bridge
+                        function onSkillsChanged() { skillBtn.refreshCount() }
+                        function onAgentReadyChanged() { skillBtn.refreshCount() }
+                    }
+
+                    Label {
+                        id: skillBtnLabel
+                        anchors.centerIn: parent
+                        text: skillBtn.totalCount > 0
+                              ? "✦ 技能 " + skillBtn.enabledCount + "/" + skillBtn.totalCount
+                              : "✦ 技能"
+                        font.family: Theme.fontUi
+                        font.pixelSize: Theme.sizeCaption
+                        color: skillBtn.enabledCount > 0 ? Theme.textSecondary : Theme.textFaint
+                    }
+                    MouseArea {
+                        id: skillMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: skillPopup.visible ? skillPopup.close() : skillPopup.open()
+                    }
+                }
+
                 Label {
                     text: "Enter 发送 · Shift+Enter 换行"
                     font.family: Theme.fontUi
@@ -310,6 +362,19 @@ Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    // 技能管理弹窗：锚在输入区上方
+    SkillPopup {
+        id: skillPopup
+        parent: inputRect
+        x: 0
+        y: -height - Theme.gapSm
+
+        onCreateSkillRequested: {
+            inputField.text = "请使用 create-skill 技能，引导我创建一个新技能"
+            root.sendCurrentMessage()
         }
     }
 

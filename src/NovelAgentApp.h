@@ -30,6 +30,10 @@ public:
     skill::SkillRegistry& skillRegistry() { return skill_registry_; }
     std::shared_ptr<Project> project() { return project_; }
 
+    // 启用/禁用技能：更新注册表 + 持久化 + 重建 system prompt。
+    // 返回技能是否存在。低频操作，KV cache 失效可接受。
+    bool setSkillEnabled(const std::string& name, bool enabled);
+
 private:
     llm::LLMClientFactory client_;
     agent::ToolRegistry registry_;
@@ -45,4 +49,10 @@ private:
     skill::SkillRegistry skill_registry_;
 
     void setupAgent(const std::vector<std::string>& disabledTools);
+    // 组装 system prompt（人格 + 工具指引 + 技能上下文 + 延迟工具存根）。
+    std::string buildSystemPrompt() const;
+    // 技能禁用列表持久化（<项目>/.novelagent/skills.json）。
+    std::string skillSettingsPath() const;
+    std::vector<std::string> loadDisabledSkills() const;
+    void saveDisabledSkills() const;
 };

@@ -13,6 +13,9 @@ namespace retrieval {
 class IVectorStore;
 class IEmbeddingGenerator;
 }
+namespace skill {
+class SkillRegistry;
+}
 
 namespace agent {
 
@@ -24,6 +27,7 @@ struct ToolDependencies {
     std::shared_ptr<Project> project;
     retrieval::IVectorStore* vector_store = nullptr;
     retrieval::IEmbeddingGenerator* embedding_gen = nullptr;
+    skill::SkillRegistry* skill_registry = nullptr;
 };
 
 // ============================================================================

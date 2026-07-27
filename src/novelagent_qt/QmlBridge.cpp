@@ -120,6 +120,7 @@ bool QmlBridge::rebuildApp(const std::string& providerName,
     emit chaptersChanged();
     emit modelChanged();
     emit usageChanged();
+    emit skillsChanged();
     setStatus(QStringLiteral("就绪"));
     return true;
 }
@@ -239,6 +240,36 @@ QString QmlBridge::loadChapter(const QString& chapterId) {
     return {};
 }
 
+// ── 技能管理 ──
+
+QVariantList QmlBridge::skillList() const {
+    QVariantList list;
+    if (!app_) return list;
+
+    for (const auto& s : app_->skillRegistry().listSkills()) {
+        QVariantMap m;
+        m.insert(QStringLiteral("name"), QString::fromStdString(s.name));
+        m.insert(QStringLiteral("description"), QString::fromStdString(s.description));
+        m.insert(QStringLiteral("emoji"), QString::fromStdString(s.emoji));
+        m.insert(QStringLiteral("always"), s.always);
+        m.insert(QStringLiteral("enabled"), s.enabled);
+        list.push_back(m);
+    }
+    return list;
+}
+
+bool QmlBridge::setSkillEnabled(const QString& name, bool enabled) {
+    if (!app_) return false;
+    if (busy_.load()) {
+        emit errorOccurred(QStringLiteral("生成中无法切换技能，请稍后再试"));
+        return false;
+    }
+    if (!app_->setSkillEnabled(name.toStdString(), enabled))
+        return false;
+    emit skillsChanged();
+    return true;
+}
+
 // ── 内部 ──
 
 void QmlBridge::setStatus(const QString& text) {
@@ -310,6 +341,7 @@ void QmlBridge::runAgent(std::string input) {
                 emit responseComplete(fullText);
                 emit usageChanged();
                 emit chaptersChanged();
+                emit skillsChanged(); // save_skill 可能新增了技能
                 if (finishReason == "cancelled")
                     setStatus(QStringLiteral("已取消"));
                 else
