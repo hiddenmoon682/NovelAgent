@@ -111,6 +111,88 @@ void test_session_fidelity() {
     PASS();
 }
 
+void test_multi_session_lifecycle() {
+    TEST("SessionPersistence — 多会话新建/切换/删除生命周期");
+
+    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_multi_session";
+    if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
+    ProjectIO::createProjectDir(tmp, "测试");
+    FileStorageBackend storage(tmp);
+
+    agent::SessionPersistence sp(storage);
+    llm::Memory conv;
+    conv.addUser("第一个会话的消息");
+    conv.addAssistant("回复");
+    sp.save(conv);
+
+    // 首次 save 后：索引已建，active 会话自动标题来自首条 user 消息
+    const std::string first_id = sp.activeSessionId();
+    CHECK(!first_id.empty());
+    auto sessions = sp.listSessions();
+    CHECK(sessions.size() == 1);
+    CHECK(!sessions[0].title.empty());
+
+    // 新建会话：成为 active，列表变为 2 个
+    const std::string second_id = sp.createSession();
+    CHECK(second_id != first_id);
+    CHECK(sp.activeSessionId() == second_id);
+    CHECK(sp.listSessions().size() == 2);
+    CHECK(sp.load().size() == 0);
+
+    // 切回第一个会话：消息完整往返
+    CHECK(sp.switchSession(first_id));
+    CHECK(sp.activeSessionId() == first_id);
+    auto loaded = sp.load();
+    CHECK(loaded.size() == 2);
+    CHECK(loaded.messages()[0].content == "第一个会话的消息");
+
+    // 删除 active 会话：非空内容归档，active 自动切到剩余会话
+    CHECK(sp.deleteSession(first_id));
+    CHECK(utils::file::exists(
+        tmp + "/.novelagent/archive/" + first_id + ".json"));
+    CHECK(!utils::file::exists(
+        tmp + "/.novelagent/sessions/" + first_id + ".json"));
+    CHECK(sp.activeSessionId() == second_id);
+    CHECK(sp.listSessions().size() == 1);
+
+    // 删除不存在的会话应返回 false
+    CHECK(!sp.deleteSession("s-nonexistent"));
+
+    utils::file::removeDir(tmp);
+    PASS();
+}
+
+void test_legacy_migration() {
+    TEST("SessionPersistence — 旧版 conversation.json 自动迁移");
+
+    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_legacy_migration";
+    if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
+    ProjectIO::createProjectDir(tmp, "测试");
+
+    // 手写旧版单会话文件，模拟升级前的项目
+    const std::string legacy_path = tmp + "/.novelagent/conversation.json";
+    nlohmann::json legacy = nlohmann::json::array({
+        {{"role", "user"}, {"content", "旧格式的提问"}},
+        {{"role", "assistant"}, {"content", "旧格式的回答"}}});
+    utils::file::writeText(legacy_path, legacy.dump(2));
+
+    FileStorageBackend storage(tmp);
+    agent::SessionPersistence sp(storage);
+
+    // 首次访问触发迁移：旧消息成为首个会话，旧文件被删除
+    auto loaded = sp.load();
+    CHECK(loaded.size() == 2);
+    CHECK(loaded.messages()[0].content == "旧格式的提问");
+    CHECK(!utils::file::exists(legacy_path));
+
+    auto sessions = sp.listSessions();
+    CHECK(sessions.size() == 1);
+    CHECK(!sessions[0].title.empty());
+
+    utils::file::removeDir(tmp);
+    PASS();
+}
+
 // =========================================================================
 // ContextBudgetEvaluator 测试
 // =========================================================================
@@ -268,6 +350,8 @@ int main() {
     // SessionPersistence
     test_session_save_load();
     test_session_fidelity();
+    test_multi_session_lifecycle();
+    test_legacy_migration();
 
     // ContextBudgetEvaluator
     test_evaluate_total_tokens();

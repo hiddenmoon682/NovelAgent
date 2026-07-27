@@ -95,7 +95,7 @@ Rectangle {
             }
         }
 
-        // ── 会话列表 ──
+        // ── 会话列表（来自 bridge.sessionList()，按最近使用降序）──
         ListView {
             id: sessionList
             Layout.fillWidth: true
@@ -105,16 +105,34 @@ Rectangle {
             rightMargin: Theme.gapSm
             spacing: 2
 
-            model: ListModel {
-                ListElement { name: "当前会话"; active: true }
+            model: ListModel { id: sessionsModel }
+
+            function reload() {
+                sessionsModel.clear()
+                if (!bridge.agentReady) return
+                var list = bridge.sessionList()
+                for (var i = 0; i < list.length; ++i) {
+                    sessionsModel.append({ sid: list[i].id, name: list[i].title,
+                                           active: list[i].active })
+                }
             }
+            Component.onCompleted: reload()
 
             delegate: Rectangle {
                 width: sessionList.width - Theme.gapSm * 2
                 height: 36
                 radius: Theme.radiusSm
-                color: model.active ? Theme.bgHover
-                     : sessionMa.containsMouse ? Theme.bgHover : "transparent"
+                color: model.active || rowHover.hovered ? Theme.bgHover : "transparent"
+
+                // HoverHandler 不与 MouseArea 互斥，悬停时同时高亮行 + 显示删除按钮
+                HoverHandler { id: rowHover }
+
+                // 整行点击切换会话（删除按钮的 MouseArea 在其上层，不受影响）
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: if (!model.active) bridge.switchSession(model.sid)
+                }
 
                 RowLayout {
                     anchors { fill: parent; leftMargin: Theme.gapMd; rightMargin: Theme.gapMd }
@@ -131,13 +149,22 @@ Rectangle {
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }
-                }
+                    // 删除按钮：悬停行时可见；删除 active 会话后自动切到最近会话
+                    Label {
+                        text: "\u00d7"
+                        visible: rowHover.hovered
+                        font.pixelSize: 15
+                        color: deleteMa.containsMouse ? Theme.warning : Theme.textFaint
 
-                MouseArea {
-                    id: sessionMa
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
+                        MouseArea {
+                            id: deleteMa
+                            anchors.fill: parent
+                            anchors.margins: -6
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: bridge.deleteSession(model.sid)
+                        }
+                    }
                 }
             }
         }
@@ -177,5 +204,12 @@ Rectangle {
                 }
             }
         }
+    }
+
+    // 会话列表随后端变化刷新（新建/切换/删除/标题自动提取/Agent 重建）
+    Connections {
+        target: bridge
+        function onSessionsChanged() { sessionList.reload() }
+        function onAgentReadyChanged() { sessionList.reload() }
     }
 }

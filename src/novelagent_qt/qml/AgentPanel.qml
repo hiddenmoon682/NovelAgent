@@ -335,7 +335,7 @@ Rectangle {
         }
 
         function onSessionReset() {
-            chatModel.clear()
+            root.reloadHistory()  // 新建会话为空；切换/删除后加载目标会话历史
         }
 
         function onTokenReceived(delta) {

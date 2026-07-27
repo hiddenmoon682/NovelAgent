@@ -51,13 +51,20 @@ void Agent::setSystemPrompt(std::string prompt) {
 
 void Agent::clearMemory() { memory_.clear(); }
 
+void Agent::setTokenBudget(TokenBudget budget) {
+    budget_ = budget;
+    refreshUsage();  // 预算变化后百分比需重算（启动时也借此建立初始用量）
+}
+
 void Agent::resetSession() {
-    // 先归档旧对话，避免下一轮 saveSessionState() 静默覆盖 conversation.json
-    if (persistence_) {
+    // 多会话语义：旧会话保留在列表中（不归档），新建空会话并激活。
+    // 当前会话为空时不新建，避免反复点击堆积空会话。
+    if (persistence_ && !memory_.messages().empty()) {
         try {
-            persistence_->archive(memory_);
+            persistence_->save(memory_);       // 保存当前会话，保留在列表中
+            persistence_->createSession();     // 新建空会话并设为 active（已落盘空数组）
         } catch (const std::exception& e) {
-            spdlog::warn("[Agent] 归档旧会话失败（继续重置）: {}", e.what());
+            spdlog::warn("[Agent] 新建会话落盘失败（继续重置内存）: {}", e.what());
         }
     }
 
@@ -70,15 +77,48 @@ void Agent::resetSession() {
     tracer_.clear();
     last_warnings_.clear();
     progressive_tools_.reset();
+    refreshUsage();
+}
 
-    // 立即落盘空对话，防止重启后恢复出已归档的旧会话
-    if (persistence_) {
-        try {
-            persistence_->save(memory_);
-        } catch (const std::exception& e) {
-            spdlog::warn("[Agent] 重置后落盘失败: {}", e.what());
-        }
+bool Agent::switchSession(const std::string& id) {
+    if (!persistence_) return false;
+    try {
+        if (id == persistence_->activeSessionId()) return true;
+        persistence_->save(memory_);  // 切走前保存当前会话
+        if (!persistence_->switchSession(id)) return false;
+    } catch (const std::exception& e) {
+        spdlog::warn("[Agent] 切换会话失败: {}", e.what());
+        return false;
     }
+    reloadActiveSession();
+    return true;
+}
+
+bool Agent::deleteSession(const std::string& id) {
+    if (!persistence_) return false;
+    bool was_active = false;
+    try {
+        was_active = (id == persistence_->activeSessionId());
+        if (!persistence_->deleteSession(id)) return false;
+    } catch (const std::exception& e) {
+        spdlog::warn("[Agent] 删除会话失败: {}", e.what());
+        return false;
+    }
+    // 删除非 active 会话不影响当前对话；删除 active 时持久层已切好新 active，重载即可
+    if (was_active) reloadActiveSession();
+    return true;
+}
+
+void Agent::reloadActiveSession() {
+    std::string prompt = memory_.systemPrompt();
+    memory_.clear();
+    memory_.setSystemPrompt(std::move(prompt));
+
+    tracer_.clear();
+    last_warnings_.clear();
+    progressive_tools_.reset();
+
+    loadSessionState();  // 从 active 会话恢复消息（空会话则保持空，内部已刷新用量）
 }
 
 // ===========================================================================
@@ -170,12 +210,19 @@ void Agent::saveSessionState() {
 void Agent::loadSessionState() {
     if (!persistence_) return;
     auto loaded = persistence_->load();
-    if (loaded.messages().empty()) return;  // 无历史可恢复，保持当前状态
+    if (!loaded.messages().empty()) {
+        // 只恢复对话消息；system prompt 以本次启动装配的为准（文件中也不存储 system）
+        auto snapshot = loaded.checkpoint();
+        snapshot.system_prompt = memory_.systemPrompt();
+        memory_.restore(snapshot);
+    }
+    refreshUsage();
+}
 
-    // 只恢复对话消息；system prompt 以本次启动装配的为准（文件中也不存储 system）
-    auto snapshot = loaded.checkpoint();
-    snapshot.system_prompt = memory_.systemPrompt();
-    memory_.restore(snapshot);
+void Agent::refreshUsage() {
+    auto eval = budget_evaluator_.evaluate(memory_, budget_, memory_.systemPrompt(),
+                                           client_->config().model, calibrator_);
+    usage_ = ContextUsage{eval.total_tokens, budget_.usagePercent(eval.total_tokens)};
 }
 
 
@@ -318,6 +365,8 @@ llm::LLMResponse Agent::process(const std::string& input,
         } catch (const std::exception& e) {
             spdlog::warn("[Agent] 会话落盘失败（不影响本轮回复）: {}", e.what());
         }
+
+        refreshUsage();  // 本轮对话后刷新用量快照（供状态栏展示）
 
         return result.raw_response;
     } catch (const std::exception& e) {

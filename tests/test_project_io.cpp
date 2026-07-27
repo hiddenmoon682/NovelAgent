@@ -240,22 +240,6 @@ void test_chapter_read_missing() {
     PASS();
 }
 
-void test_conversation() {
-    TEST("conversation append/load");
-
-    ProjectIO::saveConversation(kTestDir, nlohmann::json::array());
-    ProjectIO::appendConversation(kTestDir, "user", "Write chapter one");
-    ProjectIO::appendConversation(kTestDir, "assistant", "Sure");
-
-    auto conv = ProjectIO::loadConversation(kTestDir);
-    CHECK(conv.is_array());
-    CHECK(conv.size() == 2);
-    CHECK(conv[0]["role"] == "user");
-    CHECK(conv[1]["content"] == "Sure");
-
-    PASS();
-}
-
 void test_loadJsonFile_edge_cases() {
     TEST("loadJsonFile edge cases");
 
@@ -301,7 +285,6 @@ int main() {
     test_legacy_load_migration();
     test_chapter_read_write();
     test_chapter_read_missing();
-    test_conversation();
     test_loadJsonFile_edge_cases();
     test_pm_create_open_and_validate();
 

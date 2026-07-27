@@ -35,7 +35,7 @@ constexpr const char* kChaptersDir = ProjectIO::kChaptersDirName;            // 
 constexpr const char* kAgentDir = ProjectIO::kAgentDirName;                  // Agent 内部数据目录（隐藏）
 
 // .novelagent 子目录下的文件名称（Agent 内部数据，不参与项目设定 staleness 检测，故不导出）。
-constexpr const char* kConversationJson = "conversation.json"; // Agent 对话历史
+// 对话历史已迁移为 sessions/ 多会话布局，由 SessionPersistence 全权管理，此处不再预建。
 constexpr const char* kSummariesJson = "summaries.json";       // 摘要/缓存数据
 constexpr const char* kStateJson = "state.json";               // Agent 运行状态
 
@@ -112,7 +112,6 @@ void ProjectIO::createProjectDir(const std::string& path, const std::string& tit
     writeIfMissing(fu::joinPath(path, kStyleJson), Style{});
 
     const std::string novelAgentDir = ProjectIO::agentDir(path);
-    writeIfMissing(fu::joinPath(novelAgentDir, kConversationJson), json::array());
     writeIfMissing(fu::joinPath(novelAgentDir, kSummariesJson), json::object());
     writeIfMissing(fu::joinPath(novelAgentDir, kStateJson), json::object());
 
@@ -291,37 +290,4 @@ void ProjectIO::writeChapter(
 // .novelagent 目录路径，用于存储对话历史、摘要缓存、Agent 状态等。
 std::string ProjectIO::agentDir(const std::string& projectPath) {
     return fu::joinPath(projectPath, kAgentDir);
-}
-
-// ── 对话历史 ──
-
-// 加载对话历史 JSON 数组。
-// 文件不存在或不是数组时返回空数组。
-json ProjectIO::loadConversation(const std::string& projectPath) {
-    const std::string convPath = fu::joinPath(agentDir(projectPath), kConversationJson);
-    const auto j = loadJsonFile(convPath);
-    if (j && j->is_array()) {
-        return *j;
-    }
-    return json::array();
-}
-
-// 向对话历史追加一条消息。
-// 先加载现有对话 → 拼入新消息 → 写回磁盘。
-void ProjectIO::appendConversation(
-    const std::string& projectPath,
-    const std::string& role,
-    const std::string& content) {
-    json conv = loadConversation(projectPath);
-    conv.push_back({
-        {"role", role},
-        {"content", content}
-    });
-    saveConversation(projectPath, conv);
-}
-
-// 覆盖保存完整对话历史到 .novelagent/conversation.json。
-void ProjectIO::saveConversation(const std::string& projectPath, const json& conversation) {
-    const std::string convPath = fu::joinPath(agentDir(projectPath), kConversationJson);
-    saveJsonFile(convPath, conversation);
 }

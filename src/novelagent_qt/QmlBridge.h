@@ -65,6 +65,12 @@ public:
     Q_INVOKABLE void sendMessage(const QString& text);
     Q_INVOKABLE void cancelRequest();
     Q_INVOKABLE void newSession();
+    // 会话列表（按最近使用降序）：[{id, title, active, updatedAt}, ...]；未就绪返回空。
+    Q_INVOKABLE QVariantList sessionList() const;
+    // 切换到指定会话（保存当前会话后重载）；生成中/未就绪返回 false。
+    Q_INVOKABLE bool switchSession(const QString& sessionId);
+    // 删除指定会话（内容归档到 archive/）；删除 active 会话时自动切换。
+    Q_INVOKABLE bool deleteSession(const QString& sessionId);
     // 当前内存中的对话历史（启动恢复后供 QML 重建聊天流）：
     // [{role: "user"|"assistant", content, reasoning}, ...]，跳过工具消息与空消息。
     Q_INVOKABLE QVariantList conversationHistory() const;
@@ -106,8 +112,10 @@ signals:
     void toolCallFinished(const QString& toolName, bool ok);
     void responseComplete(const QString& fullText);
     void errorOccurred(const QString& message);
-    // 新会话已创建（旧对话已归档），QML 据此清空聊天流
+    // 新会话已创建或已切换会话，QML 据此重建聊天流
     void sessionReset();
+    // 会话列表变化（新建/切换/删除/标题自动提取后），侧栏据此刷新
+    void sessionsChanged();
 
     // 状态变化
     void agentReadyChanged();

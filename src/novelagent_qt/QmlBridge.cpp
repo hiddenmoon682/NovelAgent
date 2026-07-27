@@ -4,6 +4,7 @@
 
 #include "Bootstrap.h"
 #include "NovelAgentApp.h"
+#include "agent/session/SessionPersistence.h"
 #include "project/Models/Project.h"
 #include "project/ProjectIO.h"
 #include "project/ProjectManager.h"
@@ -155,11 +156,11 @@ QString QmlBridge::providerName() const {
 }
 
 int QmlBridge::totalTokens() const {
-    return 0;
+    return app_ ? app_->agent().contextUsage().total_tokens : 0;
 }
 
 int QmlBridge::contextPercent() const {
-    return 0;
+    return app_ ? app_->agent().contextUsage().percent : 0;
 }
 
 // ── QML 槽 ──
@@ -186,10 +187,57 @@ void QmlBridge::cancelRequest() {
 
 void QmlBridge::newSession() {
     if (!app_ || busy_.load()) return;
-    app_->agent().resetSession();  // 内部先归档旧对话再清空（保留 system prompt）
+    app_->agent().resetSession();  // 旧会话保留在列表中，新建空会话并切换
     emit sessionReset();
+    emit sessionsChanged();
     emit usageChanged();
-    setStatus(QStringLiteral("新会话已创建（旧对话已归档）"));
+    setStatus(QStringLiteral("新会话已创建"));
+}
+
+QVariantList QmlBridge::sessionList() const {
+    QVariantList list;
+    if (!app_) return list;
+    auto* persistence = app_->agent().persistence();
+    if (!persistence) return list;  // 未打开项目时无持久化，无会话列表
+
+    const std::string active = persistence->activeSessionId();
+    for (const auto& s : persistence->listSessions()) {
+        QVariantMap m;
+        m.insert(QStringLiteral("id"), QString::fromStdString(s.id));
+        m.insert(QStringLiteral("title"), s.title.empty()
+                     ? QStringLiteral("新会话")
+                     : QString::fromStdString(s.title));
+        m.insert(QStringLiteral("active"), s.id == active);
+        m.insert(QStringLiteral("updatedAt"), QString::fromStdString(s.updated_at));
+        list.push_back(m);
+    }
+    return list;
+}
+
+bool QmlBridge::switchSession(const QString& sessionId) {
+    if (!app_ || busy_.load()) return false;
+    if (!app_->agent().switchSession(sessionId.toStdString())) return false;
+    emit sessionReset();
+    emit sessionsChanged();
+    emit usageChanged();
+    setStatus(QStringLiteral("已切换会话"));
+    return true;
+}
+
+bool QmlBridge::deleteSession(const QString& sessionId) {
+    if (!app_ || busy_.load()) return false;
+    auto* persistence = app_->agent().persistence();
+    const bool wasActive =
+        persistence && persistence->activeSessionId() == sessionId.toStdString();
+    if (!app_->agent().deleteSession(sessionId.toStdString())) return false;
+    emit sessionsChanged();
+    if (wasActive) {
+        // active 被删后 Agent 已重载新 active 会话，聊天流需重建
+        emit sessionReset();
+        emit usageChanged();
+    }
+    setStatus(QStringLiteral("会话已删除（内容归档到 archive/）"));
+    return true;
 }
 
 QVariantList QmlBridge::conversationHistory() const {
@@ -330,6 +378,7 @@ void QmlBridge::runAgent(std::string input) {
                 emit responseComplete(fullText);
                 emit usageChanged();
                 emit chaptersChanged();
+                emit sessionsChanged();  // 首轮对话后会话标题可能已自动提取
                 if (finishReason == "cancelled")
                     setStatus(QStringLiteral("已取消"));
                 else

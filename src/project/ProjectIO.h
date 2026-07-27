@@ -14,7 +14,7 @@
 //     style.json          — 写作风格配置
 //     chapters/           — 章节 Markdown 文件
 //     .novelagent/
-//       conversation.json — 对话历史
+//       sessions/         — 多会话对话历史（由 SessionPersistence 管理）
 //       summaries.json    — 章节摘要缓存
 //       state.json        — Agent 运行时状态
 
@@ -62,20 +62,6 @@ std::string readChapter(const std::string& projectPath, const std::string& chapt
 
 // 写入章节 Markdown 文件，必要时自动创建父目录。
 void writeChapter(const std::string& projectPath, const std::string& chapterFilePath, const std::string& content);
-
-// ── 对话历史 ──
-
-// 加载 .novelagent/conversation.json，返回 JSON 数组。
-// 每个数组元素包含 role 和 content 字段。
-// 文件不存在时返回空数组。
-nlohmann::json loadConversation(const std::string& projectPath);
-
-// 向对话历史末尾追加一条消息。
-// 先加载现有对话，追加后再写回。
-void appendConversation(const std::string& projectPath, const std::string& role, const std::string& content);
-
-// 覆盖保存完整对话历史。
-void saveConversation(const std::string& projectPath, const nlohmann::json& conversation);
 
 // ── 路径辅助函数 ──
 
