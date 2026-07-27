@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 
 namespace qtui {
 
@@ -406,11 +407,92 @@ void QmlBridge::setVerbose(bool enabled) {
     config_.save();
 }
 
-// ── 以下方法在 Task 4 中实现 ──
-bool QmlBridge::tryAutoStart() { return false; }
-QString QmlBridge::validateProjectDir(const QString&) const { return {}; }
-bool QmlBridge::openProject(const QString&) { return false; }
-bool QmlBridge::createProject(const QString&, const QString&) { return false; }
-QString QmlBridge::lastProjectPath() const { return {}; }
+// ── 项目操作 / 自动启动 ──
+
+QString QmlBridge::validateProjectDir(const QString& path) const {
+    const std::string dir = toLocalPath(path);
+    if (dir.empty()) return QStringLiteral("invalid");
+    ProjectManager pm;
+    if (pm.isValid(dir)) return QStringLiteral("valid");      // 已是小说项目，可打开
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::exists(dir, ec)) return QStringLiteral("new");   // 不存在，可创建
+    if (fs::is_directory(dir, ec) && fs::is_empty(dir, ec))
+        return QStringLiteral("new");                          // 空目录，可创建
+    return QStringLiteral("occupied");                         // 非空且非项目
+}
+
+bool QmlBridge::openProject(const QString& path) {
+    const std::string dir = toLocalPath(path);
+    ProjectManager pm;
+    Project p = pm.open(dir);
+    if (p.title.empty()) {
+        emit errorOccurred(QStringLiteral("无法打开项目（目录中缺少有效的 novel.json）: ")
+                           + QString::fromStdString(dir));
+        return false;
+    }
+    QString err;
+    if (!rebuildApp(activeProviderName(),
+                    std::make_shared<Project>(std::move(p)), &err)) {
+        emit errorOccurred(err);
+        return false;
+    }
+    config_.last_project_path = dir;
+    config_.save();
+    return true;
+}
+
+bool QmlBridge::createProject(const QString& dirPath, const QString& title) {
+    const std::string dir = toLocalPath(dirPath);
+    const std::string name = title.trimmed().toStdString();
+    if (dir.empty() || name.empty()) {
+        emit errorOccurred(QStringLiteral("项目路径和名称不能为空"));
+        return false;
+    }
+    ProjectManager pm;
+    Project p = pm.create(dir, name);
+    if (p.title.empty()) {
+        emit errorOccurred(QStringLiteral("创建项目失败: ") + QString::fromStdString(dir));
+        return false;
+    }
+    QString err;
+    if (!rebuildApp(activeProviderName(),
+                    std::make_shared<Project>(std::move(p)), &err)) {
+        emit errorOccurred(err);
+        return false;
+    }
+    config_.last_project_path = dir;
+    config_.save();
+    return true;
+}
+
+QString QmlBridge::lastProjectPath() const {
+    return QString::fromStdString(config_.last_project_path);
+}
+
+bool QmlBridge::tryAutoStart() {
+    const ProviderConfig* prov = config_.getDefaultProvider();
+    // 缺默认 provider 或无有效 key → 交给 QML 打开首启向导
+    if (!prov || prov->api_key.empty() || isPlaceholderKey(prov->api_key))
+        return false;
+
+    // 上次项目仍有效则自动恢复；无效则以“无项目”状态启动
+    std::shared_ptr<Project> project;
+    if (!config_.last_project_path.empty()) {
+        ProjectManager pm;
+        if (pm.isValid(config_.last_project_path)) {
+            Project p = pm.open(config_.last_project_path);
+            if (!p.title.empty())
+                project = std::make_shared<Project>(std::move(p));
+        }
+    }
+
+    QString err;
+    if (!rebuildApp(config_.default_provider, std::move(project), &err)) {
+        spdlog::warn("[QmlBridge] 自动启动失败: {}", err.toStdString());
+        return false;
+    }
+    return true;
+}
 
 } // namespace qtui
