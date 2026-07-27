@@ -2,7 +2,6 @@
 
 #include "novelagent_qt/QmlApp.h"
 #include "novelagent_qt/QmlBridge.h"
-#include "NovelAgentApp.h"
 
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
@@ -12,7 +11,7 @@
 
 namespace qtui {
 
-int runQmlApp(int argc, char** argv, NovelAgentApp& novelAgent) {
+int runQmlApp(int argc, char** argv) {
     // Qt Quick Controls 2 样式（Material 风格接近设计稿深色主题）
     qputenv("QT_QUICK_CONTROLS_STYLE", "Material");
 
@@ -20,7 +19,7 @@ int runQmlApp(int argc, char** argv, NovelAgentApp& novelAgent) {
     app.setApplicationName(QStringLiteral("NovelAgent"));
     app.setApplicationVersion(QStringLiteral("1.0.0"));
 
-    QmlBridge bridge(novelAgent.agent(), novelAgent.project());
+    QmlBridge bridge;
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("bridge"), &bridge);

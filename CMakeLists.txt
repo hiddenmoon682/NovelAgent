@@ -57,7 +57,7 @@ set(CORE_SOURCES
 set(TOOLS_SOURCES ${NOVELAGENT_TOOLS})
 
 set(COMMON_LIBS
-    nlohmann_json::nlohmann_json CLI11::CLI11 spdlog::spdlog
+    nlohmann_json::nlohmann_json spdlog::spdlog
     httplib::httplib OpenSSL::SSL OpenSSL::Crypto
 )
 

@@ -18,19 +18,6 @@ if(NOT nlohmann_json_FOUND)
     FetchContent_MakeAvailable(json)
 endif()
 
-# --- CLI11 ---
-find_package(CLI11 QUIET)
-if(NOT CLI11_FOUND)
-    FetchContent_Declare(cli11
-        GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
-        GIT_TAG v2.4.2
-        GIT_SHALLOW TRUE
-    )
-    set(CLI11_BUILD_TESTS OFF CACHE INTERNAL "")
-    set(CLI11_BUILD_EXAMPLES OFF CACHE INTERNAL "")
-    FetchContent_MakeAvailable(cli11)
-endif()
-
 # --- spdlog ---
 find_package(spdlog QUIET)
 if(NOT spdlog_FOUND)
