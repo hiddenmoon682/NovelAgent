@@ -9,6 +9,9 @@ Rectangle {
     height: 28
     color: Theme.bgSidebar
 
+    // 点击 Provider·模型区域时发射，由 MainWindow 打开设置对话框
+    signal settingsRequested()
+
     property string statusText: bridge.statusText
 
     RowLayout {
@@ -77,12 +80,21 @@ Rectangle {
             }
         }
 
-        // Provider · 模型
+        // Provider · 模型（点击打开模型设置）
         Label {
-            text: bridge.providerName + " · " + bridge.modelName
+            text: (bridge.providerName === "" ? "未配置" : bridge.providerName)
+                  + " · " + (bridge.modelName === "" ? "—" : bridge.modelName)
             font.family: Theme.fontUi
             font.pixelSize: Theme.sizeCaption
-            color: Theme.textFaint
+            color: providerMa.containsMouse ? Theme.textPrimary : Theme.textFaint
+
+            MouseArea {
+                id: providerMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.settingsRequested()
+            }
         }
     }
 

@@ -7,6 +7,9 @@ Rectangle {
     id: root
     color: Theme.bgSidebar
 
+    // 点击设置齿轮时发射，由 MainWindow 打开设置对话框
+    signal settingsRequested()
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -155,7 +158,7 @@ Rectangle {
                 color: settingsMa.containsMouse ? Theme.bgHover : "transparent"
 
                 ToolTip.visible: settingsMa.containsMouse
-                ToolTip.text: "设置功能开发中"
+                ToolTip.text: "设置"
                 ToolTip.delay: 300
 
                 Label {
@@ -170,6 +173,7 @@ Rectangle {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
+                    onClicked: root.settingsRequested()
                 }
             }
         }

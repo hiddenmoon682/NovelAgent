@@ -252,7 +252,7 @@ Rectangle {
                     topMargin: inputField.topPadding
                 }
                 visible: inputField.text.length === 0 && !inputField.activeFocus
-                text: "输入指令或问题..."
+                text: bridge.agentReady ? "输入指令或问题..." : "请先完成模型配置（左下角设置）"
                 font.family: Theme.fontUi
                 font.pixelSize: Theme.sizeBody
                 color: Theme.textFaint
@@ -282,7 +282,7 @@ Rectangle {
                 Button {
                     id: sendBtn
                     text: bridge.busy ? "取消" : "发送"
-                    enabled: bridge.busy || inputField.text.trim().length > 0
+                    enabled: bridge.agentReady && (bridge.busy || inputField.text.trim().length > 0)
                     onClicked: {
                         if (bridge.busy) {
                             bridge.cancelRequest()
