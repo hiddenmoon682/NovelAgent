@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtCore
 
 ApplicationWindow {
     id: window
@@ -16,6 +17,14 @@ ApplicationWindow {
 
     Material.theme: Material.Dark
     Material.accent: Theme.accent
+
+    Settings {
+        category: "MainWindow"
+        property alias windowX: window.x
+        property alias windowY: window.y
+        property alias windowWidth: window.width
+        property alias windowHeight: window.height
+    }
 
     component WinButton: Button {
         property color hoverColor: Theme.bgHover
