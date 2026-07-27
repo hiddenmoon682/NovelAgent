@@ -5,7 +5,6 @@
 ### 新增功能 — 多会话存储与编排
 - `SessionPersistence.h/.cpp`：全量重写为多会话布局 `.novelagent/sessions/index.json`（active + 会话元信息列表）+ `sessions/<id>.json`（消息数组）；
   新增 `SessionInfo` 结构体和 `listSessions()/activeSessionId()/createSession()/switchSession()/deleteSession()` API；
-  首次访问索引时自动迁移旧版 `conversation.json`（非空则成为首个会话，旧文件删除）；
   首次 save 时从首条 user 消息提取自动标题（UTF-8 安全截断 30 字节）；
   删除会话时非空内容归档到 `archive/<id>.json`，删除 active 会话自动切到最近更新的剩余会话。
 - `Agent.h/.cpp`：新增 `switchSession()/deleteSession()` 会话编排（先保存当前会话再切换/重载）；
@@ -20,10 +19,11 @@
 
 ### 重构 — 旧单会话 API 清理（YAGNI）
 - `ProjectIO.h/.cpp`：删除 `loadConversation/appendConversation/saveConversation` 及 `kConversationJson` 常量；`createProjectDir` 不再预建 `conversation.json`。
+- 旧单会话格式不做兼容迁移（当前阶段无存量用户数据需要兼容）。
 
 ### 测试
 - `test_agent.cpp`：B2 重写为新 sessions 布局验证，新增 `contextUsage().total_tokens > 0` 断言。
-- `test_context_manager.cpp`：新增 `test_multi_session_lifecycle`（新建/切换/删除/归档往返）和 `test_legacy_migration`（旧文件自动迁移）。
+- `test_context_manager.cpp`：新增 `test_multi_session_lifecycle`（新建/切换/删除/归档往返）。
 - `test_project_io.cpp`：删除已无 API 对应的 `test_conversation`。
 - 全量：23/23 通过（排除 deepseek|shell）。
 

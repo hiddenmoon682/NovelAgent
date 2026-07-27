@@ -1,4 +1,4 @@
-// SessionPersistence 实现 — 多会话索引 + 会话文件读写 + 旧格式迁移。
+// SessionPersistence 实现 — 多会话索引 + 会话文件读写。
 
 #include "agent/session/SessionPersistence.h"
 
@@ -137,7 +137,7 @@ nlohmann::json SessionPersistence::loadIndex()
         return idx;
     }
 
-    // 初次使用：建立索引，旧单会话格式自动迁移为首个会话
+    // 初次使用：建立含单个空会话的索引
     utils::file::createDirs(sessionsDir());
     idx = nlohmann::json::object();
     idx["sessions"] = nlohmann::json::array();
@@ -146,20 +146,7 @@ nlohmann::json SessionPersistence::loadIndex()
     std::string id = makeSessionId(ts);
     nlohmann::json entry = {
         {"id", id}, {"title", ""}, {"created_at", ts}, {"updated_at", ts}};
-
-    std::string legacy_path =
-        utils::file::joinPath(storage_.agentDir(), kLegacyConversationFile);
-    nlohmann::json legacy = storage_.loadJson(legacy_path);
-    if (legacy.is_array() && !legacy.empty()) {
-        storage_.saveJson(sessionFile(id), legacy);
-        entry["title"] = deriveTitle(legacy);
-        spdlog::info("[SessionPersistence] 旧版 conversation.json 已迁移为会话 {} ({} 条消息)",
-                     id, legacy.size());
-    } else {
-        storage_.saveJson(sessionFile(id), nlohmann::json::array());
-    }
-    if (utils::file::exists(legacy_path))
-        utils::file::removeFile(legacy_path);
+    storage_.saveJson(sessionFile(id), nlohmann::json::array());
 
     idx["sessions"].push_back(entry);
     idx["active"] = id;

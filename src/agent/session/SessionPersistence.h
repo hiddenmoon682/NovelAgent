@@ -4,11 +4,8 @@
 //
 // 持久化布局（位于 .novelagent/ 下）：
 //   - sessions/index.json   → 会话索引 {active, sessions: [{id,title,created_at,updated_at}]}
-//   - sessions/<id>.json    → 单个会话的完整消息数组（格式同旧 conversation.json）
+//   - sessions/<id>.json    → 单个会话的完整消息数组
 //   - archive/<id>.json     → deleteSession() 归档的已删会话（可手工恢复）
-//
-// 旧单会话格式（.novelagent/conversation.json）在首次访问索引时自动迁移为
-// 首个会话，迁移后删除旧文件。
 //
 // 设计要点：
 //   - system prompt 不持久化——每次启动由 NovelAgentApp 重新组装
@@ -74,7 +71,7 @@ public:
     bool deleteSession(const std::string& id);
 
 private:
-    // 读取索引；不存在时初始化（含旧 conversation.json 自动迁移）。
+    // 读取索引；不存在时初始化为含单个空会话的索引。
     nlohmann::json loadIndex();
     void saveIndex(const nlohmann::json& idx);
     std::string sessionsDir() const;
@@ -86,7 +83,6 @@ private:
 
     static constexpr const char* kSessionsDir = "sessions";
     static constexpr const char* kIndexFile = "index.json";
-    static constexpr const char* kLegacyConversationFile = "conversation.json";
     static constexpr const char* kArchiveDir = "archive";
 };
 

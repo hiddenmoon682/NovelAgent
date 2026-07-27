@@ -35,7 +35,7 @@ constexpr const char* kChaptersDir = ProjectIO::kChaptersDirName;            // 
 constexpr const char* kAgentDir = ProjectIO::kAgentDirName;                  // Agent 内部数据目录（隐藏）
 
 // .novelagent 子目录下的文件名称（Agent 内部数据，不参与项目设定 staleness 检测，故不导出）。
-// 对话历史已迁移为 sessions/ 多会话布局，由 SessionPersistence 全权管理，此处不再预建。
+// 对话历史采用 sessions/ 多会话布局，由 SessionPersistence 全权管理，此处不预建。
 constexpr const char* kSummariesJson = "summaries.json";       // 摘要/缓存数据
 constexpr const char* kStateJson = "state.json";               // Agent 运行状态
 
