@@ -103,6 +103,7 @@ set(NOVELAGENT_TOOLS
     src/agent/tools/RelevantCharacterTools.h src/agent/tools/RelevantCharacterTools.cpp
     src/agent/tools/RelevantSettingTools.h src/agent/tools/RelevantSettingTools.cpp
     src/agent/tools/RelevantWorldRuleTools.h src/agent/tools/RelevantWorldRuleTools.cpp
+    src/agent/tools/SkillTools.h src/agent/tools/SkillTools.cpp
 )
 
 set(NOVELAGENT_SKILL
@@ -110,4 +111,5 @@ set(NOVELAGENT_SKILL
     src/agent/skill/ISkillProvider.h
     src/agent/skill/SkillLoader.h src/agent/skill/SkillLoader.cpp
     src/agent/skill/SkillRegistry.h src/agent/skill/SkillRegistry.cpp
+    src/agent/skill/BuiltinSkills.h src/agent/skill/BuiltinSkills.cpp
 )

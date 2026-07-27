@@ -102,6 +102,12 @@ public:
     Q_INVOKABLE bool createProject(const QString& dirPath, const QString& title);
     Q_INVOKABLE QString lastProjectPath() const;
 
+    // ── 技能管理 ──
+    // 技能列表：[{name, description, emoji, always, enabled}, ...]；未初始化返回空。
+    Q_INVOKABLE QVariantList skillList() const;
+    // 启用/禁用技能并持久化；生成中或技能不存在时返回 false。
+    Q_INVOKABLE bool setSkillEnabled(const QString& name, bool enabled);
+
     // ── 调试 ──
     Q_INVOKABLE void setVerbose(bool enabled);
     Q_INVOKABLE bool verboseEnabled() const { return config_.verbose; }
@@ -123,6 +129,8 @@ signals:
     void agentReadyChanged();
     void providersChanged();
     void projectChanged();
+    // 技能列表或启用状态变化（重建/开关切换/新技能保存后发射）
+    void skillsChanged();
     // 章节数据可能变化（响应完成 / 手动刷新项目后发射）
     void chaptersChanged();
     void statusChanged(const QString& text);

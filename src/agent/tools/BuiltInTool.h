@@ -13,6 +13,9 @@ namespace retrieval {
 class IVectorStore;
 class IEmbeddingGenerator;
 }
+namespace skill {
+class SkillRegistry;
+}
 
 namespace agent {
 
@@ -27,6 +30,7 @@ struct ToolDependencies {
     retrieval::IVectorStore* vector_store = nullptr;
     retrieval::IEmbeddingGenerator* embedding_gen = nullptr;
     LongTermMemoryStore* memory_store = nullptr;   // 长期记忆日志（可选）
+    skill::SkillRegistry* skill_registry = nullptr;
 };
 
 // ============================================================================
