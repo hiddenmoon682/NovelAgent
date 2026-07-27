@@ -56,3 +56,6 @@ _ref/
 
 # MCP 服务配置（个人开发环境相关）
 .mcp.json
+
+# Git worktrees
+.worktrees/
