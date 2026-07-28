@@ -12,6 +12,7 @@
 #include "llm/ILLMClient.h"
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -32,6 +33,12 @@ struct AgentExecutionConfig {
     bool progressive_tool_loading = true;
 };
 
+// 上下文用量快照（供 UI 展示，refreshUsage() 刷新）。
+struct ContextUsage {
+    int total_tokens = 0;  // 当前上下文总 token 数（含 system prompt）
+    int percent = 0;       // 占模型上限的百分比（0~100）
+};
+
 class Agent {
 public:
     Agent(llm::LLMClientFactory& factory, ToolRegistry& registry, llm::IMemory& memory);
@@ -45,13 +52,26 @@ public:
 
     // 注入项目上下文（非拥有，供 ContextAssembler 构建 system prompt）。
     void setProject(const Project* p) { project_ = p; }
-    // 注入 Token 预算配置。
-    void setTokenBudget(TokenBudget budget) { budget_ = budget; }
+    // 注入 Token 预算配置（同时刷新用量快照）。
+    void setTokenBudget(TokenBudget budget);
     const TokenBudget& tokenBudget() const { return budget_; }
     // 注入 Token 校准器（非拥有，可选）。
     void setCalibrator(llm::TokenCounter* cal) { calibrator_ = cal; }
     // 注入会话持久化（非拥有，可选）。
     void setPersistence(SessionPersistence* p) { persistence_ = p; }
+    // 持久化访问器（会话列表查询用；未注入时返回 nullptr）。
+    SessionPersistence* persistence() { return persistence_; }
+    // 注入压缩摘要汇聚回调（可选）。每次应用压缩后携摘要文本调用，
+    // 用于将会话摘要沉淀到长期记忆，避免压缩丢失的信息永久不可找回。
+    void setSummarySink(std::function<void(const std::string&)> sink) {
+        summary_sink_ = std::move(sink);
+    }
+    // 注入 system prompt 提供者（可选）。会话边界（新建/切换/删除重载）
+    // 时重新生成 prompt，使运行期变化的成分（如 save_skill 新增的技能目录）
+    // 在下个会话生效；会话中途不重建，保持 KV cache 稳定。
+    void setSystemPromptProvider(std::function<std::string()> provider) {
+        system_prompt_provider_ = std::move(provider);
+    }
 
     llm::LLMResponse process(const std::string& input,
                               llm::StreamCallbacks callbacks = {});
@@ -60,7 +80,13 @@ public:
 
     const llm::IMemory& memory() const { return memory_; }
     void clearMemory();
+    // 新建会话：保存当前会话（保留在列表中），创建空会话并切换。
+    // 当前会话为空时不新建（避免堆积空会话），仅重置运行时状态。
     void resetSession();
+    // 切换到指定会话：保存当前会话后重载目标会话的消息。
+    bool switchSession(const std::string& id);
+    // 删除指定会话（持久层负责归档）；删除的是 active 会话时自动重载新 active。
+    bool deleteSession(const std::string& id);
 
     // ── 上下文管理 ──
     CompactionResult compactConversation(std::optional<std::string> focus = std::nullopt);
@@ -76,6 +102,9 @@ public:
     // ── 会话持久化 ──
     void saveSessionState();
     void loadSessionState();
+
+    // ── 上下文用量（UI 展示）──
+    ContextUsage contextUsage() const { return usage_; }
 
     // ── 可观测性 ──
     ExecutionTracer& tracer() { return tracer_; }
@@ -105,6 +134,10 @@ private:
                                  llm::IMemory& memory,
                                  llm::StreamCallbacks callbacks);
     void applyCompaction(const CompactionResult& cr);
+    // 清空运行时状态并从 active 会话重载消息（切换/删除会话后使用）。
+    void reloadActiveSession();
+    // 重新评估上下文用量并缓存到 usage_。
+    void refreshUsage();
 
 private:
     llm::LLMClientFactory& factory_;
@@ -120,7 +153,10 @@ private:
     const Project* project_ = nullptr;
     llm::TokenCounter* calibrator_ = nullptr;
     SessionPersistence* persistence_ = nullptr;
+    std::function<void(const std::string&)> summary_sink_;   // 压缩摘要沉淀回调
+    std::function<std::string()> system_prompt_provider_;    // 会话边界 prompt 重建
     std::vector<std::string> last_warnings_;
+    ContextUsage usage_;
 
     ProgressiveToolProvider progressive_tools_;
     ToolPipeline pipeline_;

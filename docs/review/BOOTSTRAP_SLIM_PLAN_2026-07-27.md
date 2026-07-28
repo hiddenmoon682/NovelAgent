@@ -1,7 +1,7 @@
 # Bootstrap.h 瘦身方案 — 将启动配置迁移到 QML 前端
 
 > 生成日期：2026-07-27
-> 状态：**📋 待定 — 方案已设计，尚未执行**
+> 状态：**✅ 已执行（方案 C：整体重建，见 docs/superpowers/plans/2026-07-27-gui-onboarding-settings.md）**
 > 关注方向：激进方案（Bootstrap.h 瘦成骨架，所有配置由 QML 前端接管）
 
 ---

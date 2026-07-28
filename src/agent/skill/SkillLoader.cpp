@@ -1,27 +1,58 @@
 #include "agent/skill/SkillLoader.h"
 
+#include <spdlog/spdlog.h>
+
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
 
 namespace skill {
 
+namespace {
+
+// 剥离行首 UTF-8 BOM（Windows 记事本等编辑器保存的文件首行常见，
+// 不处理会导致 "---" 精确比较失败，frontmatter 整体丢失）
+void stripBom(std::string& line) {
+    if (line.size() >= 3 && line[0] == '\xEF' && line[1] == '\xBB' && line[2] == '\xBF')
+        line.erase(0, 3);
+}
+
+} // namespace
+
 std::vector<SkillMetadata>
 SkillLoader::discover(const std::filesystem::path& dir) const {
     std::vector<SkillMetadata> result;
-    if (!std::filesystem::exists(dir))
+    std::error_code ec;
+    if (!std::filesystem::exists(dir, ec) || ec)
         return result;
 
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(dir)) {
-        if (!entry.is_regular_file() || entry.path().filename() != "SKILL.md")
+    // 带 error_code 的迭代：权限拒绝/符号链接环等异常不得穿透到
+    // setupAgent 炸掉整个 App 构造
+    std::filesystem::recursive_directory_iterator it(
+        dir, std::filesystem::directory_options::skip_permission_denied, ec);
+    if (ec) {
+        spdlog::warn("[SkillLoader] 无法遍历技能目录 {}: {}", dir.string(), ec.message());
+        return result;
+    }
+
+    for (std::filesystem::recursive_directory_iterator end; it != end;
+         it.increment(ec)) {
+        if (ec) {
+            spdlog::warn("[SkillLoader] 技能目录遍历中断 {}: {}", dir.string(), ec.message());
+            break;
+        }
+        const auto& entry = *it;
+        if (!entry.is_regular_file(ec) || ec || entry.path().filename() != "SKILL.md")
             continue;
 
         try {
             auto skill = parseFrontmatter(entry.path());
             if (checkGating(skill))
                 result.push_back(std::move(skill));
-        } catch (...) {
-            // 解析失败的技能静默跳过
+        } catch (const std::exception& e) {
+            // 解析失败的技能跳过，但必须留痕：静默丢弃会让用户无从排查
+            spdlog::warn("[SkillLoader] 技能解析失败，已跳过 {}: {}",
+                         entry.path().string(), e.what());
         }
     }
     return result;
@@ -33,18 +64,26 @@ void SkillLoader::ensureLoaded(SkillMetadata& skill) const {
 
     std::ifstream file(skill.root_dir / "SKILL.md");
     if (!file.is_open()) {
-        skill.content_loaded = true;
+        // 不置位 content_loaded：文件恢复后下次调用仍可重读，
+        // 调用方可据此区分“读取失败”与“正文为空”
+        spdlog::warn("[SkillLoader] 无法读取技能正文: {}",
+                     (skill.root_dir / "SKILL.md").string());
         return;
     }
 
     std::string line;
     bool in_frontmatter = false;
     bool past_frontmatter = false;
+    bool first_line = true;
     std::ostringstream body;
 
     while (std::getline(file, line)) {
         if (!line.empty() && line.back() == '\r')
             line.pop_back();
+        if (first_line) {
+            stripBom(line);
+            first_line = false;
+        }
 
         if (line == "---") {
             if (!in_frontmatter && !past_frontmatter) {
@@ -107,6 +146,7 @@ SkillLoader::parseFrontmatter(const std::filesystem::path& file) const {
 
     std::string line;
     bool in_frontmatter = false;
+    bool first_line = true;
 
     // 当前正在解析的数组字段名
     std::string active_array;
@@ -117,6 +157,10 @@ SkillLoader::parseFrontmatter(const std::filesystem::path& file) const {
     while (std::getline(ifs, line)) {
         if (!line.empty() && line.back() == '\r')
             line.pop_back();
+        if (first_line) {
+            stripBom(line);
+            first_line = false;
+        }
 
         if (line == "---") {
             if (!in_frontmatter) {
@@ -135,9 +179,12 @@ SkillLoader::parseFrontmatter(const std::filesystem::path& file) const {
             if (c == ' ') ++indent;
             else break;
         }
-        std::string trimmed = line.substr(line.find_first_not_of(" \t"));
-        if (trimmed.empty())
+        // 空行/纯空白行直接跳过（find_first_not_of 返回 npos 时
+        // substr(npos) 会抛异常，导致整个技能被丢弃）
+        const auto first_char = line.find_first_not_of(" \t");
+        if (first_char == std::string::npos)
             continue;
+        std::string trimmed = line.substr(first_char);
 
         // 顶层字段（无缩进）
         if (indent == 0) {

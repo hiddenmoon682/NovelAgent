@@ -1,12 +1,22 @@
 #pragma once
 
-// 会话持久化 — 对话历史 + 会话元数据的保存/加载/归档。
+// 会话持久化 — 多会话的保存/加载/切换/删除。
 //
-// Phase 4 架构改进：从 ContextManager 拆分出独立职责。
-// 通过 FileStorageBackend 访问存储（封装项目路径 + 转发 ProjectIO）。
+// 持久化布局（位于 .novelagent/ 下）：
+//   - sessions/index.json   → 会话索引 {active, sessions: [{id,title,created_at,updated_at}]}
+//   - sessions/<id>.json    → 单个会话的完整消息数组
+//   - archive/<id>.json     → deleteSession() 归档的已删会话（可手工恢复）
+//
+// 设计要点：
+//   - system prompt 不持久化——每次启动由 NovelAgentApp 重新组装
+//     （技能/工具存根可能变化，落盘的旧 prompt 会覆盖新组装结果）。
+//   - preserved（/pin）标记随消息一同持久化，跨重启保留。
+//   - 压缩摘要以普通消息形式存在于对话历史中，随会话文件自然恢复。
+//   - 会话标题在首次保存时从首条 user 消息自动提取（UTF-8 安全截断）。
 
-#include "agent/context/ContextManagerTypes.h"
 #include "project/FileStorageBackend.h"
+
+#include <nlohmann/json_fwd.hpp>
 
 #include <string>
 #include <vector>
@@ -18,54 +28,66 @@ class Memory;
 
 namespace agent {
 
-// 会话元数据（跨重启恢复的状态）。
-//
-// 与 conversation.json（完整对话历史）配对存储为 session_meta.json，
-// 使 /exit 后重启可以无缝恢复上下文管理器的内部状态（摘要、token 统计等）。
-struct SessionMeta {
-    std::string compacted_summary;          //  LLM 生成的压缩摘要文本（空 = 无）
-    int compaction_marker = 0;              //  被 compact() 压缩的消息数，/rewind 跨边界检测用
-    SessionTokenState token_state;          //  累计 token 消耗统计（输入/输出/请求数）
-    std::vector<size_t> preserved_indices;  //  /pin 保留的消息在 conversation 中的索引
-    int64_t project_mtime = 0;              //  novel.json 最后修改时间戳（检测设定变更）
+// 会话元信息（index.json 中的一条记录）。
+struct SessionInfo {
+    std::string id;
+    std::string title;       // 空 = 尚无用户消息（前端显示"新会话"）
+    std::string created_at;  // ISO 8601 UTC
+    std::string updated_at;  // ISO 8601 UTC
 };
 
-// 会话持久化管理器。
-//
-// 两份持久化文件（均位于 .novelagent/ 下）：
-//   - conversation.json → save()/load()，完整对话历史（Messages JSON 数组）
-//   - session_meta.json  → saveMeta()/loadMeta()，轻量元数据（摘要/token/章节等）
-//
-// 分离设计的好处：元数据很小（<1KB），启动时快速读取恢复上下文状态；
-// 对话历史可能很大（>100KB），按需加载。
+// 会话持久化管理器。所有方法按需读取 index.json（低频路径，无内存缓存）。
 class SessionPersistence {
 public:
     // 构造函数注入存储后端。
     explicit SessionPersistence(FileStorageBackend& storage)
         : storage_(storage) {}
 
-    // 保存完整对话历史到 .novelagent/conversation.json。
+    // ── 当前 active 会话的读写 ──
+
+    // 保存完整对话历史到 active 会话文件（全量覆盖，原子写）；
+    // 同时刷新 updated_at，并在标题为空时从首条 user 消息自动提取标题。
     void save(const llm::IMemory& memory);
 
-    // 从 .novelagent/conversation.json 加载对话历史。
+    // 加载 active 会话的对话历史（不含 system prompt）。
     llm::Memory load();
 
-    // 归档当前对话到 .novelagent/archive/conversation_<timestamp>.json。
-    void archive(const llm::IMemory& memory);
+    // ── 会话管理 ──
 
-    // ── 会话元数据（跨重启恢复）──
+    // 会话列表（按 updated_at 降序，最近使用的在前）。
+    std::vector<SessionInfo> listSessions();
 
-    // 保存会话元数据到 .novelagent/session_meta.json。
-    void saveMeta(const SessionMeta& meta);
+    // 当前 active 会话 id。
+    std::string activeSessionId();
 
-    // 加载会话元数据，如果文件不存在返回默认值。
-    SessionMeta loadMeta() const;
+    // 新建空会话并设为 active，返回新会话 id。
+    std::string createSession();
+
+    // 将指定会话设为 active；id 不存在返回 false。
+    bool switchSession(const std::string& id);
+
+    // 删除指定会话：非空内容归档到 archive/<id>.json，再从索引移除。
+    // 删除的是 active 会话时自动切到最近更新的剩余会话（一个不剩则新建空会话）。
+    bool deleteSession(const std::string& id);
 
 private:
+    // 读取索引；不存在或损坏时扫描 sessions/ 目录重建（绝不丢弃既有会话文件）。
+    // 返回的索引保证：active 为字符串且存在于 sessions 列表，每条 entry 含非空字符串 id。
+    nlohmann::json loadIndex();
+    // 校验索引结构完整性（active 类型、entry 字段、active 引用完整性）。
+    bool indexValid(const nlohmann::json& idx) const;
+    // 扫描 sessions/ 目录重建索引；尽量从损坏索引中回收元数据。
+    nlohmann::json rebuildIndexFromDisk(const nlohmann::json& damaged);
+    void saveIndex(const nlohmann::json& idx);
+    std::string sessionsDir() const;
+    std::string sessionFile(const std::string& id) const;
+    // 由时间戳生成文件名安全的会话 id，同秒冲突时追加序号。
+    std::string makeSessionId(const std::string& timestamp) const;
+
     FileStorageBackend& storage_;
 
-    static constexpr const char* kConversationFile = "conversation.json";
-    static constexpr const char* kSessionMetaFile = "session_meta.json";
+    static constexpr const char* kSessionsDir = "sessions";
+    static constexpr const char* kIndexFile = "index.json";
     static constexpr const char* kArchiveDir = "archive";
 };
 

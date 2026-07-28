@@ -31,6 +31,8 @@ AppConfig AppConfig::loadFromFile(const std::string& path) {
         json j = json::parse(content);
 
         config.default_provider = utils::json::getOrDefault(j, "default_provider", std::string("deepseek"));
+        config.last_project_path = utils::json::getOrDefault(j, "last_project_path", std::string{});
+        config.verbose           = utils::json::getOrDefault(j, "verbose", false);
 
         if (j.contains("providers") && j["providers"].is_object()) {
             for (auto& [name, pj] : j["providers"].items()) {
@@ -41,12 +43,15 @@ AppConfig AppConfig::loadFromFile(const std::string& path) {
         // 配置损坏时不让程序崩溃，记录警告后继续使用空配置。
         spdlog::warn("Failed to load config from {}: {}", path, e.what());
     }
+    config.source_path = path;
     return config;
 }
 
 void AppConfig::save(const std::string& path) const {
     json j;
     j["default_provider"] = default_provider;
+    j["last_project_path"] = last_project_path;
+    j["verbose"] = verbose;
     j["providers"] = json::object();
     for (const auto& [name, provider] : providers) {
         j["providers"][name] = provider;
@@ -73,4 +78,27 @@ void AppConfig::setApiKey(const std::string& provider, const std::string& key) {
 
 void AppConfig::addProvider(const std::string& name, const ProviderConfig& config) {
     providers[name] = config;
+}
+
+std::string AppConfig::defaultPath() {
+    return utils::file::joinPath(utils::file::configDir(), kDefaultConfigFile);
+}
+
+void AppConfig::save() const {
+    save(source_path.empty() ? defaultPath() : source_path);
+}
+
+void AppConfig::ensureDefaultProviders() {
+    auto ensure = [this](const std::string& name, const std::string& url,
+                         const std::string& model) {
+        if (providers.count(name)) return;
+        ProviderConfig p;
+        p.name = name;
+        p.base_url = url;
+        p.model = model;
+        providers[name] = p;
+    };
+    ensure("deepseek", "https://api.deepseek.com", "deepseek-chat");
+    ensure("kimi", "https://api.moonshot.cn/v1", "kimi-k2-turbo-preview");
+    ensure("claude", "https://api.anthropic.com", "claude-sonnet-4-20250514");
 }

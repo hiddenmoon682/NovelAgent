@@ -78,10 +78,12 @@ set(NOVELAGENT_AGENT
     src/agent/prompt/PromptContextBuilder.h src/agent/prompt/PromptContextBuilder.cpp
     # session/
     src/agent/session/SessionPersistence.h src/agent/session/SessionPersistence.cpp
-    src/agent/session/SessionManager.h src/agent/session/SessionManager.cpp
     # index/
     src/agent/index/IIndexService.h
+    src/agent/index/IndexManifest.h src/agent/index/IndexManifest.cpp
     src/agent/index/ProjectIndexService.h src/agent/index/ProjectIndexService.cpp
+    # memory/
+    src/agent/memory/LongTermMemoryStore.h src/agent/memory/LongTermMemoryStore.cpp
     # tools/ (基础工具定义)
     src/agent/tools/BuiltInTool.h src/agent/tools/BuiltInTool.cpp
 )
@@ -94,12 +96,14 @@ set(NOVELAGENT_TOOLS
     src/agent/tools/OutlineTools.h src/agent/tools/OutlineTools.cpp
     src/agent/tools/ShellTools.h src/agent/tools/ShellTools.cpp
     src/agent/tools/SearchMemoryTools.h src/agent/tools/SearchMemoryTools.cpp
+    src/agent/tools/SaveMemoryTool.h src/agent/tools/SaveMemoryTool.cpp
     src/agent/tools/StyleTools.h src/agent/tools/StyleTools.cpp
     src/agent/tools/ChapterContextTools.h src/agent/tools/ChapterContextTools.cpp
     src/agent/tools/GetLatestChapterTool.h src/agent/tools/GetLatestChapterTool.cpp
     src/agent/tools/RelevantCharacterTools.h src/agent/tools/RelevantCharacterTools.cpp
     src/agent/tools/RelevantSettingTools.h src/agent/tools/RelevantSettingTools.cpp
     src/agent/tools/RelevantWorldRuleTools.h src/agent/tools/RelevantWorldRuleTools.cpp
+    src/agent/tools/SkillTools.h src/agent/tools/SkillTools.cpp
 )
 
 set(NOVELAGENT_SKILL
@@ -107,4 +111,5 @@ set(NOVELAGENT_SKILL
     src/agent/skill/ISkillProvider.h
     src/agent/skill/SkillLoader.h src/agent/skill/SkillLoader.cpp
     src/agent/skill/SkillRegistry.h src/agent/skill/SkillRegistry.cpp
+    src/agent/skill/BuiltinSkills.h src/agent/skill/BuiltinSkills.cpp
 )

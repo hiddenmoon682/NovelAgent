@@ -351,9 +351,9 @@ void test_exception_recovery() {
 // =========================================================================
 
 void test_session_persisted_after_message() {
-    TEST("B2 — processUserMessage 后会话增量落盘到 conversation.json");
+    TEST("B2 — processUserMessage 后会话增量落盘到 sessions/<id>.json");
 
-    // 准备一个临时项目目录
+    // 准备一个临时项目目录（先清理残留，避免跨运行干扰断言）
     const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_b2_persist";
     if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
     ProjectIO::createProjectDir(tmp, "B2 测试");
@@ -382,21 +382,28 @@ void test_session_persisted_after_message() {
     agent::SessionPersistence persistence(storage);
     agent.setPersistence(&persistence);
 
-    // 处理前：conversation.json 应为空数组（createProjectDir 初始化的默认值）
-    const std::string convPath = tmp + "/.novelagent/conversation.json";
-    json before = json::parse(utils::file::readText(convPath));
-    CHECK(before.is_array() && before.empty());
+    // 处理前：多会话索引尚未创建（首次 save 时才初始化）
+    const std::string indexPath = tmp + "/.novelagent/sessions/index.json";
+    CHECK(!utils::file::exists(indexPath));
 
     auto response = agent.process("帮我写第二章开头");
     CHECK(response.content == "第二章开头");
 
-    // 处理后：conversation.json 应已被增量保存，含本轮 user + assistant 两条消息
-    json after = json::parse(utils::file::readText(convPath));
+    // 处理后：索引已创建，active 会话文件含本轮 user + assistant 两条消息
+    json index = json::parse(utils::file::readText(indexPath));
+    const std::string activeId = index["active"].get<std::string>();
+    CHECK(!activeId.empty());
+
+    json after = json::parse(utils::file::readText(
+        tmp + "/.novelagent/sessions/" + activeId + ".json"));
     CHECK(after.is_array());
     CHECK(after.size() == 2);
     CHECK(after[0]["role"] == "user");
     CHECK(after[0]["content"] == "帮我写第二章开头");
     CHECK(after[1]["role"] == "assistant");
+
+    // token 用量缓存应已刷新（供 StatusBar 展示）
+    CHECK(agent.contextUsage().total_tokens > 0);
 
     server.stop();
     utils::file::removeDir(tmp);

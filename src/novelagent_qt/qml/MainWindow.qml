@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtCore
 
 ApplicationWindow {
     id: window
@@ -16,6 +17,14 @@ ApplicationWindow {
 
     Material.theme: Material.Dark
     Material.accent: Theme.accent
+
+    Settings {
+        category: "MainWindow"
+        property alias windowX: window.x
+        property alias windowY: window.y
+        property alias windowWidth: window.width
+        property alias windowHeight: window.height
+    }
 
     component WinButton: Button {
         property color hoverColor: Theme.bgHover
@@ -106,6 +115,7 @@ ApplicationWindow {
                 SplitView.preferredWidth: 240
                 SplitView.minimumWidth: 200
                 SplitView.maximumWidth: 320
+                onSettingsRequested: settingsDialog.openAt(0)
             }
 
             AgentPanel {
@@ -121,7 +131,19 @@ ApplicationWindow {
         }
     }
 
-    footer: StatusBar {}
+    footer: StatusBar {
+        onSettingsRequested: settingsDialog.openAt(0)
+    }
+
+    SettingsDialog { id: settingsDialog }
+    WelcomeWizard { id: welcomeWizard }
+
+    // 启动策略：有默认 Provider + 有效 Key → 自动初始化（并恢复上次项目）；
+    // 否则打开首启向导。
+    Component.onCompleted: {
+        if (!bridge.tryAutoStart())
+            welcomeWizard.open()
+    }
 
     Shortcut {
         sequence: "Ctrl+Q"

@@ -23,16 +23,8 @@ struct ContextAssembly {
 };
 
 // ===========================================================================
-// 会话级 Token 统计
+// 上下文用量状态
 // ===========================================================================
-
-// 会话级累计 token 状态（跨多次 assemble() 调用）。
-struct SessionTokenState {
-    int total_input_tokens = 0;             //  跨所有请求的累计输入 token
-    int total_output_tokens = 0;            //  跨所有请求的累计输出 token
-    int request_count = 0;                  //  会话中的请求数
-    int model_context_limit = 131072;       //  模型上下文窗口上限（从 ProviderConfig 获取）
-};
 
 // 上下文用量状态枚举。
 enum class ContextStatus { Normal, Warning, Critical, AutoCompact, Error };

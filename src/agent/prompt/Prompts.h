@@ -3,7 +3,6 @@
 namespace agent::prompt {
 
 extern const char* kMainPersonality;
-extern const char* kSessionPersonality;
 extern const char* kCompactSystemPrompt;
 extern const char* kToolUseInstructions;
 

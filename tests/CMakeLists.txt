@@ -12,7 +12,8 @@ endfunction()
 foreach(name test_main test_models test_project_io test_prompt_context
              test_token_counter test_sse_parser test_llm_client
              test_context_manager test_retrieval test_file_utils test_app_config
-             test_parameter_validator test_thread_pool test_memory)
+             test_parameter_validator test_thread_pool test_memory
+             test_index_manifest)
     add_novelagent_test(${name} novelagent_core)
 endforeach()
 
@@ -20,7 +21,8 @@ endforeach()
 foreach(name test_tool_registry test_agent test_chapter_tools
              test_character_tools test_shell_tools
              test_setting_tools test_world_rule_tools
-             test_outline_tools test_style_tools test_core_loop)
+             test_outline_tools test_style_tools test_core_loop
+             test_skill_registry)
     add_novelagent_test(${name} "novelagent_core;novelagent_tools")
 endforeach()
 
@@ -29,11 +31,13 @@ if(EXISTS "D:/SoftWare/msys2/mingw64/bin")
     set(CORE_TESTS test_main test_models test_project_io test_prompt_context
                    test_token_counter test_sse_parser test_llm_client
                    test_context_manager test_retrieval test_file_utils test_app_config
-                   test_parameter_validator test_thread_pool test_memory)
+                   test_parameter_validator test_thread_pool test_memory
+                   test_index_manifest)
     set(TOOLS_TESTS test_tool_registry test_agent test_chapter_tools
                     test_character_tools test_shell_tools
                     test_setting_tools test_world_rule_tools
-                    test_outline_tools test_style_tools test_core_loop)
+                    test_outline_tools test_style_tools test_core_loop
+                    test_skill_registry)
     set_property(TEST ${CORE_TESTS} ${TOOLS_TESTS}
         APPEND PROPERTY ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:D:/SoftWare/msys2/mingw64/bin")

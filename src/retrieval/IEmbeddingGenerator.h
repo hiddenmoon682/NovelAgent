@@ -29,6 +29,9 @@ public:
 
     // 返回嵌入向量的维度（首次调用后确定）。
     virtual int dimension() const = 0;
+
+    // 返回嵌入模型名称（用于索引清单的模型指纹校验）。
+    virtual std::string modelName() const = 0;
 };
 
 } // namespace retrieval

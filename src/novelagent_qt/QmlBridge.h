@@ -1,34 +1,44 @@
 #pragma once
 
-// QmlBridge — C++ ↔ QML 单一桥接对象。
+// QmlBridge — C++ ↔ QML 单一桥接对象，同时是 NovelAgentApp 的拥有者。
 //
-// 持有 Agent& 与 Project&，通过 Q_INVOKABLE 槽接收 QML 请求，
-// 通过信号将 Agent 的流式输出跨线程推送回 QML 主线程。
+// 生命周期模型（整体重建模式）：
+//   - 构造时仅加载 AppConfig（环境变量覆盖 + 默认 provider 模板补齐），
+//     不构造 NovelAgentApp。
+//   - initialize()/openProject()/createProject()/tryAutoStart() 触发
+//     rebuildApp()：销毁旧 NovelAgentApp、用现有构造函数整体重建。
+//   - agentReady 为 false 时所有 Agent 相关操作被拦截。
 //
 // 线程模型（串行模式）：
 //   - sendMessage() 在独立工作线程中调用 Agent::process()，避免阻塞 UI
 //   - StreamCallbacks 在 HTTP 线程触发，经 QMetaObject::invokeMethod
 //     (Qt::QueuedConnection) 转发到 QML 主线程
 //   - busy_ 原子标志保证同一时刻只有一个请求在执行（串行）
+//   - worker_ 不再 detach；重建/析构前 joinWorker()（仅在 !busy_ 时调用，
+//     此时 process() 已返回，join 只等待线程收尾，不会长阻塞）
 
-#include "agent/core/Agent.h"
-#include "llm/ILLMClient.h"
+#include "config/AppConfig.h"
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariantList>
+#include <QVariantMap>
 
 #include <atomic>
 #include <memory>
 #include <thread>
 
 struct Project;
+class NovelAgentApp;
 
 namespace qtui {
 
 class QmlBridge : public QObject {
     Q_OBJECT
+    Q_PROPERTY(bool agentReady READ agentReady NOTIFY agentReadyChanged)
     Q_PROPERTY(QString projectName READ projectName NOTIFY projectChanged)
+    Q_PROPERTY(QString projectPath READ projectPath NOTIFY projectChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString modelName READ modelName NOTIFY modelChanged)
@@ -37,12 +47,13 @@ class QmlBridge : public QObject {
     Q_PROPERTY(int contextPercent READ contextPercent NOTIFY usageChanged)
 
 public:
-    explicit QmlBridge(agent::Agent& agent, std::shared_ptr<Project> project,
-                       QObject* parent = nullptr);
+    explicit QmlBridge(QObject* parent = nullptr);
     ~QmlBridge() override;
 
     // ── 属性读取 ──
+    bool agentReady() const { return app_ != nullptr; }
     QString projectName() const;
+    QString projectPath() const;
     QString statusText() const { return status_text_; }
     bool busy() const { return busy_.load(); }
     QString modelName() const;
@@ -50,15 +61,56 @@ public:
     int totalTokens() const;
     int contextPercent() const;
 
-    // ── QML 可调用的槽 ──
+    // ── 会话交互（既有）──
     Q_INVOKABLE void sendMessage(const QString& text);
     Q_INVOKABLE void cancelRequest();
     Q_INVOKABLE void newSession();
+    // 会话列表（按最近使用降序）：[{id, title, active, updatedAt}, ...]；未就绪返回空。
+    Q_INVOKABLE QVariantList sessionList() const;
+    // 切换到指定会话（保存当前会话后重载）；生成中/未就绪返回 false。
+    Q_INVOKABLE bool switchSession(const QString& sessionId);
+    // 删除指定会话（内容归档到 archive/）；删除 active 会话时自动切换。
+    Q_INVOKABLE bool deleteSession(const QString& sessionId);
+    // 当前内存中的对话历史（启动恢复后供 QML 重建聊天流）：
+    // [{role: "user"|"assistant", content, reasoning}, ...]，跳过工具消息与空消息。
+    Q_INVOKABLE QVariantList conversationHistory() const;
     Q_INVOKABLE void refreshProject();
+    // 强制全量重建向量索引（清空后重嵌入全部源），后台执行，走 busy_ 串行机制。
+    Q_INVOKABLE void rebuildIndex();
     // 章节列表（按 order 升序）：[{id, title, order, wordCount}, ...]；项目未打开返回空。
     Q_INVOKABLE QVariantList chapterList() const;
     // 读取章节正文 Markdown；失败返回空串并 emit errorOccurred。
     Q_INVOKABLE QString loadChapter(const QString& chapterId);
+
+    // ── 启动 / 初始化 ──
+    // 若默认 provider 已有有效 key 则自动初始化（并恢复上次项目），返回是否成功。
+    Q_INVOKABLE bool tryAutoStart();
+    // 用指定 provider（沿用当前项目）重建 Agent，成功后保存 default_provider。
+    Q_INVOKABLE bool initialize(const QString& providerName);
+
+    // ── Provider 配置 ──
+    Q_INVOKABLE QStringList listProviders() const;
+    Q_INVOKABLE QVariantMap providerInfo(const QString& name) const;
+    Q_INVOKABLE bool saveProvider(const QString& name, const QVariantMap& values);
+    Q_INVOKABLE QString defaultProvider() const;
+    Q_INVOKABLE bool hasUsableApiKey(const QString& name) const;
+
+    // ── 项目操作 ──
+    // 校验目录状态："valid"（可打开）/ "new"（空目录可新建）/ "occupied"（非空且无项目）。
+    Q_INVOKABLE QString validateProjectDir(const QString& path) const;
+    Q_INVOKABLE bool openProject(const QString& path);
+    Q_INVOKABLE bool createProject(const QString& dirPath, const QString& title);
+    Q_INVOKABLE QString lastProjectPath() const;
+
+    // ── 技能管理 ──
+    // 技能列表：[{name, description, emoji, always, enabled}, ...]；未初始化返回空。
+    Q_INVOKABLE QVariantList skillList() const;
+    // 启用/禁用技能并持久化；生成中或技能不存在时返回 false。
+    Q_INVOKABLE bool setSkillEnabled(const QString& name, bool enabled);
+
+    // ── 调试 ──
+    Q_INVOKABLE void setVerbose(bool enabled);
+    Q_INVOKABLE bool verboseEnabled() const { return config_.verbose; }
 
 signals:
     // 流式输出（逐 token 推送到 QML）
@@ -68,9 +120,17 @@ signals:
     void toolCallFinished(const QString& toolName, bool ok);
     void responseComplete(const QString& fullText);
     void errorOccurred(const QString& message);
+    // 新会话已创建或已切换会话，QML 据此重建聊天流
+    void sessionReset();
+    // 会话列表变化（新建/切换/删除/标题自动提取后），侧栏据此刷新
+    void sessionsChanged();
 
     // 状态变化
+    void agentReadyChanged();
+    void providersChanged();
     void projectChanged();
+    // 技能列表或启用状态变化（重建/开关切换/新技能保存后发射）
+    void skillsChanged();
     // 章节数据可能变化（响应完成 / 手动刷新项目后发射）
     void chaptersChanged();
     void statusChanged(const QString& text);
@@ -81,9 +141,19 @@ signals:
 private:
     void setStatus(const QString& text);
     void runAgent(std::string input);
+    // 在当前线程同步执行一次索引（调用方负责线程/busy 约束），异常已内部吐掉。
+    void runIndexUpdate(bool force);
+    void joinWorker();
+    // 整体重建 NovelAgentApp。providerName 必须存在于 config_ 且有 API Key；
+    // project 可为 nullptr（无项目状态）。失败时保持 app_ == nullptr 并写 error。
+    bool rebuildApp(const std::string& providerName,
+                    std::shared_ptr<Project> project, QString* error);
+    // 当前生效的 provider 名：已初始化取运行中配置，否则取 config_ 默认值。
+    std::string activeProviderName() const;
 
-    agent::Agent& agent_;
-    std::shared_ptr<Project> project_;
+    AppConfig config_;
+    std::unique_ptr<NovelAgentApp> app_;
+    std::shared_ptr<Project> project_;   // 与 app_->project() 保持同步
 
     QString status_text_;
     std::atomic<bool> busy_{false};

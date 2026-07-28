@@ -184,6 +184,47 @@ void test_roundtrip_legacy_config_upgraded() {
     PASS();
 }
 
+void test_gui_fields_roundtrip() {
+    TEST("GUI 字段 last_project_path / verbose 保存后可重载");
+    cleanup();
+    AppConfig cfg;
+    cfg.default_provider = "deepseek";
+    cfg.last_project_path = "D:/novels/my-book";
+    cfg.verbose = true;
+    std::string path = kTestDir + "/config.json";
+    cfg.save(path);
+
+    AppConfig loaded = AppConfig::loadFromFile(path);
+    CHECK(loaded.last_project_path == "D:/novels/my-book");
+    CHECK(loaded.verbose == true);
+    // 旧配置没有这两个字段时应取默认值
+    utils::file::writeText(path, R"({"default_provider":"deepseek","providers":{}})");
+    AppConfig legacy = AppConfig::loadFromFile(path);
+    CHECK(legacy.last_project_path.empty());
+    CHECK(legacy.verbose == false);
+    cleanup();
+    PASS();
+}
+
+void test_ensure_default_providers() {
+    TEST("ensureDefaultProviders 补齐缺失模板且不覆盖已有配置");
+    AppConfig cfg;
+    ProviderConfig mine;
+    mine.name = "deepseek";
+    mine.api_key = "sk-real";
+    mine.model = "deepseek-v4-flash";
+    cfg.providers["deepseek"] = mine;
+
+    cfg.ensureDefaultProviders();
+    CHECK(cfg.providers.size() == 3);                       // deepseek + kimi + claude
+    CHECK(cfg.providers["deepseek"].api_key == "sk-real");  // 已有的不被覆盖
+    CHECK(cfg.providers["deepseek"].model == "deepseek-v4-flash");
+    CHECK(cfg.providers["kimi"].base_url == "https://api.moonshot.cn/v1");
+    CHECK(cfg.providers["claude"].base_url == "https://api.anthropic.com");
+    CHECK(cfg.providers["kimi"].api_key.empty());           // 模板不带 key
+    PASS();
+}
+
 int main() {
     std::cout << "=== test_app_config (字段迁移兼容) ===\n\n";
 
@@ -196,6 +237,8 @@ int main() {
     test_thinking_config_roundtrip();
     test_thinking_config_missing();
     test_roundtrip_legacy_config_upgraded();
+    test_gui_fields_roundtrip();
+    test_ensure_default_providers();
 
     cleanup();
 

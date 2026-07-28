@@ -5,7 +5,6 @@
 namespace agent {
 
 // Token 预算配置 + 用量评估。纯值类型，无运行时状态。
-// 累计统计（total_input/output）属于 SessionMeta（持久化层），不在此处。
 struct TokenBudget {
     int model_limit = 131072;    // 模型上下文上限（token），默认约等于 128K 模型
     int warning_pct = 60;        // 触发 Warning 状态的百分比阈值

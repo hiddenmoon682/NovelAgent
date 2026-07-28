@@ -40,6 +40,20 @@ Rectangle {
         return it.type === "tool" ? "assistant" : it.role
     }
 
+    // 从 bridge 重建聊天流（启动恢复上次对话 / 切换项目后刷新）。
+    function reloadHistory() {
+        chatModel.clear()
+        if (!bridge.agentReady) return
+        var hist = bridge.conversationHistory()
+        for (var i = 0; i < hist.length; ++i) {
+            chatModel.append({ type: "message", role: hist[i].role, content: hist[i].content,
+                               reasoning: hist[i].reasoning, streaming: false,
+                               toolName: "", toolStatus: "" })
+        }
+    }
+
+    Component.onCompleted: reloadHistory()
+
     function sendCurrentMessage() {
         var text = inputField.text.trim()
         if (text.length === 0 || bridge.busy) return
@@ -252,7 +266,7 @@ Rectangle {
                     topMargin: inputField.topPadding
                 }
                 visible: inputField.text.length === 0 && !inputField.activeFocus
-                text: "输入指令或问题..."
+                text: bridge.agentReady ? "输入指令或问题..." : "请先完成模型配置（左下角设置）"
                 font.family: Theme.fontUi
                 font.pixelSize: Theme.sizeBody
                 color: Theme.textFaint
@@ -270,6 +284,58 @@ Rectangle {
                     bottomMargin: Theme.gapSm
                 }
 
+                // ── 技能入口：展示已启用数，点击打开管理弹窗 ──
+                Rectangle {
+                    id: skillBtn
+                    visible: bridge.agentReady && bridge.projectPath.length > 0
+                    width: skillBtnLabel.width + Theme.gapMd * 2
+                    height: 26
+                    radius: 13
+                    color: skillMa.containsMouse || skillPopup.visible
+                           ? Theme.bgHover : "transparent"
+                    border.width: 1
+                    border.color: skillPopup.visible ? Theme.accent : Theme.divider
+                    Behavior on color { ColorAnimation { duration: Theme.animFast } }
+                    Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
+
+                    property int enabledCount: 0
+                    property int totalCount: 0
+
+                    function refreshCount() {
+                        var list = bridge.skillList()
+                        totalCount = list.length
+                        var n = 0
+                        for (var i = 0; i < list.length; ++i)
+                            if (list[i].enabled) n++
+                        enabledCount = n
+                    }
+
+                    Component.onCompleted: refreshCount()
+                    Connections {
+                        target: bridge
+                        function onSkillsChanged() { skillBtn.refreshCount() }
+                        function onAgentReadyChanged() { skillBtn.refreshCount() }
+                    }
+
+                    Label {
+                        id: skillBtnLabel
+                        anchors.centerIn: parent
+                        text: skillBtn.totalCount > 0
+                              ? "✦ 技能 " + skillBtn.enabledCount + "/" + skillBtn.totalCount
+                              : "✦ 技能"
+                        font.family: Theme.fontUi
+                        font.pixelSize: Theme.sizeCaption
+                        color: skillBtn.enabledCount > 0 ? Theme.textSecondary : Theme.textFaint
+                    }
+                    MouseArea {
+                        id: skillMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: skillPopup.visible ? skillPopup.close() : skillPopup.open()
+                    }
+                }
+
                 Label {
                     text: "Enter 发送 · Shift+Enter 换行"
                     font.family: Theme.fontUi
@@ -282,7 +348,7 @@ Rectangle {
                 Button {
                     id: sendBtn
                     text: bridge.busy ? "取消" : "发送"
-                    enabled: bridge.busy || inputField.text.trim().length > 0
+                    enabled: bridge.agentReady && (bridge.busy || inputField.text.trim().length > 0)
                     onClicked: {
                         if (bridge.busy) {
                             bridge.cancelRequest()
@@ -313,8 +379,29 @@ Rectangle {
         }
     }
 
+    // 技能管理弹窗：锚在输入区上方
+    SkillPopup {
+        id: skillPopup
+        parent: inputRect
+        x: 0
+        y: -height - Theme.gapSm
+
+        onCreateSkillRequested: {
+            inputField.text = "请使用 create-skill 技能，引导我创建一个新技能"
+            root.sendCurrentMessage()
+        }
+    }
+
     Connections {
         target: bridge
+
+        function onAgentReadyChanged() {
+            root.reloadHistory()
+        }
+
+        function onSessionReset() {
+            root.reloadHistory()  // 新建会话为空；切换/删除后加载目标会话历史
+        }
 
         function onTokenReceived(delta) {
             var idx = root.lastStreamingAssistant()

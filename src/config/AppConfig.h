@@ -73,6 +73,14 @@ struct AppConfig {
     std::string default_provider = "deepseek";
     std::map<std::string, ProviderConfig> providers;
 
+    // ── GUI 持久化字段 ──
+    std::string last_project_path;  // 上次打开的项目目录，启动时自动恢复
+    bool verbose = false;           // 调试日志开关
+
+    // 运行时记录本配置的加载来源文件，不参与序列化。
+    // save() 无参版本回写到该路径，避免“从 A 加载却存到 B”。
+    std::string source_path;
+
     // 从默认位置 ~/.novelagent/config.json 加载配置。
     static AppConfig load();
 
@@ -81,6 +89,16 @@ struct AppConfig {
 
     // 保存到指定路径，必要时自动创建父目录。
     void save(const std::string& path) const;
+
+    // 回写到加载来源（source_path）；从未落盘过则写 defaultPath()。
+    void save() const;
+
+    // 全局配置文件路径：~/.novelagent/config.json
+    static std::string defaultPath();
+
+    // 为 deepseek / kimi / claude 补齐默认模板（base_url + model），
+    // 已存在的 provider 不做任何修改。首次启动 GUI 向导依赖此方法。
+    void ensureDefaultProviders();
 
     // 如果找不到对应 provider，则返回 nullptr。
     const ProviderConfig* getProvider(const std::string& name) const;

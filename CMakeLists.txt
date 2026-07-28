@@ -57,7 +57,7 @@ set(CORE_SOURCES
 set(TOOLS_SOURCES ${NOVELAGENT_TOOLS})
 
 set(COMMON_LIBS
-    nlohmann_json::nlohmann_json CLI11::CLI11 spdlog::spdlog
+    nlohmann_json::nlohmann_json spdlog::spdlog
     httplib::httplib OpenSSL::SSL OpenSSL::Crypto
 )
 
@@ -104,6 +104,9 @@ if(BUILD_GUI)
         src/novelagent_qt/qml/ToolCallCard.qml
         src/novelagent_qt/qml/ReaderPanel.qml
         src/novelagent_qt/qml/StatusBar.qml
+        src/novelagent_qt/qml/SettingsDialog.qml
+        src/novelagent_qt/qml/SkillPopup.qml
+        src/novelagent_qt/qml/WelcomeWizard.qml
         src/novelagent_qt/qml/Theme.qml
         src/novelagent_qt/qml/qmldir
     )

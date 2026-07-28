@@ -16,9 +16,6 @@ const char* kMainPersonality =
     "- 写完后确认内容已正确写入文件\n"
     "- 保持语言流畅、情节紧凑";
 
-const char* kSessionPersonality =
-    "你是一个专业的网络小说写作助手 NovelAgent。";
-
 const char* kCompactSystemPrompt =
     "你是一个小说创作助手的上下文压缩器。用中文对以下对话历史进行双层摘要：\n"
     "\n"
