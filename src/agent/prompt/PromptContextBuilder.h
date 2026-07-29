@@ -87,9 +87,14 @@ struct PromptContext {
     std::string rendered_prompt;
 };
 
+// 上下文构建器（纯静态工具类，无状态）。
 class PromptContextBuilder {
 public:
-    // 为”按章节写作”类任务构建上下文。
+    // 为”按章节写作”类任务构建完整上下文（含角色/设定/规则详情）。
+    // @param project 小说项目数据源。
+    // @param options 筛选规则与数量上限，见 PromptContextOptions。
+    // @return 构建结果；options.chapter_id 为空或项目中找不到
+    //         该章节时返回 nullopt。
     static std::optional<PromptContext> buildForChapter(
         const Project& project,
         const PromptContextOptions& options);
@@ -97,6 +102,7 @@ public:
     // 轻量级上下文构建 — 仅输出章节元数据 + 风格，不注入角色/设定/规则详情。
     // 与 buildForChapter 共享参数校验逻辑，但跳过全部详情注入步骤。
     // rendered_prompt 通常 < 500 tokens，配合 kToolUseInstructions 使用。
+    // @return 同 buildForChapter：chapter_id 为空或章节不存在时返回 nullopt。
     static std::optional<PromptContext> buildLightweight(
         const Project& project,
         const PromptContextOptions& options);

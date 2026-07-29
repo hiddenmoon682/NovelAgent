@@ -25,17 +25,32 @@ namespace llm {
 // 多线程场景请使用 LLMClientFactory 为每个执行上下文创建独立实例。
 class LLMClient : public ILLMClient {
 public:
-    // 构造函数接收 ProviderConfig，拷贝保存。
-    // 不发起网络请求。API Key 有效性在第一次 chat() 调用时验证。
+    // 构造客户端并初始化内部 HttpClient。
+    //
+    // 不发起网络请求。API Key 有效性在第一次 chat() 调用时验证
+    // （validateConfig 只检查字段非空，真实鉴权由 API 返回 401 体现）。
+    //
+    // @param config LLM 提供商配置（base_url / api_key / model 等），按值拷贝保存，
+    //               构造后与调用方持有的对象无关联。
     explicit LLMClient(const ProviderConfig& config);
 
     // ================================================================
     // 核心 API
     // ================================================================
 
-    // 流式调用：实时通过 callbacks 输出，请求完成后返回完整 LLMResponse。
-    // cancel_flag 可选取消标志，非拥有指针。当 *cancel_flag == true 时
-    // 在 SSE 回调中中止请求并返回已累积的部分响应。
+    // 流式调用：实时通过 callbacks 输出增量，请求完成后返回完整 LLMResponse。
+    //
+    // @param messages      对话历史消息列表（不含 system 消息，见 system_prompt）。
+    // @param tools         可用工具定义（Function Calling），空列表表示不启用工具。
+    // @param system_prompt 系统提示词，非空时作为首条 system 消息发送。
+    // @param callbacks     流式回调集合，在 HTTP 接收线程中触发；可全部为空。
+    // @param cancel_flag   可选取消标志，非拥有指针，指向调用方管理的原子布尔值，
+    //                      生命周期须覆盖整个 chat() 调用。当 *cancel_flag == true 时
+    //                      在 SSE 回调中中止请求并返回已累积的部分响应（不抛异常）。
+    //                      默认 nullptr 表示不支持取消。
+    // @return 完整的 LLM 响应（含 content / tool_calls / token 统计）。
+    // @throws std::runtime_error 配置缺失、网络错误、API 非 200、SSE 解析失败
+    //                            或流未正常结束时抛出（取消不视为错误）。
     LLMResponse chat(
         const std::vector<Message>& messages,
         const std::vector<ToolDefinition>& tools = {},
@@ -45,6 +60,12 @@ public:
     );
 
     // 非流式调用：等待完整 JSON 响应后返回。
+    //
+    // @param messages      对话历史消息列表。
+    // @param tools         可用工具定义，空列表表示不启用工具。
+    // @param system_prompt 系统提示词，非空时作为首条 system 消息发送。
+    // @return 完整的 LLM 响应。
+    // @throws std::runtime_error 配置缺失、网络错误、API 错误或 JSON 解析失败时抛出。
     LLMResponse chatNonStreaming(
         const std::vector<Message>& messages,
         const std::vector<ToolDefinition>& tools = {},
@@ -55,10 +76,10 @@ public:
     // 辅助查询
     // ================================================================
 
-    // 返回当前使用的 ProviderConfig
+    // 返回当前使用的 ProviderConfig（只读引用，生命周期与本客户端一致）。
     const ProviderConfig& config() const { return config_; }
 
-    // 返回最近一次调用的错误详情
+    // 返回最近一次 chat()/chatNonStreaming() 调用的错误详情（无错误时为空字符串）。
     std::string lastError() const { return last_error_; }
 
 private:

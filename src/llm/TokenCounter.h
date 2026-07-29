@@ -32,50 +32,83 @@ public:
     // ===================================================================
 
     // 估算单段文本的 token 数（中文: 每字 0.75, 英文: 每词 1.3）。
+    //
+    // @param text UTF-8 编码的文本。
+    // @return 估算的 token 数（启发式，非精确值）。
     static int countTokens(const std::string& text);
 
     // 估算消息列表的总 token 数（含角色标记和工具调用的结构开销）。
+    //
+    // @param messages 待估算的消息列表。
+    // @return 估算的总 token 数。
     static int countMessages(const std::vector<Message>& messages);
 
     // 估算单条消息的 token 数（避免为截断循环构造临时 vector）。
+    //
+    // @param msg 待估算的单条消息。
+    // @return 估算的 token 数（含角色/工具调用结构开销）。
     static int countSingleMessage(const Message& msg);
 
     // 统计文本中的中文字符数（CJK 统一表意文字）。
+    //
+    // @param text UTF-8 编码的文本。
+    // @return CJK 字符个数。
     static int estimateChineseChars(const std::string& text);
 
     // 统计文本中的英文单词数（连续拉丁字母序列）。
+    //
+    // @param text UTF-8 编码的文本。
+    // @return 英文单词个数。
     static int estimateEnglishWords(const std::string& text);
 
     // ===================================================================
     // 校准（实例方法，按模型维护 EMA 修正因子）
     // ===================================================================
 
-    // 注册一次校准观测值。
-    // model      模型名（如 "deepseek-chat", "gpt-4o"）
-    // estimated  请求前的启发式估算 token 数
-    // actual     API 返回的真实 prompt_tokens
+    // 注册一次校准观测值，更新该模型的 EMA 修正因子。
+    //
+    // estimated 或 actual 非正时静默忽略本次观测。
+    //
+    // @param model     模型名（如 "deepseek-chat", "gpt-4o"）。
+    // @param estimated 请求前的启发式估算 token 数。
+    // @param actual    API 返回的真实 prompt_tokens。
     void calibrate(const std::string& model, int estimated, int actual);
 
-    // 将启发式估算值乘以修正因子。
-    // estimated  启发式估算值
-    // model      模型名（空字符串时返回 original 原值）
-    // returns 修正后的估算值
+    // 将启发式估算值乘以该模型的修正因子。
+    //
+    // @param model     模型名（空字符串时返回原值，不做修正）。
+    // @param estimated 启发式估算值。
+    // @return 修正后的估算值。
     int apply(const std::string& model, int estimated) const;
 
-    // countTokens + 校准一步完成（静态版本，calibrator 为 nullptr 时不做校准）。
-    // model      模型名（空字符串时不校准）
-    // calibrator TokenCounter 实例指针（nullptr 时退化到纯估算）
+    // countTokens + 校准一步完成（静态版本）。
+    //
+    // @param text       UTF-8 编码的文本。
+    // @param model      模型名（空字符串时不校准）。
+    // @param calibrator TokenCounter 实例指针，非拥有，可为 nullptr（退化到纯估算）；
+    //                   生命周期由调用方保证覆盖本次调用。
+    // @return 校准后的估算 token 数。
     static int countTokensCalibrated(const std::string& text, const std::string& model,
                                      const TokenCounter* calibrator = nullptr);
+
     // countMessages + 校准一步完成（静态版本）。
+    //
+    // @param messages   待估算的消息列表。
+    // @param model      模型名（空字符串时不校准）。
+    // @param calibrator TokenCounter 实例指针，非拥有，可为 nullptr（退化到纯估算）。
+    // @return 校准后的估算 token 数。
     static int countMessagesCalibrated(const std::vector<Message>& messages, const std::string& model,
                                        const TokenCounter* calibrator = nullptr);
 
     // 查询指定模型的当前修正因子。
-    // 返回 [0.1, 3.0] 范围内的值，默认 1.0（不做修正）。
+    //
+    // @param model 模型名。
+    // @return [0.1, 3.0] 范围内的修正因子，未校准过的模型返回 1.0（不做修正）。
     double getCorrection(const std::string& model) const;
 
     // 重置指定模型的校准数据。
+    //
+    // @param model 模型名（不存在时静默忽略）。
     void reset(const std::string& model);
 
     // 重置所有模型的校准数据。
@@ -91,6 +124,10 @@ public:
         int total_estimated = 0;
         int total_actual = 0;
     };
+    // 查询指定模型的校准统计摘要。
+    //
+    // @param model 模型名（未校准过时返回默认值：correction=1.0, observations=0）。
+    // @return 该模型的校准统计副本。
     CalibrationStats stats(const std::string& model) const;
 
 private:

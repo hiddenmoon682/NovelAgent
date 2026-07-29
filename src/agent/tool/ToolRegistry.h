@@ -133,7 +133,10 @@ private:
     };
 
     std::vector<ToolEntry> tools_;
-    std::vector<std::unique_ptr<BuiltInTool>> builtin_instances_; // 持有类式工具的所有权
+    // 持有类式工具的所有权。WHY：registerBuiltInTool 会把工具包装成
+    // ToolEntry::fn 回调存入 tools_，该回调捕获的是这里的裸指针——
+    // 两个容器必须同生共死且只增不删，否则 tools_ 中的回调将悬空。
+    std::vector<std::unique_ptr<BuiltInTool>> builtin_instances_;
 
     // 按名称查找工具条目，未找到返回 nullptr。
     const ToolEntry* findTool(const std::string& name) const;

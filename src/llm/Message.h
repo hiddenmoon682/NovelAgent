@@ -19,7 +19,10 @@ enum class MessageRole {
     Tool        // 工具调用结果（回传给 AI）
 };
 
-// 角色 ↔ 字符串 转换，供 to_json/from_json 使用
+// 角色 ↔ 字符串 转换，供 to_json/from_json 使用。
+//
+// @param role 消息角色枚举。
+// @return OpenAI 角色字符串（"system"/"user"/"assistant"/"tool"）。
 inline std::string roleToString(MessageRole role) {
     switch (role) {
         case MessageRole::System:    return "system";
@@ -30,6 +33,10 @@ inline std::string roleToString(MessageRole role) {
     return "user";
 }
 
+// 角色字符串 → 枚举转换。
+//
+// @param s OpenAI 角色字符串。
+// @return 对应的枚举值；未知字符串回落为 MessageRole::User。
 inline MessageRole roleFromString(const std::string& s) {
     if (s == "system")    return MessageRole::System;
     if (s == "user")      return MessageRole::User;
@@ -49,8 +56,13 @@ struct ToolCall {
     std::string arguments;      // 函数参数的 JSON 字符串
 };
 
-// ToolCall 的 JSON 序列化。
-// 将展平字段还原为 OpenAI 嵌套格式：{ id, type, function: { name, arguments } }
+// ToolCall 的 JSON 序列化（nlohmann ADL 钩子）。
+//
+// 将展平字段还原为 OpenAI 嵌套格式：{ id, type, function: { name, arguments } }；
+// type 为空时补默认值 "function"。
+//
+// @param j  输出 JSON（被覆盖写入）。
+// @param tc 待序列化的工具调用。
 inline void to_json(nlohmann::json& j, const ToolCall& tc) {
     j = nlohmann::json{
         {"id", tc.id},
@@ -62,8 +74,12 @@ inline void to_json(nlohmann::json& j, const ToolCall& tc) {
     };
 }
 
-// ToolCall 的 JSON 反序列化。
-// 从 OpenAI 嵌套格式提取到展平字段。
+// ToolCall 的 JSON 反序列化（nlohmann ADL 钩子）。
+//
+// 从 OpenAI 嵌套格式提取到展平字段；缺失字段回落到空值，不抛异常。
+//
+// @param j  输入 JSON（OpenAI tool_call 对象）。
+// @param tc 输出的工具调用对象（被覆盖写入）。
 inline void from_json(const nlohmann::json& j, ToolCall& tc) {
     tc.id = j.value("id", "");
     tc.type = j.value("type", "function");
@@ -124,8 +140,13 @@ struct Message {
     }
 };
 
-// Message 的 JSON 序列化。
-// 仅输出非空的可选字段，避免发送空数组/空字符串到 API。
+// Message 的 JSON 序列化（nlohmann ADL 钩子）。
+//
+// 仅输出非空的可选字段，避免发送空数组/空字符串到 API；
+// preserved 为内部标记，不参与序列化。
+//
+// @param j   输出 JSON（被覆盖写入）。
+// @param msg 待序列化的消息。
 inline void to_json(nlohmann::json& j, const Message& msg) {
     // content 为空但 tool_calls 非空时 → 输出 null（OpenAI API 要求）
     nlohmann::json content_val = (msg.content.empty() && !msg.tool_calls.empty())
@@ -148,8 +169,13 @@ inline void to_json(nlohmann::json& j, const Message& msg) {
     }
 }
 
-// Message 的 JSON 反序列化。
-// 缺失的可选字段回落到默认空值。
+// Message 的 JSON 反序列化（nlohmann ADL 钩子）。
+//
+// 缺失的可选字段回落到默认空值，未知 role 回落为 user。
+// 注意：字段存在但类型不匹配（如 content 为 null）时 nlohmann 会抛 type_error。
+//
+// @param j   输入 JSON（OpenAI message 对象）。
+// @param msg 输出的消息对象（被覆盖写入）。
 inline void from_json(const nlohmann::json& j, Message& msg) {
     msg.role = roleFromString(j.value("role", "user"));
     msg.content = j.value("content", "");
@@ -173,7 +199,10 @@ struct ToolDefinition {
     nlohmann::json parameters;     // JSON Schema 参数定义
 };
 
-// ToolDefinition 的 JSON 序列化（OpenAI function calling 格式）。
+// ToolDefinition 的 JSON 序列化（OpenAI function calling 格式，nlohmann ADL 钩子）。
+//
+// @param j  输出 JSON（被覆盖写入）。
+// @param td 待序列化的工具定义。
 inline void to_json(nlohmann::json& j, const ToolDefinition& td) {
     j = nlohmann::json{
         {"type", "function"},
@@ -185,7 +214,12 @@ inline void to_json(nlohmann::json& j, const ToolDefinition& td) {
     };
 }
 
-// ToolDefinition 的 JSON 反序列化。
+// ToolDefinition 的 JSON 反序列化（nlohmann ADL 钩子）。
+//
+// 优先按 OpenAI 嵌套格式（function 对象）解析，否则兼容展平格式。
+//
+// @param j  输入 JSON。
+// @param td 输出的工具定义对象（被覆盖写入）。
 inline void from_json(const nlohmann::json& j, ToolDefinition& td) {
     if (j.contains("function") && j["function"].is_object()) {
         const auto& func = j["function"];
@@ -225,7 +259,13 @@ struct LLMResponse {
     int reasoning_tokens = 0;          // completion_tokens_details.reasoning_tokens — 思维链消耗的 token 数
 };
 
-// LLMResponse 的 JSON 序列化（OpenAI API 完整响应格式，保证 to_json/from_json 对称）。
+// LLMResponse 的 JSON 序列化（nlohmann ADL 钩子）。
+//
+// 输出 OpenAI API 完整响应格式（含 choices[0] 与 usage），
+// 保证 to_json/from_json 对称，可用于响应的落盘与回放。
+//
+// @param j 输出 JSON（被覆盖写入）。
+// @param r 待序列化的响应。
 inline void to_json(nlohmann::json& j, const LLMResponse& r) {
     j = nlohmann::json{
         {"id", r.id},
@@ -265,7 +305,13 @@ inline void to_json(nlohmann::json& j, const LLMResponse& r) {
     }
 }
 
-// LLMResponse 的 JSON 反序列化（从 OpenAI API 原始响应 JSON 提取）。
+// LLMResponse 的 JSON 反序列化（nlohmann ADL 钩子）。
+//
+// 从 OpenAI API 原始响应 JSON 提取 choices[0].message 与 usage；
+// 缺失字段回落到默认值，不抛异常。
+//
+// @param j 输入 JSON（API 原始响应）。
+// @param r 输出的响应对象（被覆盖写入）。
 inline void from_json(const nlohmann::json& j, LLMResponse& r) {
     // 顶层元数据
     r.id = j.value("id", "");

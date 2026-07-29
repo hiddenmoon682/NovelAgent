@@ -18,6 +18,9 @@ namespace agent {
 // 一旦某个类别被激活，在当前会话内保持激活（只增不减）。
 class ContextualToolProvider {
 public:
+    // 构造时注入底层工具提供者。
+    // @param tools 完整工具集的提供者；非拥有引用，
+    //              调用方保证其存活期覆盖本对象。
     explicit ContextualToolProvider(IToolProvider& tools);
 
     // 根据用户输入分析并激活相关工具类别

@@ -9,6 +9,8 @@
 //
 // 字段迁移说明（D2 修复）：
 //   max_context_tokens 原名 context_window（commit 51b7616 重命名）。
+//   重命名的 WHY：旧名 context_window 易被误解为“模型自身的上下文窗口容量”，
+//   而该字段的实际语义是应用层每次请求发送给 LLM 的 token 预算上限。
 //   旧 config.json 仍用 context_window，from_json 会回退读取该旧字段名，
 //   使现有用户配置继续生效；to_json 只写新字段名，保存时自动升级。
 
@@ -81,31 +83,60 @@ struct AppConfig {
     // save() 无参版本回写到该路径，避免“从 A 加载却存到 B”。
     std::string source_path;
 
-    // 从默认位置 ~/.novelagent/config.json 加载配置。
+    // 从默认位置加载配置：优先当前目录 config.json，
+    // 不存在则回退 ~/.novelagent/config.json。
+    //
+    // @return 加载到的配置；两处均不存在时返回默认构造的空配置，
+    //         由调用方继续尝试环境变量等其他来源。
     static AppConfig load();
 
     // 从指定路径加载配置。
+    //
+    // @param path 配置文件路径；无论解析成败与否都记录到 source_path
+    //             供 save() 回写。
+    // @return 加载到的配置；解析失败时记录警告并返回空配置（不抛异常）。
     static AppConfig loadFromFile(const std::string& path);
 
     // 保存到指定路径，必要时自动创建父目录。
+    //
+    // @param path 目标文件路径。
     void save(const std::string& path) const;
 
     // 回写到加载来源（source_path）；从未落盘过则写 defaultPath()。
     void save() const;
 
     // 全局配置文件路径：~/.novelagent/config.json
+    //
+    // @return 基于当前用户主目录拼接的配置文件完整路径。
     static std::string defaultPath();
 
     // 为 deepseek / kimi / claude 补齐默认模板（base_url + model），
     // 已存在的 provider 不做任何修改。首次启动 GUI 向导依赖此方法。
     void ensureDefaultProviders();
 
-    // 如果找不到对应 provider，则返回 nullptr。
+    // 按名称查找 provider 配置。
+    //
+    // @param name provider 名称（如 "deepseek"）。
+    // @return 指向内部 providers 映射中条目的非拥有指针，生命周期随本
+    //         AppConfig 对象；找不到时返回 nullptr。
     const ProviderConfig* getProvider(const std::string& name) const;
+
+    // 获取 default_provider 指向的 provider 配置。
+    //
+    // @return 同 getProvider 的非拥有指针语义；未配置或找不到时返回 nullptr。
     const ProviderConfig* getDefaultProvider() const;
 
-    // 便捷方法：为某个 provider 设置 API Key，不存在时自动创建条目。
+    // 为某个 provider 设置 API Key，不存在时自动创建条目。
+    //
+    // @param provider provider 名称；不存在时由 map 默认构造新条目
+    //                 （注意新条目的 name 字段保持为空）。
+    // @param key      API Key 明文。
     void setApiKey(const std::string& provider, const std::string& key);
+
+    // 新增或覆盖一个 provider 配置。
+    //
+    // @param name   provider 名称（作为 providers 映射的键）。
+    // @param config 完整的 provider 配置，按值拷贝存入。
     void addProvider(const std::string& name, const ProviderConfig& config);
 
     static constexpr const char* kDefaultConfigFile = "config.json";

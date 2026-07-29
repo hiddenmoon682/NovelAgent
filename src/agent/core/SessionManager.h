@@ -35,9 +35,12 @@ class SessionPersistence;
 // 持久化与消息级操作；不感知 LLM 编排与上下文压缩。
 class SessionManager {
 public:
+    // @param memory Agent 共享的记忆引用；非拥有，调用方保证其存活期
+    //               覆盖本类生命周期。
     explicit SessionManager(llm::IMemory& memory) : memory_(memory) {}
 
-    // 注入会话持久化（非拥有，可选）。
+    // 注入会话持久化（非拥有指针，可选；调用方保证存活期。
+    // 未注入时会话相关操作降级为纯内存行为/空操作）。
     void setPersistence(SessionPersistence* p) { persistence_ = p; }
     // 持久化访问器（会话列表查询用；未注入时返回 nullptr）。
     SessionPersistence* persistence() { return persistence_; }
@@ -71,16 +74,27 @@ public:
     bool deleteSession(const std::string& id);
 
     // ── 会话持久化 ──
+
+    // 全量保存当前对话到 active 会话文件；未注入持久化时为空操作。
     void saveSessionState();
+    // 从 active 会话恢复对话消息；system prompt 以内存中当前装配的为准。
+    // 启动路径安全：恢复失败降级为空会话，不抛异常；末尾触发用量刷新回调。
     void loadSessionState();
 
-    // ── 消息级操作 ──
+    // ── 消息级操作（index 均为 all() 视角索引，非法索引返回 false）──
+
+    // 标记/取消标记消息为保留（pin）；标记随会话持久化，跨重启保留。
     bool pinMessage(size_t index);
     bool unpinMessage(size_t index);
+    // 编辑消息内容（仅限 User/Assistant 消息，编辑后清除 pin 标记）。
     bool editMessage(size_t index, std::string new_content);
 
     // ── 对话回滚 ──
+
+    // 回滚对话到指定消息（保留 [0, index]）；index 越界返回 false。
+    // index 之后的 pinned 消息也会被丢弃（记警告日志）。
     bool rewindTo(size_t index);
+    // 全部用户消息的索引（all() 视角），作为可回滚检查点供 UI 展示。
     std::vector<size_t> checkpointIndices() const;
 
 private:

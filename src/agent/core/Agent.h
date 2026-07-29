@@ -26,10 +26,11 @@ struct Project;
 
 namespace agent {
 
+// Agent 执行配置（工具循环限制与加载策略）。
 struct AgentExecutionConfig {
-    int max_tool_rounds = 10;
-    int max_repeated_calls = 3;
-    bool progressive_tool_loading = true;
+    int max_tool_rounds = 10;              // 单次 process 的最大工具调用轮数
+    int max_repeated_calls = 3;            // 同一工具+参数的最大重复次数（防死循环）
+    bool progressive_tool_loading = true;  // 渐进式工具加载开关（false = 全量暴露）
 };
 
 // 上下文用量快照（供 UI 展示，refreshUsage() 刷新）。
@@ -38,25 +39,33 @@ struct ContextUsage {
     int percent = 0;       // 占模型上限的百分比（0~100）
 };
 
+// Agent — LLM 编排门面：驱动“用户输入 → CoreLoop（LLM↔工具）→ 回复”
+// 主流程，并负责上下文预算评估/压缩、状态机、取消与执行轨迹；
+// 会话生命周期与消息级操作薄转发给 SessionManager。
 class Agent {
 public:
+    // @param factory LLM 客户端工厂；非拥有引用，调用方保证存活期覆盖 Agent。
+    // @param registry 工具注册中心；非拥有引用，存活期约定同上。
+    // @param memory 共享记忆；非拥有引用，存活期约定同上。
     Agent(llm::LLMClientFactory& factory, ToolRegistry& registry, llm::IMemory& memory);
     ~Agent();
 
+    // 设置 system prompt（写入共享 memory，替换旧值）。
     void setSystemPrompt(std::string prompt);
     // 返回延迟工具存根（静态文本，供 setup 时注入 system prompt）。
     std::string deferredToolsStub() const { return progressive_tools_.deferredToolsStub(); }
+    // 设置/读取执行配置（工具轮数上限等）。
     void setExecutionConfig(AgentExecutionConfig config) { exec_config_ = config; }
     const AgentExecutionConfig& executionConfig() const { return exec_config_; }
 
-    // 注入项目上下文（非拥有，供 ContextAssembler 构建 system prompt）。
+    // 注入项目上下文（非拥有指针，调用方保证存活期；供构建 system prompt）。
     void setProject(const Project* p) { project_ = p; }
     // 注入 Token 预算配置（同时刷新用量快照）。
     void setTokenBudget(TokenBudget budget);
     const TokenBudget& tokenBudget() const { return budget_; }
-    // 注入 Token 校准器（非拥有，可选）。
+    // 注入 Token 校准器（非拥有指针，可选；调用方保证存活期）。
     void setCalibrator(llm::TokenCounter* cal) { calibrator_ = cal; }
-    // 注入会话持久化（非拥有，可选；转发给 SessionManager）。
+    // 注入会话持久化（非拥有指针，可选；转发给 SessionManager）。
     void setPersistence(SessionPersistence* p) { session_manager_.setPersistence(p); }
     // 持久化访问器（会话列表查询用；未注入时返回 nullptr）。
     SessionPersistence* persistence() { return session_manager_.persistence(); }
@@ -73,12 +82,23 @@ public:
         session_manager_.setSystemPromptProvider(std::move(provider));
     }
 
+    // 处理一轮用户输入：校验 → CoreLoop 多轮工具循环 → 会话落盘 → 刷新用量。
+    // 异常时回滚 memory 到调用前快照并恢复状态机（不抛出）。
+    // @param input 用户输入；空串或校验失败时不调用 LLM。
+    // @param callbacks 流式回调（token 增量/工具事件等），可为空。
+    // @return LLM 最终响应；失败时 finish_reason 标记原因
+    //         （empty_input / invalid_input / state_rejected / error）。
     llm::LLMResponse process(const std::string& input,
                               llm::StreamCallbacks callbacks = {});
+    // 单次命令执行：不携带对话历史（仅 system prompt + 本条命令），
+    // 单次 chat 调用无工具循环，不写入 memory、不落盘会话。
+    // @return LLM 响应；校验失败/异常时 finish_reason 为 invalid_input / error。
     llm::LLMResponse execute(const std::string& command,
                               llm::StreamCallbacks callbacks = {});
 
+    // 共享记忆只读访问。
     const llm::IMemory& memory() const { return memory_; }
+    // 清空全部对话消息与 system prompt。
     void clearMemory();
     // ── 会话管理（薄转发到 SessionManager，公有 API 保持不变）──
 
@@ -91,23 +111,32 @@ public:
     bool deleteSession(const std::string& id) { return session_manager_.deleteSession(id); }
 
     // ── 上下文管理 ──
+
+    // 手动触发对话压缩：较旧消息交给 LLM 生成摘要并替换，应用后触发
+    // 摘要沉淀回调（若已注入 setSummarySink）。
+    // @param focus 可选聚焦方向（如场景/角色），引导摘要侧重点。
+    // @return 压缩统计；messages_compacted 为 0 表示未达压缩条件、未应用。
     CompactionResult compactConversation(std::optional<std::string> focus = std::nullopt);
+    // 消息保留标记与编辑（转发 SessionManager；index 为 all() 视角索引）。
     bool pinMessage(size_t index) { return session_manager_.pinMessage(index); }
     bool unpinMessage(size_t index) { return session_manager_.unpinMessage(index); }
     bool editMessage(size_t index, std::string new_content) {
         return session_manager_.editMessage(index, std::move(new_content));
     }
+    // 最近一次预算评估产生的警告列表（供 UI 展示）。
     std::vector<std::string> contextWarnings() const { return last_warnings_; }
 
-    // ── 对话回滚 ──
+    // ── 对话回滚（转发 SessionManager，语义见其声明）──
     bool rewindTo(size_t index) { return session_manager_.rewindTo(index); }
     std::vector<size_t> checkpointIndices() const { return session_manager_.checkpointIndices(); }
 
-    // ── 会话持久化 ──
+    // ── 会话持久化（转发 SessionManager，语义见其声明）──
     void saveSessionState() { session_manager_.saveSessionState(); }
     void loadSessionState() { session_manager_.loadSessionState(); }
 
     // ── 上下文用量（UI 展示）──
+
+    // 最近一次刷新的上下文用量快照。
     ContextUsage contextUsage() const { return usage_; }
 
     // ── 可观测性 ──
@@ -120,10 +149,15 @@ public:
     bool canAcceptInput() const { return state_.canAcceptInput(); }
 
     // ── 取消支持 ──
+
+    // 请求取消当前处理（CoreLoop 在轮次边界检查并优雅终止）。
     void requestCancel() { cancel_requested_.store(true); }
+    // 取消标志指针（Agent 拥有，随 Agent 存活；供外部监听/置位）。
     std::atomic<bool>* cancelFlag() { return &cancel_requested_; }
+    // 清除取消标志（每次 process 开始时自动调用）。
     void resetCancel() { cancel_requested_.store(false); }
 
+    // ── 底层组件访问器（供装配/测试使用）──
     llm::ILLMClient& client() { return *client_; }
     ToolRegistry& registry() { return registry_; }
     ProgressiveToolProvider& progressiveTools() { return progressive_tools_; }

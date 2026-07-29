@@ -29,21 +29,31 @@ struct MemoryEntry {
     int64_t created_at = 0;   // 创建时间（epoch 秒）
 };
 
+// 长期记忆日志存储。所有公开方法线程安全（内部加锁）。
 class LongTermMemoryStore {
 public:
-    // 初始化并从文件加载日志；文件不存在时从空开始。
+    // 初始化并从文件加载日志；文件不存在或格式无效时从空开始（不抛异常）。
+    // @param path 日志文件路径（通常为 <project>/.novelagent/memories.json）。
     void init(const std::string& path);
 
-    // 追加一条记忆并立即持久化。返回生成的条目 id；未初始化时返回空串。
+    // 追加一条记忆并立即持久化。
+    // @param text 记忆内容；为空时不写入。
+    // @param kind 记忆类型，可选值：fact / preference / event / summary；
+    //             传空串时默认为 fact。
+    // @return 生成的条目 id（如 "mem-1721980800-3"）；text 为空或未
+    //         init() 时不写入并返回空串。
     std::string append(const std::string& text, const std::string& kind);
 
     // 删除指定 id 的记忆并立即持久化。
+    // @return true = 已删除；false = 未找到该 id。
     bool remove(const std::string& id);
 
     // 全部记忆条目的副本（线程安全）。
     std::vector<MemoryEntry> entries() const;
 
+    // 当前记忆条目总数。
     size_t count() const;
+    // 是否已完成 init()（未初始化时 append 会拒绝写入）。
     bool initialized() const;
 
 private:

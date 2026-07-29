@@ -70,11 +70,13 @@ class CoreLoop {
 public:
     // pipeline  工具执行管线（由 Agent 持有，内含 ThreadPool，跨消息复用）
     // state     可选状态机指针（D1.1：工具执行前后触发状态转换，nullptr=不触发）
+    // 所有引用与指针均非拥有，调用方保证其存活期覆盖 CoreLoop 生命周期。
     CoreLoop(llm::ILLMClient& client, IToolProvider& tools,
              ToolPipeline& pipeline, StateMachine* state = nullptr);
 
     // Issue 21+26: 设置外部取消标志（SubAgent 的超时取消信号 / 主 Agent 的 Ctrl+C）。
     // 在每轮循环开始处和 chat() 返回后检查，被设置后立即终止并返回。
+    // cancelled 为非拥有指针，须在 run() 执行期间保持存活；传 nullptr 关闭外部取消。
     void setCancelled(std::atomic<bool>* cancelled) { cancelled_ = cancelled; }
 
     // 执行 tool_call 循环（渐进式加载路径）。

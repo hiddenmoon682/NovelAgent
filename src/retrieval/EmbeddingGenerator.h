@@ -31,10 +31,17 @@ struct EmbeddingConfig {
 // 线程安全：不安全。同一实例不应并发调用。
 class EmbeddingGenerator : public IEmbeddingGenerator {
 public:
-    // 构造函数，接收 ProviderConfig（复用 base_url + api_key）。
+    // 构造生成器，使用默认 EmbeddingConfig。
+    //
+    // 不发起网络请求；API Key 为空时仅告警，到首次 generateEmbeddings 才报错。
+    //
+    // @param provider_config LLM 提供商配置（复用 base_url + api_key），按值拷贝保存。
     explicit EmbeddingGenerator(const ProviderConfig& provider_config);
 
     // 带嵌入配置的构造函数。
+    //
+    // @param provider_config LLM 提供商配置，按值拷贝保存。
+    // @param embed_config    嵌入请求配置（模型名/批量上限/截断长度），按值拷贝保存。
     EmbeddingGenerator(const ProviderConfig& provider_config,
                        const EmbeddingConfig& embed_config);
 
@@ -42,17 +49,28 @@ public:
 
     // ── IEmbeddingGenerator 接口实现 ──
 
+    // 为单条文本生成嵌入向量（内部委托批量版本）。
+    //
+    // @param text 待嵌入文本，超过 max_text_length 时自动截断。
+    // @return 嵌入向量。
+    // @throws std::runtime_error API Key 未配置、网络/API 错误或响应为空时抛出。
     std::vector<float> generateEmbedding(const std::string& text) override;
+
+    // 为多条文本批量生成嵌入向量（按 max_batch_size 自动分批请求）。
+    //
+    // @param texts 待嵌入文本列表，空列表直接返回空结果；超长文本自动截断。
+    // @return 与输入顺序对应的嵌入向量列表。
+    // @throws std::runtime_error API Key 未配置或任一批次请求/解析失败时抛出。
     std::vector<std::vector<float>> generateEmbeddings(
         const std::vector<std::string>& texts) override;
 
-    // 返回嵌入向量的维度（首次调用后确定）。
+    // 返回嵌入向量的维度（首次成功调用后确定，此前返回 0）。
     int dimension() const override { return dimension_; }
 
     // 返回嵌入模型名称。
     std::string modelName() const override { return embed_config_.model; }
 
-    // 返回当前嵌入配置。
+    // 返回当前嵌入配置（只读引用，生命周期与本对象一致）。
     const EmbeddingConfig& embedConfig() const { return embed_config_; }
 
 private:

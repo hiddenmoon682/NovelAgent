@@ -15,13 +15,25 @@ public:
     using ChunkCallback = std::function<void(const StreamChunk& chunk)>;
     using ErrorCallback = std::function<void(const std::string& error)>;
 
+    // 注册 chunk 回调（每解析出一个完整 SSE 事件时触发）。
+    //
+    // @param cb 回调函数，在 feed() 的调用线程中同步触发；可为空（忽略事件）。
     void setOnChunk(ChunkCallback cb) { on_chunk_ = std::move(cb); }
+
+    // 注册解析错误回调（JSON 解析失败或 SSE 流内嵌错误事件时触发）。
+    //
+    // @param cb 回调函数，携带错误描述；可为空（忽略错误）。
     void setOnError(ErrorCallback cb) { on_error_ = std::move(cb); }
 
-    // 喂入原始 SSE 数据块。数据可能包含多个完整事件、不完整事件或两者混合。
+    // 喂入原始 SSE 数据块。
+    //
+    // 数据可能包含多个完整事件、不完整事件或两者混合；
+    // 不完整部分缓存到下次 feed() 拼接。
+    //
+    // @param data 原始 SSE 文本片段（HTTP content_receiver 收到的字节串）。
     void feed(const std::string& data);
 
-    // 重置内部缓冲，准备解析新的流。
+    // 重置内部缓冲，准备解析新的流（已注册的回调保留）。
     void reset();
 
 private:

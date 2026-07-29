@@ -57,8 +57,11 @@ public:
     // 返回值为临时 vector（拼接 system_prompt_ + messages_），仅在低频路径使用。
     virtual std::vector<Message> all() const = 0;
 
+    // 消息总数（system prompt 存在时计入 1 条）。
     virtual size_t size() const = 0;
+    // 是否既无对话消息也无 system prompt。
     virtual bool empty() const = 0;
+    // 最后/最早一条非 system 消息（前置条件：messages() 非空）。
     virtual const Message& back() const = 0;
     virtual const Message& front() const = 0;
 
@@ -88,6 +91,7 @@ public:
     // 状态管理（Memory 自治）
     // ================================================================
 
+    // 清空全部对话消息与 system prompt。
     virtual void clear() = 0;
 
     // 截断到前 N 条消息（保留 [0, keep_count)），丢弃其余。
@@ -97,6 +101,7 @@ public:
     // 从头部删除 count 条非 system 消息（最旧的）。
     virtual void removeOldest(size_t count) = 0;
 
+    // 移除最后一条非 system 消息（前置条件：messages() 非空）。
     virtual void popBack() = 0;
 
     // 消息保留标记（Pin），index 为 all() 视角索引。

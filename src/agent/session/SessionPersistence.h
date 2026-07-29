@@ -71,6 +71,8 @@ public:
     bool deleteSession(const std::string& id);
 
 private:
+    // ── 索引读写与自愈 ──
+
     // 读取索引；不存在或损坏时扫描 sessions/ 目录重建（绝不丢弃既有会话文件）。
     // 返回的索引保证：active 为字符串且存在于 sessions 列表，每条 entry 含非空字符串 id。
     nlohmann::json loadIndex();
@@ -79,6 +81,9 @@ private:
     // 扫描 sessions/ 目录重建索引；尽量从损坏索引中回收元数据。
     nlohmann::json rebuildIndexFromDisk(const nlohmann::json& damaged);
     void saveIndex(const nlohmann::json& idx);
+
+    // ── 路径与 id 生成 ──
+
     std::string sessionsDir() const;
     std::string sessionFile(const std::string& id) const;
     // 由时间戳生成文件名安全的会话 id，同秒冲突时追加序号。

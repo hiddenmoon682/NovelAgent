@@ -57,6 +57,10 @@ public:
 // 受限工具提供者 — 仅暴露白名单中的工具。
 class RestrictedToolProvider : public IToolProvider {
 public:
+    // 构造受限视图。
+    // @param parent 底层完整工具提供者；非拥有引用，
+    //               调用方保证其存活期覆盖本对象。
+    // @param allowed_names 白名单：仅这些名称的工具对外可见/可执行。
     RestrictedToolProvider(IToolProvider& parent,
                            std::vector<std::string> allowed_names);
 

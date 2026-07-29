@@ -22,10 +22,15 @@ class ILLMClient;
 
 class LLMClientFactory {
 public:
+    // 构造工厂，持有 provider 配置的私有副本（构造后不可变）。
+    //
+    // @param config provider 配置，按值传入并移动保存。
     explicit LLMClientFactory(ProviderConfig config);
 
     // 创建新的 LLMClient 实例。
     // 每次调用返回独立实例，调用方可安全地在不同线程并发使用。
+    //
+    // @return 新建实例的拥有权指针，生命周期完全交给调用方。
     std::unique_ptr<ILLMClient> create() const;
 
     // 返回当前 ProviderConfig（只读）。

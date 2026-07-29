@@ -93,6 +93,11 @@ public:
     const Message& front() const override { return messages_.front(); }
 
     Message at(size_t i) const override {
+        // WHY：system_prompt_ 不存在 messages_[0] 而是单独存储，目的是让
+        // messages() 能零拷贝直传 LLMClient::chat（无需每次过滤 system 消息），
+        // 且替换 prompt 时不碰消息数组。代价是对外的 all() 视角索引与内部
+        // messages_ 下标差一个 offset：有 system prompt 时索引 0 映射到它，
+        // 其余索引整体后移一位（pin/unpin/edit 同理）。
         size_t offset = system_prompt_.empty() ? 0 : 1;
         if (i < offset) return Message::system(system_prompt_);
         return messages_[i - offset];

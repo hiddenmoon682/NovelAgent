@@ -35,8 +35,12 @@ using ChunkDataCallback = std::function<bool(const char* data, size_t len)>;
 class StreamingPipeline {
 public:
     // 构造时自动连接内部管道（SSEParser → StreamAccumulator → 回调转发）。
-    // setCallbacks() 可在构造后任意时刻调用——lambda 捕获 this，
-    // 回调触发时总是读取最新的 callbacks_。
+    //
+    // WHY：内部 lambda 只捕获 this，回调触发时才读取成员 callbacks_，
+    // 而不是在构造时把外部回调拷贝进 lambda。这样回调链的布线（一次性，
+    // 构造时完成）与外部回调的注入（setCallbacks，可在 feed() 前后任意时刻
+    // 调用/替换）彻底解耦：reset() 复用管道时无需重新布线，调用方（如
+    // LLMClient::chat）也不必关心构造与注入的先后顺序。
     StreamingPipeline() {
         parser_.setOnChunk([this](const StreamChunk& chunk) {
             accumulator_.feed(chunk);
@@ -71,7 +75,10 @@ public:
     }
 
     // 设置外部回调（转发给调用方——Agent / QmlBridge）。
-    // 可在首次 feed() 之前或之后调用。
+    //
+    // 可在首次 feed() 之前或之后调用（见构造函数注释的布线设计理由）。
+    //
+    // @param cb 回调集合，按值拷贝保存；各回调在 feed() 的调用线程中同步触发。
     void setCallbacks(const StreamCallbacks& cb) { callbacks_ = cb; }
 
     // 喂入原始 SSE 数据块。

@@ -6,28 +6,31 @@
 
 namespace skill {
 
+// 技能声明的斜杠命令（frontmatter commands 列表项）。
 struct SkillCommand {
     std::string name;
     std::string description;
 };
 
+// 单个技能的元数据与按需加载的正文，对应一个 SKILL.md。
 struct SkillMetadata {
-    std::string name;
-    std::string description;
-    std::string emoji;
+    std::string name;             // 技能名（frontmatter 缺省时取目录名）
+    std::string description;      // 一句话描述（列入 <available_skills> 目录）
+    std::string emoji;            // 可选图标（常驻技能标题前缀）
     // always=true: 全文常驻 system prompt（并跳过环境门控）；
     // 否则仅在目录中列出名称/描述，由 LLM 通过 use_skill 工具按需加载。
     bool always = false;
     // 用户级开关：禁用的技能对 LLM 完全隐藏（不进目录、use_skill 拒绝加载）。
     bool enabled = true;
-    std::vector<std::string> required_bins;
-    std::vector<std::string> required_envs;
-    std::vector<std::string> os_restrict;
-    std::filesystem::path root_dir;
-    std::vector<SkillCommand> commands;
+    std::vector<std::string> required_bins;   // 门控：要求 PATH 中存在的可执行文件
+    std::vector<std::string> required_envs;   // 门控：要求非空的环境变量
+    std::vector<std::string> os_restrict;     // 门控：允许的 OS（linux/darwin/win32），空 = 不限
+    std::filesystem::path root_dir;           // 技能目录（SKILL.md 所在目录）
+    std::vector<SkillCommand> commands;       // 技能声明的斜杠命令列表
 
-    mutable bool content_loaded = false;
-    mutable std::string content;
+    // 正文按需加载缓存（mutable：SkillRegistry 的 const 查询接口也能懒加载）
+    mutable bool content_loaded = false;      // 正文是否已读入 content
+    mutable std::string content;              // SKILL.md 正文（frontmatter 之后部分）
 };
 
 } // namespace skill

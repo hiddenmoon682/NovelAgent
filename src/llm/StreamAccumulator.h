@@ -25,13 +25,19 @@ public:
     using DoneCallback = std::function<void(const LLMResponse& response)>;
 
     // 喂入一个流式 chunk，内部累积状态。
-    // 当 chunk 携带 finish_reason 或 is_end 标记时，自动触发 on_done 回调。
+    //
+    // 当 chunk 携带 finish_reason 或 is_end 标记时，自动触发 on_done 回调；
+    // 完成后的后续 chunk（如 [DONE]）不会重复触发。
+    //
+    // @param chunk SSEParser 产出的单个流式增量块。
     void feed(const StreamChunk& chunk);
 
-    // 重置所有累积状态，准备处理新的流。
+    // 重置所有累积状态，准备处理新的流（已注册的 on_done 回调保留）。
     void reset();
 
     // 注册流结束回调（产出完整 LLMResponse 时触发）。
+    //
+    // @param cb 回调函数，在 feed() 的调用线程中同步触发；可为空。
     void setOnDone(DoneCallback cb) { on_done_ = std::move(cb); }
 
 private:

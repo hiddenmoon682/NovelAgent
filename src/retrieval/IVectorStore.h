@@ -41,31 +41,39 @@ public:
 
     // ── CRUD ──
 
+    // 插入单个向量及其元数据（id 已存在时覆盖）。
     virtual void insert(const std::string& id,
                         const EmbeddingVector& embedding,
                         const nlohmann::json& metadata) = 0;
 
+    // 批量插入向量（同 id 条目覆盖已有值）。
     virtual void insertBatch(const std::vector<VectorEntry>& entries) = 0;
 
+    // 删除指定 ID 的向量；存在并删除成功返回 true。
     virtual bool remove(const std::string& id) = 0;
 
+    // 更新指定 ID 的嵌入向量（元数据保留不变）。
     virtual void update(const std::string& id,
                         const EmbeddingVector& embedding) = 0;
 
     // ── 搜索 ──
 
+    // 相似度搜索：返回按 similarity 降序的前 top_k 条结果。
     virtual std::vector<SearchResult> search(
         const EmbeddingVector& query_embedding,
         int top_k = 10) const = 0;
 
     // ── 查询 ──
 
+    // 返回当前存储的向量总数。
     virtual int count() const = 0;
 
+    // 判断指定 ID 的向量是否存在。
     virtual bool contains(const std::string& id) const = 0;
 
     // ── 持久化 ──
 
+    // 将未落盘变更写入持久化后端（默认空实现，供无需显式落盘的后端使用）。
     virtual void flush() {}
 };
 
