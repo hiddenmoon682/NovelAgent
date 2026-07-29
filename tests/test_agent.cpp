@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cassert>
+#include <filesystem>
 #include <iostream>
 #include <set>
 #include <thread>
@@ -373,7 +374,9 @@ void test_session_persisted_after_message() {
     TEST("B2 — processUserMessage 后会话增量落盘到 sessions/<id>.json");
 
     // 准备一个临时项目目录（先清理残留，避免跨运行干扰断言）
-    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_b2_persist";
+    // 路径来自系统临时目录，避免硬编码仓库绝对路径导致盘符绑定
+    const std::string tmp =
+        (std::filesystem::temp_directory_path() / "tmp_test_b2_persist").string();
     if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
     ProjectIO::createProjectDir(tmp, "B2 测试");
 

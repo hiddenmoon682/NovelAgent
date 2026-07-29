@@ -4,6 +4,7 @@
 #include "utils/FileUtils.h"
 
 #include <cassert>
+#include <filesystem>
 #include <iostream>
 #include <cmath>
 #include <cstdio>
@@ -38,6 +39,12 @@ static void cleanup(const std::string& path) {
     }
 }
 
+// 临时文件路径：基于系统临时目录（std::filesystem::temp_directory_path）生成，
+// 避免硬编码仓库绝对路径导致的盘符绑定；文件名保留各用例独立前缀以防互相干扰
+static std::string tmpPath(const std::string& name) {
+    return (std::filesystem::temp_directory_path() / name).string();
+}
+
 // =========================================================================
 // VectorStore 测试
 // =========================================================================
@@ -45,7 +52,7 @@ static void cleanup(const std::string& path) {
 void test_vector_store_init_empty() {
     TEST("VectorStore::init — 新文件从空开始");
 
-    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_vs_empty.json";
+    const std::string db_path = tmpPath("tmp_test_vs_empty.json");
     cleanup(db_path);
 
     retrieval::VectorStore store;
@@ -60,7 +67,7 @@ void test_vector_store_init_empty() {
 void test_vector_store_insert_and_search() {
     TEST("VectorStore — 插入和搜索");
 
-    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_vs_search.json";
+    const std::string db_path = tmpPath("tmp_test_vs_search.json");
     cleanup(db_path);
 
     retrieval::VectorStore store;
@@ -103,7 +110,7 @@ void test_vector_store_insert_and_search() {
 void test_vector_store_persistence() {
     TEST("VectorStore — 持久化往返");
 
-    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_vs_persist.json";
+    const std::string db_path = tmpPath("tmp_test_vs_persist.json");
     cleanup(db_path);
 
     // 创建并写入
@@ -138,7 +145,7 @@ void test_vector_store_persistence() {
 void test_vector_store_remove() {
     TEST("VectorStore — 删除向量");
 
-    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_vs_remove.json";
+    const std::string db_path = tmpPath("tmp_test_vs_remove.json");
     cleanup(db_path);
 
     retrieval::VectorStore store;
@@ -164,7 +171,7 @@ void test_vector_store_remove() {
 void test_vector_store_update() {
     TEST("VectorStore — 更新向量");
 
-    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_vs_update.json";
+    const std::string db_path = tmpPath("tmp_test_vs_update.json");
     cleanup(db_path);
 
     retrieval::VectorStore store;
@@ -190,7 +197,7 @@ void test_vector_store_update() {
 void test_vector_store_batch_insert() {
     TEST("VectorStore — 批量插入");
 
-    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_vs_batch.json";
+    const std::string db_path = tmpPath("tmp_test_vs_batch.json");
     cleanup(db_path);
 
     retrieval::VectorStore store;
@@ -217,7 +224,7 @@ void test_cosine_similarity_basic() {
     TEST("余弦相似度 — 通过搜索间接测试");
 
     // 用 search 间接测试余弦相似度
-    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_vs_cosine.json";
+    const std::string db_path = tmpPath("tmp_test_vs_cosine.json");
     cleanup(db_path);
 
     retrieval::VectorStore store;
@@ -253,7 +260,7 @@ void test_cosine_similarity_basic() {
 void test_vector_store_flush_persists() {
     TEST("VectorStore::flush — 不经 close 即持久化");
 
-    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_vs_flush.json";
+    const std::string db_path = tmpPath("tmp_test_vs_flush.json");
     cleanup(db_path);
 
     retrieval::VectorStore store;
@@ -280,7 +287,7 @@ void test_vector_store_flush_persists() {
 void test_vector_store_flush_clears_dirty() {
     TEST("VectorStore::flush — 成功后清除脏标记");
 
-    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_vs_dirty.json";
+    const std::string db_path = tmpPath("tmp_test_vs_dirty.json");
     cleanup(db_path);
 
     retrieval::VectorStore store;
@@ -304,7 +311,7 @@ void test_vector_store_flush_clears_dirty() {
 void test_vector_store_concurrent_flush() {
     TEST("VectorStore — 并发 insert/flush/search 无竞争");
 
-    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_vs_conc.json";
+    const std::string db_path = tmpPath("tmp_test_vs_conc.json");
     cleanup(db_path);
 
     retrieval::VectorStore store;
@@ -535,7 +542,7 @@ void test_text_chunk_factories() {
 void test_hybrid_search_dedup() {
     TEST("混合检索 — VectorStore 搜索去重");
 
-    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_hybrid.json";
+    const std::string db_path = tmpPath("tmp_test_hybrid.json");
     cleanup(db_path);
 
     retrieval::VectorStore store;
@@ -567,7 +574,7 @@ void test_hybrid_search_dedup() {
 void test_hybrid_search_metadata_filter() {
     TEST("混合检索 — 元数据过滤");
 
-    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_hybrid2.json";
+    const std::string db_path = tmpPath("tmp_test_hybrid2.json");
     cleanup(db_path);
 
     retrieval::VectorStore store;

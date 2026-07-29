@@ -14,6 +14,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -134,8 +135,9 @@ void test_empty_query() {
 void test_execute_with_injected_backend() {
     TEST("search_memory — 注入依赖后端到端检索");
 
+    // 临时向量库放到系统临时目录，避免硬编码仓库绝对路径导致盘符绑定
     const std::string db_path =
-        "D:/C++Code/C++NovelAgent/build/tmp_test_search_memory.json";
+        (std::filesystem::temp_directory_path() / "tmp_test_search_memory.json").string();
     cleanup(db_path);
 
     retrieval::VectorStore store;

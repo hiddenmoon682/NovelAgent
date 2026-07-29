@@ -13,6 +13,7 @@
 #include "retrieval/VectorStore.h"
 #include "utils/FileUtils.h"
 
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -71,8 +72,10 @@ public:
 };
 
 // 建立临时项目目录（含 .novelagent 子目录），返回项目路径。
+// 路径基于系统临时目录生成，避免硬编码仓库绝对路径导致盘符绑定。
 static std::string makeTempProjectDir(const std::string& name) {
-    std::string dir = "D:/C++Code/C++NovelAgent/build/tmp_idx_" + name;
+    std::string dir =
+        (std::filesystem::temp_directory_path() / ("tmp_idx_" + name)).string();
     utils::file::removeDir(dir);
     utils::file::createDirs(dir + "/.novelagent");
     return dir;
@@ -146,7 +149,9 @@ void test_manifest_load_missing_file() {
     TEST("IndexManifest::load — 文件不存在从空开始");
 
     agent::IndexManifest m;
-    m.load("D:/C++Code/C++NovelAgent/build/nonexistent_manifest_xyz.json");
+    // 不存在的路径同样基于系统临时目录拼接，不绑定盘符
+    m.load((std::filesystem::temp_directory_path() /
+            "nonexistent_manifest_xyz.json").string());
     CHECK(m.sources().empty());
     CHECK(m.embeddingModel().empty());
 

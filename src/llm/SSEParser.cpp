@@ -6,6 +6,24 @@
 
 namespace llm {
 
+namespace {
+
+// null 安全读取字符串字段：键缺失或显式 null 时回落默认值。
+//
+// WHY：j.value() 遇显式 null 会抛 type_error.302，部分 provider 对可选
+// 字段（id/finish_reason/function.name 等）会返回显式 null；流式解析需
+// 与非流式 from_json 统一容错策略。此处刻意复制 Message.h::getStringOrDefault
+// 的同语义实现（而非 include 复用），避免 SSEParser 依赖 Message.h 的
+// 实现细节；两处语义须保持一致：非 null 非字符串类型仍抛异常。
+std::string getStringOrDefault(const nlohmann::json& j, const char* key,
+                               const std::string& fallback = "") {
+    auto it = j.find(key);
+    if (it == j.end() || it->is_null()) return fallback;
+    return it->get<std::string>();
+}
+
+} // namespace
+
 // ===========================================================================
 // feed — 接收原始数据，按双换行切分为完整事件
 // ===========================================================================
@@ -109,42 +127,38 @@ void SSEParser::processChunk(const nlohmann::json& j)
     StreamChunk chunk;
 
     // 顶层元数据（仅首个 chunk 携带，后续 chunk 为空字符串/0）
-    chunk.id = j.value("id", "");
-    chunk.model = j.value("model", "");
+    // WHY：字符串字段统一走 null 安全读取，显式 null 回落空串，
+    // 与 Message.h 非流式 from_json 的容错策略保持一致。
+    chunk.id = getStringOrDefault(j, "id");
+    chunk.model = getStringOrDefault(j, "model");
     chunk.created = j.value("created", 0);
 
     const auto& choice = j["choices"][0];
 
-    // finish_reason（仅末个 chunk 携带）
-    if (choice.contains("finish_reason") && choice["finish_reason"].is_string()) {
-        chunk.finish_reason = choice["finish_reason"].get<std::string>();
-    }
+    // finish_reason（仅末个 chunk 携带，中间 chunk 为显式 null）
+    chunk.finish_reason = getStringOrDefault(choice, "finish_reason");
 
     // delta — 文本和工具调用增量
     if (choice.contains("delta") && choice["delta"].is_object()) {
         const auto& delta = choice["delta"];
 
-        // 文本增量
-        if (delta.contains("content") && delta["content"].is_string()) {
-            chunk.content_delta = delta["content"].get<std::string>();
-        }
+        // 文本增量（首个 role chunk 中 content 可为显式 null）
+        chunk.content_delta = getStringOrDefault(delta, "content");
 
         // 思维链增量（DeepSeek thinking 模式）
-        if (delta.contains("reasoning_content") && delta["reasoning_content"].is_string()) {
-            chunk.reasoning_delta = delta["reasoning_content"].get<std::string>();
-        }
+        chunk.reasoning_delta = getStringOrDefault(delta, "reasoning_content");
 
         // 工具调用增量
         if (delta.contains("tool_calls") && delta["tool_calls"].is_array()) {
             for (const auto& tc : delta["tool_calls"]) {
                 ToolCallDelta tcd;
                 tcd.index = tc.value("index", 0);
-                tcd.id = tc.value("id", "");
-                tcd.type = tc.value("type", "function");
+                tcd.id = getStringOrDefault(tc, "id");
+                tcd.type = getStringOrDefault(tc, "type", "function");
                 if (tc.contains("function") && tc["function"].is_object()) {
                     const auto& func = tc["function"];
-                    tcd.function_name = func.value("name", "");
-                    tcd.arguments = func.value("arguments", "");
+                    tcd.function_name = getStringOrDefault(func, "name");
+                    tcd.arguments = getStringOrDefault(func, "arguments");
                 }
                 chunk.tool_call_deltas.push_back(std::move(tcd));
             }

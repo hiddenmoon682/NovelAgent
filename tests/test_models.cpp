@@ -298,7 +298,8 @@ void test_project_serialization() {
     p.created = "2026-05-17T10:00:00Z";
     p.modified = "2026-05-17T14:30:00Z";
     p.metadata["workflow"] = "drafting";
-    p.path = "D:/novels/my-novel";
+    // 仅验证 path 不参与序列化，不触碰文件系统；用无盘符路径避免硬编码盘符
+    p.path = "novels/my-novel";
 
     json j = p;
 

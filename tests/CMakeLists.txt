@@ -27,8 +27,10 @@ foreach(name test_tool_registry test_agent test_chapter_tools
     add_novelagent_test(${name} "novelagent_core;novelagent_tools")
 endforeach()
 
-# DLL 路径
-if(EXISTS "D:/SoftWare/msys2/mingw64/bin")
+# DLL 路径：从 C++ 编译器所在目录推导运行时 DLL 目录（如 msys2 的 mingw64/bin），
+# 避免硬编码本机安装路径，保证跨机器可移植
+get_filename_component(NOVELAGENT_TOOLCHAIN_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+if(WIN32 AND EXISTS "${NOVELAGENT_TOOLCHAIN_BIN}")
     set(CORE_TESTS test_main test_models test_project_io test_prompt_context
                    test_token_counter test_sse_parser test_llm_client
                    test_context_manager test_retrieval test_file_utils test_app_config
@@ -42,7 +44,7 @@ if(EXISTS "D:/SoftWare/msys2/mingw64/bin")
                     test_progressive_tool_provider)
     set_property(TEST ${CORE_TESTS} ${TOOLS_TESTS}
         APPEND PROPERTY ENVIRONMENT_MODIFICATION
-        "PATH=path_list_prepend:D:/SoftWare/msys2/mingw64/bin")
+        "PATH=path_list_prepend:${NOVELAGENT_TOOLCHAIN_BIN}")
 endif()
 
 # 手动执行测试（需 API Key）

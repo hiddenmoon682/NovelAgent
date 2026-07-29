@@ -13,6 +13,7 @@
 #include "utils/FileUtils.h"
 
 #include <cassert>
+#include <filesystem>
 #include <iostream>
 #include <set>
 #include <string>
@@ -33,6 +34,12 @@ static int tests_passed = 0;
 // =========================================================================
 // 辅助
 // =========================================================================
+
+// 临时目录路径：基于系统临时目录（std::filesystem::temp_directory_path）生成，
+// 避免硬编码仓库绝对路径导致的盘符绑定；目录名保留各用例独立前缀以防互相干扰
+static std::string tmpPath(const std::string& name) {
+    return (std::filesystem::temp_directory_path() / name).string();
+}
 
 // 校验消息序列符合 OpenAI 协议：tool 消息必须紧随携带匹配 tool_call_id 的
 // assistant 消息，且每个 tool_call 在下一条非 tool 消息前都有结果。
@@ -81,7 +88,7 @@ private:
 void test_session_save_load() {
     TEST("SessionPersistence — 保存和加载往返");
 
-    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_session_enhanced";
+    const std::string tmp = tmpPath("tmp_test_session_enhanced");
     ProjectIO::createProjectDir(tmp, "测试");
     FileStorageBackend storage(tmp);
 
@@ -102,7 +109,7 @@ void test_session_save_load() {
 void test_session_fidelity() {
     TEST("SessionPersistence — system 不落盘 + reasoning/preserved 往返");
 
-    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_session_fidelity";
+    const std::string tmp = tmpPath("tmp_test_session_fidelity");
     ProjectIO::createProjectDir(tmp, "测试");
     FileStorageBackend storage(tmp);
 
@@ -131,7 +138,7 @@ void test_session_fidelity() {
 void test_multi_session_lifecycle() {
     TEST("SessionPersistence — 多会话新建/切换/删除生命周期");
 
-    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_multi_session";
+    const std::string tmp = tmpPath("tmp_test_multi_session");
     if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
     ProjectIO::createProjectDir(tmp, "测试");
     FileStorageBackend storage(tmp);
@@ -182,7 +189,7 @@ void test_multi_session_lifecycle() {
 void test_delete_last_session() {
     TEST("SessionPersistence — 删除唯一会话自动新建 + 删除非 active 会话");
 
-    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_del_last_session";
+    const std::string tmp = tmpPath("tmp_test_del_last_session");
     if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
     ProjectIO::createProjectDir(tmp, "测试");
     FileStorageBackend storage(tmp);
@@ -219,7 +226,7 @@ void test_delete_last_session() {
 void test_corrupt_index_recovery() {
     TEST("SessionPersistence — 损坏 index.json 扫描目录重建（不丢会话）");
 
-    const std::string tmp = "D:/C++Code/C++NovelAgent/build/tmp_test_corrupt_index";
+    const std::string tmp = tmpPath("tmp_test_corrupt_index");
     if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
     ProjectIO::createProjectDir(tmp, "测试");
     FileStorageBackend storage(tmp);
@@ -367,6 +374,203 @@ void test_pin_out_of_range() {
     conv.addUser("只有一条");
     CHECK(!conv.pin(99));
     CHECK(!conv.unpin(99));
+    PASS();
+}
+
+// =========================================================================
+// 自动 pin 上限（kMaxAutoPinned）测试
+// =========================================================================
+
+// 模拟 ToolPipeline 对设定类工具结果的自动 pin：经 MemoryDiff::pinned_indices
+// 到达的 pin 是自动 pin 的唯一生产路径（区别于手动 pin()）。
+static void applyAutoPinnedToolResult(llm::Memory& conv, const std::string& call_id,
+                                      const std::string& content) {
+    llm::MemoryDiff diff;
+    diff.added.push_back(llm::Message::toolResult(call_id, content));
+    diff.pinned_indices.push_back(0);
+    conv.apply(std::move(diff));
+}
+
+// 按 tool_call_id 查找消息；未找到返回 nullptr。
+static const llm::Message* findByCallId(const std::vector<llm::Message>& msgs,
+                                        const std::string& call_id) {
+    for (const auto& m : msgs)
+        if (m.tool_call_id == call_id) return &m;
+    return nullptr;
+}
+
+// 统计处于 pinned 状态的消息数。
+static size_t countPinned(const std::vector<llm::Message>& msgs) {
+    size_t n = 0;
+    for (const auto& m : msgs)
+        if (m.preserved) ++n;
+    return n;
+}
+
+void test_auto_pin_limit_fifo() {
+    TEST("Memory — 自动 pin 超限时 FIFO 解除最旧、保留最新");
+    llm::Memory conv;
+    const size_t limit = llm::Memory::kMaxAutoPinned;
+
+    // 注入 limit+3 条自动 pin 的设定类工具结果
+    for (size_t i = 0; i < limit + 3; ++i) {
+        conv.addUser("更新设定 " + std::to_string(i));
+        applyAutoPinnedToolResult(conv, "call_" + std::to_string(i),
+                                  "角色已更新 " + std::to_string(i));
+    }
+
+    // pinned 总数收敛到上限；最旧 3 条被解除，最新 limit 条保留
+    CHECK(countPinned(conv.messages()) == limit);
+    for (size_t i = 0; i < limit + 3; ++i) {
+        const auto* m = findByCallId(conv.messages(), "call_" + std::to_string(i));
+        CHECK(m != nullptr);
+        CHECK(m->preserved == (i >= 3));
+    }
+    // 解除只清标记不删消息：消息总数不变（user + tool 各 limit+3 条）
+    CHECK(conv.messages().size() == 2 * (limit + 3));
+
+    // 手动 unpin 释放名额后，新增自动 pin 不再触发 FIFO 解除
+    const auto& msgs = conv.messages();
+    size_t mid_idx = 0;
+    for (size_t i = 0; i < msgs.size(); ++i)
+        if (msgs[i].tool_call_id == "call_5") { mid_idx = i; break; }
+    CHECK(conv.unpin(mid_idx));
+    applyAutoPinnedToolResult(conv, "call_new", "新设定");
+    CHECK(countPinned(conv.messages()) == limit);
+    // 最旧的存活自动 pin（call_3）未被连带解除
+    CHECK(findByCallId(conv.messages(), "call_3")->preserved);
+    CHECK(findByCallId(conv.messages(), "call_new")->preserved);
+    PASS();
+}
+
+void test_manual_pin_unlimited() {
+    TEST("Memory — 手动 pin 不受自动 pin 上限影响（含提升语义）");
+    llm::Memory conv;
+    const size_t limit = llm::Memory::kMaxAutoPinned;
+
+    // 手动 pin 一条 user 消息（无 system prompt → all() 索引即 messages_ 下标）
+    conv.addUser("重要的世界观设定说明");
+    CHECK(conv.pin(0));
+
+    // 自动 pin 一条工具结果后再手动 pin 它 → 提升为手动，退出 FIFO 队列
+    applyAutoPinnedToolResult(conv, "call_promoted", "被用户钉住的设定");
+    CHECK(conv.pin(1));
+
+    // 再注入 limit+3 条自动 pin，触发多次 FIFO 解除
+    for (size_t i = 0; i < limit + 3; ++i)
+        applyAutoPinnedToolResult(conv, "call_" + std::to_string(i),
+                                  "设定 " + std::to_string(i));
+
+    // 手动 pin 的 user 消息与被提升的工具结果均不受上限影响
+    CHECK(conv.messages()[0].preserved);
+    CHECK(findByCallId(conv.messages(), "call_promoted")->preserved);
+    // 自动 pin 保持上限：总 pinned = 2（手动） + limit（自动）
+    CHECK(countPinned(conv.messages()) == 2 + limit);
+    CHECK(!findByCallId(conv.messages(), "call_0")->preserved);
+    CHECK(!findByCallId(conv.messages(), "call_2")->preserved);
+    CHECK(findByCallId(conv.messages(), "call_3")->preserved);
+    PASS();
+}
+
+void test_auto_pin_limit_after_compaction() {
+    TEST("Memory — 压缩重建（clear+inject）后自动 pin 上限仍生效");
+    llm::Memory conv;
+    const size_t limit = llm::Memory::kMaxAutoPinned;
+
+    // 满额自动 pin + 大量普通对话把 pinned 推入压缩区间
+    for (size_t i = 0; i < limit; ++i) {
+        conv.addUser("更新设定 " + std::to_string(i));
+        applyAutoPinnedToolResult(conv, "call_" + std::to_string(i),
+                                  "设定 " + std::to_string(i));
+    }
+    for (int i = 0; i < 8; ++i) {
+        conv.addUser("闲聊 " + std::to_string(i));
+        conv.addAssistant("回复 " + std::to_string(i));
+    }
+
+    // 模拟 Agent::applyCompaction：compact 后 clear + 逐条 inject retained
+    agent::Compactor compactor;
+    CompactMockLLMClient llmc;
+    auto cr = compactor.compact(conv.messages(), llmc);
+    CHECK(cr.messages_compacted > 0);
+    conv.clear();
+    for (const auto& m : cr.retained)
+        conv.inject(m);
+
+    // pinned 工具结果全部幸存于重建后的内存
+    CHECK(countPinned(conv.messages()) == limit);
+
+    // 重建后继续注入 3 条新自动 pin → 上限仍生效，最旧 3 条被解除
+    for (int i = 0; i < 3; ++i)
+        applyAutoPinnedToolResult(conv, "call_new_" + std::to_string(i),
+                                  "新设定 " + std::to_string(i));
+    CHECK(countPinned(conv.messages()) == limit);
+    CHECK(!findByCallId(conv.messages(), "call_0")->preserved);
+    CHECK(!findByCallId(conv.messages(), "call_2")->preserved);
+    CHECK(findByCallId(conv.messages(), "call_3")->preserved);
+    CHECK(findByCallId(conv.messages(), "call_new_2")->preserved);
+    PASS();
+}
+
+void test_auto_pin_cap_on_restore() {
+    TEST("Memory — restore 时重建自动 pin 追踪并收敛到上限");
+    const size_t limit = llm::Memory::kMaxAutoPinned;
+
+    // 手工构造超限快照（模拟机制上线前的存量状态）
+    llm::MemorySnapshot snap;
+    for (size_t i = 0; i < limit + 2; ++i) {
+        llm::Message m = llm::Message::toolResult("call_" + std::to_string(i),
+                                                  "设定 " + std::to_string(i));
+        m.preserved = true;
+        snap.messages.push_back(std::move(m));
+    }
+
+    llm::Memory conv;
+    conv.restore(snap);
+
+    // 启发式重建：preserved 的 Tool 消息视为自动 pin，立即收敛到上限
+    CHECK(conv.messages().size() == limit + 2);  // 消息本身不丢
+    CHECK(countPinned(conv.messages()) == limit);
+    CHECK(!findByCallId(conv.messages(), "call_0")->preserved);
+    CHECK(!findByCallId(conv.messages(), "call_1")->preserved);
+    CHECK(findByCallId(conv.messages(), "call_2")->preserved);
+    PASS();
+}
+
+void test_auto_pin_cap_on_session_load() {
+    TEST("SessionPersistence — 旧会话超限自动 pin 加载时收敛且消息不丢");
+
+    const std::string tmp = tmpPath("tmp_test_auto_pin_load");
+    if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
+    ProjectIO::createProjectDir(tmp, "测试");
+    FileStorageBackend storage(tmp);
+
+    const size_t limit = llm::Memory::kMaxAutoPinned;
+
+    // 构造"存量超限"会话：用手动 pin 绕过上限（手动 pin 不受限），
+    // 落盘后文件内容等价于本机制上线前累积的旧格式会话
+    agent::SessionPersistence sp(storage);
+    llm::Memory conv;
+    for (size_t i = 0; i < limit + 3; ++i) {
+        conv.addToolResult("call_" + std::to_string(i), "旧设定 " + std::to_string(i));
+        CHECK(conv.pin(i));
+    }
+    CHECK(countPinned(conv.messages()) == limit + 3);
+    sp.save(conv);
+
+    // 加载路径（parseMessages 走 inject）按启发式将 preserved Tool 消息
+    // 视为自动 pin 并收敛到上限；旧文件无需格式升级即可加载
+    auto loaded = sp.load();
+    CHECK(loaded.messages().size() == limit + 3);  // 消息完整往返，不丢内容
+    CHECK(countPinned(loaded.messages()) == limit);
+    CHECK(!findByCallId(loaded.messages(), "call_0")->preserved);
+    CHECK(!findByCallId(loaded.messages(), "call_2")->preserved);
+    CHECK(findByCallId(loaded.messages(), "call_3")->preserved);
+    CHECK(findByCallId(loaded.messages(),
+                       "call_" + std::to_string(limit + 2))->preserved);
+    CHECK(findByCallId(loaded.messages(), "call_0")->content == "旧设定 0");
+
+    utils::file::removeDir(tmp);
     PASS();
 }
 
@@ -598,6 +802,13 @@ int main() {
     // Pin
     test_pin_unpin();
     test_pin_out_of_range();
+
+    // 自动 pin 上限
+    test_auto_pin_limit_fifo();
+    test_manual_pin_unlimited();
+    test_auto_pin_limit_after_compaction();
+    test_auto_pin_cap_on_restore();
+    test_auto_pin_cap_on_session_load();
 
     // Compactor
     test_compact_returns_retained();

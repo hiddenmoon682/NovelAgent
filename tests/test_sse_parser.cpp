@@ -209,6 +209,88 @@ void test_reset_clears_buffer() {
     PASS();
 }
 
+// 顶层/choice 字符串字段为显式 null 时不抛异常、回落空串。
+//
+// 回归背景：旧实现用 j.value() 读 id/model，遇显式 null 抛 type_error.302；
+// 现与 Message.h::getStringOrDefault 语义统一（null → 默认值）。
+void test_null_top_level_fields() {
+    TEST("顶层 id/model/finish_reason 为显式 null → 回落空串不抛异常");
+    SSEParser parser;
+
+    StreamChunk received;
+    bool got = false;
+    parser.setOnChunk([&](const StreamChunk& c) { received = c; got = true; });
+
+    std::string error_msg;
+    parser.setOnError([&](const std::string& e) { error_msg = e; });
+
+    std::string sse = makeSseData(
+        R"({"id":null,"model":null,)"
+        R"("choices":[{"delta":{"content":"正常"},"finish_reason":null}]})");
+    parser.feed(sse);
+
+    CHECK(error_msg.empty());          // 不应触发错误回调
+    CHECK(got);
+    CHECK(received.id == "");          // null 回落空串
+    CHECK(received.model == "");
+    CHECK(received.finish_reason == "");
+    CHECK(received.content_delta == "正常"); // 正常增量不受影响
+    PASS();
+}
+
+// delta 内 content/reasoning_content 为显式 null 时回落空串。
+//
+// 回归背景：部分 provider 首个 role chunk 中 content 为显式 null。
+void test_null_delta_content_fields() {
+    TEST("delta.content/reasoning_content 为显式 null → 回落空串");
+    SSEParser parser;
+
+    StreamChunk received;
+    bool got = false;
+    parser.setOnChunk([&](const StreamChunk& c) { received = c; got = true; });
+
+    std::string sse = makeSseData(
+        R"({"choices":[{"delta":{"role":"assistant",)"
+        R"("content":null,"reasoning_content":null}}]})");
+    parser.feed(sse);
+
+    CHECK(got);
+    CHECK(received.content_delta == "");
+    CHECK(received.reasoning_delta == "");
+    PASS();
+}
+
+// tool_calls 内字符串字段为显式 null 时回落默认值，正常字段不受影响。
+//
+// 回归背景：旧实现用 tc.value()/func.value() 遇 null 抛 type_error.302。
+void test_null_tool_call_fields() {
+    TEST("tool_call 内 id/type/function.name 为显式 null → 回落默认值");
+    SSEParser parser;
+
+    StreamChunk received;
+    bool got = false;
+    parser.setOnChunk([&](const StreamChunk& c) { received = c; got = true; });
+
+    std::string error_msg;
+    parser.setOnError([&](const std::string& e) { error_msg = e; });
+
+    std::string sse = makeSseData(
+        R"({"choices":[{"delta":{"tool_calls":[)"
+        R"({"index":0,"id":null,"type":null,)"
+        R"("function":{"name":null,"arguments":"{\"k\":1}"}}]}}]})");
+    parser.feed(sse);
+
+    CHECK(error_msg.empty());
+    CHECK(got);
+    CHECK(received.tool_call_deltas.size() == 1);
+    CHECK(received.tool_call_deltas[0].index == 0);
+    CHECK(received.tool_call_deltas[0].id == "");              // null → 空串
+    CHECK(received.tool_call_deltas[0].type == "function");    // null → 默认值
+    CHECK(received.tool_call_deltas[0].function_name == "");   // null → 空串
+    CHECK(received.tool_call_deltas[0].arguments == "{\"k\":1}"); // 正常字段不受影响
+    PASS();
+}
+
 // =========================================================================
 
 int main() {
@@ -224,6 +306,9 @@ int main() {
     test_json_parse_error();
     test_finish_reason_in_chunk();
     test_reset_clears_buffer();
+    test_null_top_level_fields();
+    test_null_delta_content_fields();
+    test_null_tool_call_fields();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;

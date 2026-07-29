@@ -189,13 +189,14 @@ void test_gui_fields_roundtrip() {
     cleanup();
     AppConfig cfg;
     cfg.default_provider = "deepseek";
-    cfg.last_project_path = "D:/novels/my-book";
+    // 仅作序列化往返的字符串值，不触碰文件系统；用无盘符路径避免硬编码盘符
+    cfg.last_project_path = "novels/my-book";
     cfg.verbose = true;
     std::string path = kTestDir + "/config.json";
     cfg.save(path);
 
     AppConfig loaded = AppConfig::loadFromFile(path);
-    CHECK(loaded.last_project_path == "D:/novels/my-book");
+    CHECK(loaded.last_project_path == "novels/my-book");
     CHECK(loaded.verbose == true);
     // 旧配置没有这两个字段时应取默认值
     utils::file::writeText(path, R"({"default_provider":"deepseek","providers":{}})");
