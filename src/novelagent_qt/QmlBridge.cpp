@@ -451,10 +451,17 @@ void QmlBridge::runAgent(std::string input) {
                 emit chaptersChanged();
                 emit sessionsChanged();  // 首轮对话后会话标题可能已自动提取
                 emit skillsChanged(); // save_skill 可能新增了技能
-                if (finishReason == "cancelled")
+                if (finishReason == "cancelled") {
                     setStatus(QStringLiteral("已取消"));
-                else
+                } else if (finishReason == "context_overflow") {
+                    // 轮内溢出的优雅终止走正常返回路径而非异常，不会进 catch；
+                    // 若不在此显式提示，用户只会看到回答无声中断
+                    setStatus(QStringLiteral("上下文溢出"));
+                    emit errorOccurred(QStringLiteral(
+                        "上下文已超限，本轮工具调用被提前终止，请压缩旧对话或开启新会话。"));
+                } else {
                     setStatus(QStringLiteral("就绪"));
+                }
             }, Qt::QueuedConnection);
 
         } catch (const std::exception& e) {

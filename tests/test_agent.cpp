@@ -2,6 +2,7 @@
 #include "agent/tool/ToolRegistry.h"
 #include "agent/session/SessionPersistence.h"
 #include "agent/context/Memory.h"
+#include "agent/context/TokenBudget.h"
 #include "llm/LLMClientFactory.h"
 #include "project/FileStorageBackend.h"
 #include "project/ProjectIO.h"
@@ -14,6 +15,7 @@
 
 #include <cassert>
 #include <iostream>
+#include <set>
 #include <thread>
 #include <stdexcept>
 #include <string>
@@ -60,6 +62,23 @@ static ProviderConfig makeConfig(int port) {
     cfg.max_tokens = 1024;
     cfg.max_context_tokens = 65536;
     return cfg;
+}
+
+// 校验消息序列符合 OpenAI 协议（与 test_core_loop.cpp 同构）：tool 消息必须
+// 紧随携带匹配 tool_call_id 的 assistant 消息，且每个 tool_call 在下一条
+// 非 tool 消息前都有结果。
+static bool isLegalMessageSequence(const std::vector<llm::Message>& msgs) {
+    std::set<std::string> pending;
+    for (const auto& m : msgs) {
+        if (m.role == llm::MessageRole::Tool) {
+            if (pending.erase(m.tool_call_id) == 0) return false;  // 孤儿 tool 消息
+        } else {
+            if (!pending.empty()) return false;  // 上一组 tool_calls 未全部回应
+            if (m.role == llm::MessageRole::Assistant)
+                for (const auto& tc : m.tool_calls) pending.insert(tc.id);
+        }
+    }
+    return pending.empty();
 }
 
 // 解析请求体中的 "stream" 字段，判断是流式还是非流式请求。
@@ -411,6 +430,119 @@ void test_session_persisted_after_message() {
 }
 
 // =========================================================================
+// 测试: 轮内累积溢出 — Agent 层端到端优雅终止
+// =========================================================================
+
+void test_context_overflow_end_to_end() {
+    TEST("context_overflow — 轮内溢出压缩不足时端到端优雅终止");
+
+    // 场景：极小 token 预算 + 大体积工具结果（≈4550 token），使
+    // on_tool_results_applied 复评（评估→压缩→复评）仍为 Error 级：
+    // 压缩只能吃掉旧历史，本轮 tool_result 留在保留窗口内，怎么压都超限。
+    MockServer server;
+    int stream_calls = 0;      // 主循环 chat() 轮次（stream=true）
+    int nonstream_calls = 0;   // Compactor 摘要调用（stream=false）
+    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        if (isStreamRequest(req)) {
+            ++stream_calls;
+            if (stream_calls <= 2) {
+                // 前两轮小对话：制造可压缩的旧历史
+                std::string body = llm::test::sseContentChunk("收到") +
+                                   llm::test::sseFinishChunk("stop") +
+                                   llm::test::sseDone;
+                res.set_content(body, "text/event-stream");
+            } else if (stream_calls == 3) {
+                // 第三轮：调用大结果工具，触发轮内累积溢出
+                std::string body =
+                    llm::test::sseToolCallChunk(0, "call_big", "read_chapter", "{}") +
+                    llm::test::sseFinishChunk("tool_calls") +
+                    llm::test::sseDone;
+                res.set_content(body, "text/event-stream");
+            } else {
+                // 优雅终止后不应再发起下一轮 —— 若到达此分支即为缺陷
+                std::string body = llm::test::sseContentChunk("不应到达") +
+                                   llm::test::sseFinishChunk("stop") +
+                                   llm::test::sseDone;
+                res.set_content(body, "text/event-stream");
+            }
+        } else {
+            // Compactor 的摘要请求走非流式路径，与主循环轮次分开计数
+            ++nonstream_calls;
+            res.set_content(nonStreamJson("【摘要】旧历史已压缩"), "application/json");
+        }
+    });
+    server.start();
+
+    llm::LLMClientFactory factory(makeConfig(server.port));
+    agent::ToolRegistry registry;
+
+    // 大结果工具：约 3500 个英文单词 ≈ 4550 token（TokenCounter 按单词×1.3 估算）。
+    // 用 read_chapter 命名：它在渐进式加载的核心工具集中（否则执行被拦截
+    // 只返回引导错误），且超长章节读取正是轮内溢出的真实来源。
+    // 注意控制在 ToolPipeline 的 22000 字符 content 截断阈值以内。
+    registry.registerTool(
+        "read_chapter", "读取章节",
+        utils::schema::object({}),
+        agent::ToolCategory::Content,
+        [](const json&) -> json {
+            std::string big;
+            big.reserve(21000);
+            for (int i = 0; i < 3500; ++i) big += "lorem ";
+            return {{"content", big}};
+        }
+    );
+
+    llm::Memory memory;
+    agent::Agent agent(factory, registry, memory);
+
+    // 预算 600：warm-up 轮次远低于 80% AutoCompact 阈值（发送前评估不干扰），
+    // 大结果回填后无论怎么压缩都超 model_limit → 复评 Error → hook 返回 false
+    agent::TokenBudget budget;
+    budget.model_limit = 600;
+    agent.setTokenBudget(budget);
+
+    // 两轮 warm-up：确保压缩切割点落在旧历史，本轮 user 输入留在保留窗口
+    agent.process("历史对话一");
+    agent.process("历史对话二");
+    CHECK(agent.memory().size() == 4);
+
+    auto response = agent.process("读取大文件");
+
+    // 1) budget_exhausted 映射为 finish_reason="context_overflow"
+    CHECK(response.finish_reason == "context_overflow");
+
+    // 2) memory 未被快照回滚：用户输入与工具结果仍在会话历史中
+    const auto& msgs = agent.memory().all();
+    bool user_input_kept = false;
+    bool tool_result_kept = false;
+    for (const auto& m : msgs) {
+        if (m.role == llm::MessageRole::User && m.content == "读取大文件")
+            user_input_kept = true;
+        if (m.role == llm::MessageRole::Tool &&
+            m.content.find("lorem") != std::string::npos)
+            tool_result_kept = true;
+    }
+    CHECK(user_input_kept);
+    CHECK(tool_result_kept);
+
+    // 3) 终止后未发起下一轮 LLM 调用：主循环恰好 3 次流式请求
+    //    （2 次 warm-up + 1 次 tool_calls），第 4 次的"不应到达"分支从未触发；
+    //    唯一的非流式请求是 hook 内的压缩摘要，证明压缩确实先于终止发生
+    CHECK(stream_calls == 3);
+    CHECK(nonstream_calls == 1);
+
+    // 4) 最终消息序列协议合法：无孤儿 tool 消息、无未配对 tool_calls
+    CHECK(isLegalMessageSequence(msgs));
+
+    // 优雅终止走正常 return 路径，Agent 状态应恢复可接受输入
+    CHECK(agent.canAcceptInput());
+
+    server.stop();
+    PASS();
+}
+
+// =========================================================================
 
 int main() {
     std::cout << "=== test_agent ===\n\n";
@@ -422,6 +554,7 @@ int main() {
     test_empty_input();
     test_session_persisted_after_message();
     test_exception_recovery();
+    test_context_overflow_end_to_end();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;

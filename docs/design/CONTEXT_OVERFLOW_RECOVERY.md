@@ -2,7 +2,7 @@
 
 > 日期：2026-07-21
 > 来源：QuantClaw 参考审查 + 后续讨论
-> 状态：设计提案（待实现）
+> 状态：已实现（2026-07-28）——实现范围为场景 A（轮内累积溢出）的主动预防；场景 B（估算偏差溢出）未单独处理，依赖 TokenCounter 校准缓解。与原方案的偏离见 §五 的说明。
 
 ---
 
@@ -25,6 +25,8 @@ assemble() 时 180K tokens（安全，未达 95% 阈值）
 ```
 
 `assemble()` 时用量正常，但工具执行后累积的消息使下一轮超限。
+
+> ✅ 已解决（2026-07-28，提交 d386430）：通过 CoreLoop 新增的 `on_tool_results_applied` hook（工具结果回填 memory 后、下一轮 chat() 前触发）。Agent::processSerial 在该 hook 中：评估预算 → 达 AutoCompact 阈值则压缩（Compactor 切割点向前回退对齐工具消息边界，保证压缩后序列合法）→ 复评仍为 Error 级则返回 false，CoreLoop 优雅终止（剥离 tool_calls、保留 tool_result、正常 return 不抛异常、不回滚用户输入），最终以 `finish_reason="context_overflow"` 上报。
 
 **场景 B：估算偏差溢出**
 
@@ -124,6 +126,8 @@ overflow 发生后，有两种恢复手段：
 ---
 
 ## 五、实现计划（待讨论）
+
+> ⚠️ 实际实现的偏离说明（2026-07-28）：本节的 `ContextOverflowError` 异常与 `/compact` `/truncate` REPL 命令均未实施——CLI 已从项目中移除，这些落点不存在。实际采用的是 §三 3.4 的思路：不依赖异常，在工具结果回填后主动评估并优雅终止（见场景 A 标注）。UI 侧由 QmlBridge 消费 `finish_reason="context_overflow"`，setStatus("上下文溢出") 并 emit errorOccurred 提示用户压缩旧对话或开启新会话。
 
 ### Phase 1 — 基础（~50 行）
 
