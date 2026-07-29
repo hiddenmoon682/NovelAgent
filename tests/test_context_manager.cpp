@@ -443,6 +443,46 @@ void test_auto_pin_limit_fifo() {
     PASS();
 }
 
+void test_auto_pin_slot_release_on_message_deletion() {
+    TEST("Memory — 自动 pin 消息被物理删除后惰性清理释放名额");
+    llm::Memory conv;
+    const size_t limit = llm::Memory::kMaxAutoPinned;
+
+    // 1. 注册恰好达到上限数量的自动 pin（队列满但未超限，无 FIFO 解除）
+    for (size_t i = 0; i < limit; ++i) {
+        conv.addUser("更新设定 " + std::to_string(i));
+        applyAutoPinnedToolResult(conv, "call_" + std::to_string(i),
+                                  "设定 " + std::to_string(i));
+    }
+    CHECK(countPinned(conv.messages()) == limit);
+
+    // 2. 物理删除最旧 3 对（user + pinned tool）：队列中 call_0..call_2
+    //    成为失效条目，占用的名额应在下次 enforce 时被惰性清理释放
+    conv.removeOldest(6);
+    CHECK(conv.messages().size() == 2 * limit - 6);
+    CHECK(countPinned(conv.messages()) == limit - 3);
+    CHECK(findByCallId(conv.messages(), "call_0") == nullptr);  // 确已物理删除
+
+    // 3. 再新增 3 条自动 pin：被删消息释放的名额被复用，
+    //    仍存活的最旧自动 pin（call_3）不应被误解除
+    for (int i = 0; i < 3; ++i)
+        applyAutoPinnedToolResult(conv, "call_new_" + std::to_string(i),
+                                  "新设定 " + std::to_string(i));
+    CHECK(countPinned(conv.messages()) == limit);
+    CHECK(findByCallId(conv.messages(), "call_3")->preserved);
+    CHECK(findByCallId(conv.messages(), "call_new_0")->preserved);
+    CHECK(findByCallId(conv.messages(), "call_new_2")->preserved);
+
+    // 4. 名额此时恰好重新占满：再增一条才触发 FIFO 解除最旧存活项，
+    //    验证惰性清理后的配额计数精确无残留
+    applyAutoPinnedToolResult(conv, "call_extra", "额外设定");
+    CHECK(countPinned(conv.messages()) == limit);
+    CHECK(!findByCallId(conv.messages(), "call_3")->preserved);  // FIFO 解除
+    CHECK(findByCallId(conv.messages(), "call_4")->preserved);
+    CHECK(findByCallId(conv.messages(), "call_extra")->preserved);
+    PASS();
+}
+
 void test_manual_pin_unlimited() {
     TEST("Memory — 手动 pin 不受自动 pin 上限影响（含提升语义）");
     llm::Memory conv;
@@ -805,6 +845,7 @@ int main() {
 
     // 自动 pin 上限
     test_auto_pin_limit_fifo();
+    test_auto_pin_slot_release_on_message_deletion();
     test_manual_pin_unlimited();
     test_auto_pin_limit_after_compaction();
     test_auto_pin_cap_on_restore();

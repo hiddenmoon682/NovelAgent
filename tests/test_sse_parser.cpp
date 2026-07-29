@@ -291,6 +291,39 @@ void test_null_tool_call_fields() {
     PASS();
 }
 
+// tool_calls 内 function.arguments 为显式 null 时回落空串。
+//
+// 回归背景：三维评审建议项——现有 null 覆盖缺 arguments 显式 null 的用例；
+// 部分 provider 首个 tool_call chunk 中 arguments 可能为显式 null 而非 ""。
+void test_null_tool_call_arguments() {
+    TEST("tool_call 内 function.arguments 为显式 null → 回落空串");
+    SSEParser parser;
+
+    StreamChunk received;
+    bool got = false;
+    parser.setOnChunk([&](const StreamChunk& c) { received = c; got = true; });
+
+    std::string error_msg;
+    parser.setOnError([&](const std::string& e) { error_msg = e; });
+
+    std::string sse = makeSseData(
+        R"({"choices":[{"delta":{"tool_calls":[)"
+        R"({"index":0,"id":"call_null_args","type":"function",)"
+        R"("function":{"name":"write_chapter","arguments":null}}]}}]})");
+    parser.feed(sse);
+
+    CHECK(error_msg.empty());          // 不应触发错误回调
+    CHECK(got);
+    CHECK(received.tool_call_deltas.size() == 1);
+    CHECK(received.tool_call_deltas[0].index == 0);
+    CHECK(received.tool_call_deltas[0].arguments == "");  // null → 空串
+    // 其余正常字段不受影响
+    CHECK(received.tool_call_deltas[0].id == "call_null_args");
+    CHECK(received.tool_call_deltas[0].type == "function");
+    CHECK(received.tool_call_deltas[0].function_name == "write_chapter");
+    PASS();
+}
+
 // =========================================================================
 
 int main() {
@@ -309,6 +342,7 @@ int main() {
     test_null_top_level_fields();
     test_null_delta_content_fields();
     test_null_tool_call_fields();
+    test_null_tool_call_arguments();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;
