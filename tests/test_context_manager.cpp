@@ -14,6 +14,7 @@
 
 #include <cassert>
 #include <iostream>
+#include <set>
 #include <string>
 #include <cstdio>
 
@@ -32,6 +33,22 @@ static int tests_passed = 0;
 // =========================================================================
 // 辅助
 // =========================================================================
+
+// 校验消息序列符合 OpenAI 协议：tool 消息必须紧随携带匹配 tool_call_id 的
+// assistant 消息，且每个 tool_call 在下一条非 tool 消息前都有结果。
+static bool isLegalMessageSequence(const std::vector<llm::Message>& msgs) {
+    std::set<std::string> pending;
+    for (const auto& m : msgs) {
+        if (m.role == llm::MessageRole::Tool) {
+            if (pending.erase(m.tool_call_id) == 0) return false;  // 孤儿 tool 消息
+        } else {
+            if (!pending.empty()) return false;  // 上一组 tool_calls 未全部回应
+            if (m.role == llm::MessageRole::Assistant)
+                for (const auto& tc : m.tool_calls) pending.insert(tc.id);
+        }
+    }
+    return pending.empty();
+}
 
 class CompactMockLLMClient : public llm::ILLMClient {
 public:
@@ -443,6 +460,95 @@ void test_compact_cut_aligns_tool_boundary() {
     PASS();
 }
 
+void test_compact_preserves_pinned_message() {
+    TEST("Compactor — 压缩区间内 pinned 普通消息保留不进摘要");
+    // 语义依据：pin 的产品语义是“压缩时保留”（PIN_STALE_DATA_REVIEW_2026-07-19），
+    // 落在压缩区间的 pinned 消息必须原样保留在摘要对之后、近期消息之前。
+    agent::Compactor compactor;  // 默认 keep_exchanges=5 → 保留最近 10 条
+    CompactMockLLMClient llm;
+
+    std::vector<llm::Message> messages;
+    for (int i = 0; i < 15; ++i) {
+        messages.push_back(llm::Message::user("用户消息 " + std::to_string(i)));
+        messages.push_back(llm::Message::assistant("助手回复 " + std::to_string(i)));
+    }
+    messages[5].preserved = true;  // 位于压缩区间 [0, 20) 内
+
+    auto result = compactor.compact(messages, llm);
+
+    // 实际进摘要的只有 19 条（20 条压缩区间中 1 条被 pin 保留）
+    CHECK(result.messages_compacted == 19);
+    // retained = 2(摘要对) + 1(pinned) + 10(近期) = 13
+    CHECK(result.retained.size() == 13);
+    // pinned 消息紧跟摘要对之后，内容与标记完好
+    CHECK(result.retained[2].content == "助手回复 2");
+    CHECK(result.retained[2].preserved);
+    PASS();
+}
+
+void test_compact_pinned_tool_pairing() {
+    TEST("Compactor — pinned tool 结果连同配对 assistant 整组保留");
+    // pin 的若是 tool 结果消息，其配对的 assistant(tool_calls) 及同组其余
+    // tool 结果必须一并保留，否则保留侧会出现孤儿 tool / 未回应的 tool_call。
+    agent::Compactor compactor;
+    CompactMockLLMClient llm;
+
+    std::vector<llm::Message> messages;
+    messages.push_back(llm::Message::user("需要工具"));              // 0
+    llm::Message a = llm::Message::assistant("");
+    a.tool_calls.push_back({.id = "call_a", .type = "function",
+                            .function_name = "create_character", .arguments = "{}"});
+    a.tool_calls.push_back({.id = "call_b", .type = "function",
+                            .function_name = "create_setting", .arguments = "{}"});
+    messages.push_back(a);                                           // 1
+    llm::Message tool_a = llm::Message::toolResult("call_a", "角色已创建");
+    tool_a.preserved = true;  // 设定类工具结果被自动 pin（模拟 ToolPipeline 行为）
+    messages.push_back(tool_a);                                      // 2
+    messages.push_back(llm::Message::toolResult("call_b", "设定已创建")); // 3
+    for (int i = 0; i < 13; ++i) {
+        messages.push_back(llm::Message::user("问题 " + std::to_string(i)));
+        messages.push_back(llm::Message::assistant("回答 " + std::to_string(i)));
+    }                                                                // 4..29
+    CHECK(messages.size() == 30);
+
+    auto result = compactor.compact(messages, llm);
+
+    // 工具组共 3 条（assistant + 2×tool）整组保留 → 实际压缩 17 条
+    CHECK(result.messages_compacted == 17);
+    // retained = 2(摘要对) + 3(工具组) + 10(近期) = 15
+    CHECK(result.retained.size() == 15);
+    CHECK(result.retained[2].role == llm::MessageRole::Assistant);
+    CHECK(result.retained[2].tool_calls.size() == 2);
+    CHECK(result.retained[3].tool_call_id == "call_a");
+    CHECK(result.retained[3].preserved);
+    CHECK(result.retained[4].tool_call_id == "call_b");
+    // 压缩后消息序列仍符合 OpenAI 协议（无孤儿 tool / 未回应 tool_call）
+    CHECK(isLegalMessageSequence(result.retained));
+    PASS();
+}
+
+void test_compact_all_pinned_gives_up() {
+    TEST("Compactor — 压缩区间全部 pinned 时放弃压缩");
+    // 边界：区间内没有任何可摘要的消息时应原样返回（messages_compacted=0），
+    // 而不是发起空摘要请求或丢失 pinned 消息。
+    agent::Compactor compactor;
+    CompactMockLLMClient llm;
+
+    std::vector<llm::Message> messages;
+    for (int i = 0; i < 15; ++i) {
+        messages.push_back(llm::Message::user("用户消息 " + std::to_string(i)));
+        messages.push_back(llm::Message::assistant("助手回复 " + std::to_string(i)));
+    }
+    for (int i = 0; i < 20; ++i) messages[i].preserved = true;  // 压缩区间全 pin
+
+    auto result = compactor.compact(messages, llm);
+
+    CHECK(result.messages_compacted == 0);
+    CHECK(result.retained.size() == 30);
+    CHECK(result.retained[0].content == "用户消息 0");
+    PASS();
+}
+
 // =========================================================================
 // ContextBudgetEvaluator 降级可见性
 // =========================================================================
@@ -497,6 +603,9 @@ int main() {
     test_compact_returns_retained();
     test_compact_insufficient_messages();
     test_compact_cut_aligns_tool_boundary();
+    test_compact_preserves_pinned_message();
+    test_compact_pinned_tool_pairing();
+    test_compact_all_pinned_gives_up();
 
     // 降级可见性
     test_critical_warning();

@@ -35,6 +35,9 @@ void VectorStore::init(const std::string& db_path)
     std::unique_lock lock(mutex_);
     db_path_ = db_path;
     loadFromFile();
+    // 刚从文件加载（或从空开始）时内存与磁盘一致，重置脏标记，
+    // 避免上一轮使用遗留的 dirty_ 让 close() 多做一次无意义落盘。
+    dirty_ = false;
     initialized_ = true;
     spdlog::info("[VectorStore] 已初始化: {} ({} 条向量)", db_path_, entries_.size());
 }
@@ -43,7 +46,8 @@ void VectorStore::close()
 {
     std::unique_lock lock(mutex_);
     if (dirty_) {
-        saveToFile();
+        saveToFileUnlocked();
+        dirty_ = false;
     }
     entries_.clear();
     initialized_ = false;
@@ -232,7 +236,21 @@ void VectorStore::loadFromFile()
     spdlog::debug("[VectorStore] 从文件加载 {} 条向量", entries_.size());
 }
 
-void VectorStore::saveToFile() const
+void VectorStore::saveToFile()
+{
+    // WHY 用 unique_lock 而非 shared_lock：此前本方法完全无锁，与
+    // insert/remove/update 并发时对 entries_ 构成数据竞争（潜伏契约缺陷）。
+    // 选写锁而非读锁的理由：① 需在保存成功后清除 dirty_，shared_lock 下
+    // 写非原子成员仍是竞争，避免引入 atomic 的额外复杂度；② 两个并发
+    // flush 若均持读锁会同时写同一目标文件；③ 保存是低频操作（索引收尾、
+    // 记忆落盘），串行化无性能代价。
+    std::unique_lock lock(mutex_);
+    saveToFileUnlocked();
+    // 仅在保存成功后清除（写盘抛异常时保持脏状态，close() 会重试落盘）
+    dirty_ = false;
+}
+
+void VectorStore::saveToFileUnlocked() const
 {
     json j = json::array();
 

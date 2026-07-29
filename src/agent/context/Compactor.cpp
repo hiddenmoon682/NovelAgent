@@ -62,9 +62,9 @@ std::string Compactor::buildCompactPrompt(const std::optional<std::string>& focu
 //
 // 步骤：
 //   1. 根据 Config 计算需要保留的近期消息数（按轮数×2 取消息数），
-//      剩余的划为"待压缩区"；
+//      剩余的划为"待压缩区"；区内 pinned 消息（连同所在工具组）不进摘要；
 //   2. 将待压缩区渲染为纯文本，发给 LLM 生成摘要；
-//   3. 构建返回结果：user 占位消息 + assistant 摘要 → 后接保留的近期消息；
+//   3. 构建返回结果：user 占位消息 + assistant 摘要 → pinned 保留消息 → 近期消息；
 //   4. 若 LLM 调用失败，回退为原消息列表，不执行压缩。
 //
 // 注意：这里只做统计和摘要生成，实际持久化由 Memory 层负责。
@@ -110,11 +110,46 @@ CompactionResult Compactor::compact(
         result.retained = messages;
         return result;
     }
-    result.messages_compacted = compact_count;
 
-    // 切割：前 compact_count 条送去压缩，剩余保留明文中
-    std::vector<llm::Message> to_compact(messages.begin(), messages.begin() + compact_count);
+    // 切割：前 compact_count 条为压缩区间，剩余保留明文
+    std::vector<llm::Message> zone(messages.begin(), messages.begin() + compact_count);
     std::vector<llm::Message> recent(messages.begin() + compact_count, messages.end());
+
+    // WHY：pin（preserved）的产品语义是“压缩时优先保留”（见 Message.h 字段注释
+    // 与 docs/review/PIN_STALE_DATA_REVIEW_2026-07-19.md，ToolPipeline 会自动 pin
+    // 设定类工具结果），压缩区间内的 pinned 消息不能卷入摘要后删除。
+    // 同时 OpenAI 协议要求 assistant(tool_calls) 与其全部 tool 结果成组出现，
+    // 若只保留 pinned 的单条 tool 结果（或单条 assistant）会产生孤儿 tool /
+    // 未回应的 tool_call。因此按“工具组”为粒度划分：assistant(tool_calls)
+    // 与紧随的连续 tool 结果为一组，组内任一消息被 pin 则整组保留，
+    // 保证压缩后的消息序列始终合法（与上方切割点回退逻辑同一目标）。
+    std::vector<llm::Message> to_compact;
+    std::vector<llm::Message> pinned_kept;
+    for (size_t i = 0; i < zone.size();) {
+        size_t group_end = i + 1;
+        if (zone[i].role == llm::MessageRole::Assistant && !zone[i].tool_calls.empty()) {
+            while (group_end < zone.size() &&
+                   zone[group_end].role == llm::MessageRole::Tool) {
+                ++group_end;
+            }
+        }
+        bool group_pinned = false;
+        for (size_t j = i; j < group_end; ++j) {
+            if (zone[j].preserved) { group_pinned = true; break; }
+        }
+        auto& dst = group_pinned ? pinned_kept : to_compact;
+        dst.insert(dst.end(), zone.begin() + i, zone.begin() + group_end);
+        i = group_end;
+    }
+
+    // WHY：压缩区间内全部被 pin 时无可摘要内容，发起空摘要请求无意义，
+    // 放弃压缩并原样返回（messages_compacted=0），由调用方决策。
+    if (to_compact.empty()) {
+        result.summary = "(压缩区间内消息均被 pin，放弃压缩)";
+        result.retained = messages;
+        return result;
+    }
+    result.messages_compacted = static_cast<int>(to_compact.size());
 
     // 统计压缩前的 token 数，供调用方做预算决策
     result.tokens_before = llm::TokenCounter::countMessages(to_compact);
@@ -134,16 +169,20 @@ CompactionResult Compactor::compact(
         result.summary = response.content;
         result.tokens_after = response.completion_tokens;
 
-        // 构建保留的消息列表：两条占位消息（user 提示 + assistant 摘要）→ 近期消息
-        result.retained.reserve(recent.size() + 2);
+        // 构建保留的消息列表：摘要对（user 提示 + assistant 摘要）→
+        // 压缩区间内保留的 pinned 消息（按原相对顺序）→ 近期消息
+        result.retained.reserve(recent.size() + pinned_kept.size() + 2);
         result.retained.push_back(
             llm::Message::user("【系统】以下是被压缩的旧对话摘要："));
         result.retained.push_back(
             llm::Message::assistant("[被压缩的历史摘要]\n" + result.summary));
+        result.retained.insert(result.retained.end(),
+                               pinned_kept.begin(), pinned_kept.end());
         result.retained.insert(result.retained.end(), recent.begin(), recent.end());
 
-        spdlog::info("[Compactor] {} 条 → 摘要 ({} → {} tokens)",
-                     compact_count, result.tokens_before, result.tokens_after);
+        spdlog::info("[Compactor] {} 条 → 摘要 ({} → {} tokens)，另保留 pinned {} 条",
+                     result.messages_compacted, result.tokens_before,
+                     result.tokens_after, pinned_kept.size());
     } catch (const std::exception& e) {
         // 压缩失败时：不丢失任何消息，原样保留，外部可依据 summary 中的错误信息决策
         spdlog::error("[Compactor] LLM 调用失败: {}", e.what());

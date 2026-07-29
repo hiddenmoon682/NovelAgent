@@ -66,10 +66,8 @@ public:
 
     // 判断路径是否存在。
     //
-    // 注意：与 loadJson/saveJson 不同，本方法将 path 原样透传给文件系统判断，
-    // 不以 project_path_ 为基准解析相对路径（相对路径按进程当前工作目录解析）。
-    //
-    // @param path 待判断的路径（建议传绝对路径或已含项目路径的路径）。
+    // @param path 相对项目根目录的路径，或已含项目路径的绝对路径
+    //             （与 loadJson/saveJson 相同的解析规则）。
     // @return 路径存在返回 true。
     bool exists(const std::string& path) const;
 
@@ -80,5 +78,8 @@ public:
     std::string nowTimestamp() const;
 
 private:
+    // 统一路径解析：相对路径以 project_path_ 为基准，已含项目路径的直接返回。
+    std::string resolvePath(const std::string& filePath) const;
+
     std::string project_path_;
 };

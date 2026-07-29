@@ -103,8 +103,10 @@ public:
     //         未命中返回 std::nullopt。
     std::optional<VectorEntry> get(const std::string& id) const;
 
-    // 将全部向量写回 db_path 文件（父目录不存在时自动创建）。
-    void saveToFile() const;
+    // 将全部向量写回 db_path 文件（父目录不存在时自动创建），成功后清除脏标记。
+    //
+    // 线程安全：内部加写锁，可与其他读写操作并发调用。
+    void saveToFile();
 
     // 持久化接口实现：等价于 saveToFile()。
     void flush() override { saveToFile(); }
@@ -122,6 +124,13 @@ private:
     mutable std::shared_mutex mutex_;
 
     void loadFromFile();
+
+    // 实际执行落盘（不加锁、不改脏标记），调用方需持有 mutex_。
+    //
+    // WHY 拆出无锁版本：close() 已持有 unique_lock，std::shared_mutex 不可
+    // 重入，公开的 saveToFile() 若直接被 close() 调用会死锁；故加锁与落盘
+    // 分离，公开入口负责加锁，内部路径复用落盘逻辑。
+    void saveToFileUnlocked() const;
 
     static double cosineSimilarity(
         const std::vector<float>& a,

@@ -1,4 +1,5 @@
 #include "project/Models.h"
+#include "project/FileStorageBackend.h"
 #include "project/ProjectIO.h"
 #include "project/ProjectManager.h"
 #include "utils/FileUtils.h"
@@ -276,6 +277,28 @@ void test_pm_create_open_and_validate() {
     PASS();
 }
 
+// 回归测试（Issue 23 补漏）：exists() 的相对路径必须以项目根目录为基准
+// 解析，而非进程当前工作目录——与 loadJson/saveJson 的路径语义保持一致。
+void test_storage_backend_exists_path_semantics() {
+    TEST("FileStorageBackend::exists 相对路径按项目根解析");
+
+    cleanup();
+    ProjectIO::createProjectDir(kTestDir, "Exists Test");
+    FileStorageBackend backend(kTestDir);
+
+    // 用 saveJson 写入相对路径文件（落在项目根下）
+    backend.saveJson("sub/exists_probe.json", nlohmann::json{{"k", 1}});
+
+    // 相对路径：按项目根解析应命中（CWD 下并无 sub/exists_probe.json）
+    CHECK(backend.exists("sub/exists_probe.json"));
+    // 已含项目路径的形式：直接判断，行为不变
+    CHECK(backend.exists(utils::file::joinPath(kTestDir, "sub/exists_probe.json")));
+    // 不存在的相对路径应返回 false
+    CHECK(!backend.exists("sub/missing.json"));
+
+    PASS();
+}
+
 int main() {
     std::cout << "=== test_project_io ===\n\n";
 
@@ -287,6 +310,7 @@ int main() {
     test_chapter_read_missing();
     test_loadJsonFile_edge_cases();
     test_pm_create_open_and_validate();
+    test_storage_backend_exists_path_semantics();
 
     cleanup();
 

@@ -195,7 +195,8 @@ nlohmann::json HttpClient::post(
 //
 // 重试策略:
 //   与 post() 相同的指数退避，但 max_attempts 取自 config_.max_retries，
-//   若未配置则默认 2（共 3 次尝试）
+//   若未配置则默认 2（共 3 次尝试）；且仅限尚未向下游交付过任何
+//   字节时才重试，避免已消费的增量被重复喂给下游
 //
 // 返回:
 //   httplib::Result — 由调用方判断成功/失败并解析
@@ -235,8 +236,14 @@ httplib::Result HttpClient::postStreaming(
         //   bool(const char* data, size_t len, uint64_t offset, uint64_t total)
         // 外层捕获 content_receiver，每次重试重新构造 lambda，
         // 避免因移动导致回调失效（use-after-move 防护）
-        req.content_receiver = [receiver = content_receiver](
+        //
+        // WHY：delivered 记录本次尝试是否已向下游交付过字节。一旦交付过
+        // （如 SSE 增量已回调给调用方）再整体重试，会把相同增量重复喂给
+        // 下游（内容重复显示/重复累积），此时必须直接报错返回而非重试。
+        bool delivered = false;
+        req.content_receiver = [receiver = content_receiver, &delivered](
             const char* data, size_t len, uint64_t /*offset*/, uint64_t /*total*/) {
+            if (len > 0) delivered = true;
             return receiver(data, len);
         };
 
@@ -246,9 +253,13 @@ httplib::Result HttpClient::postStreaming(
         // ── 传输层错误 ──
         if (!res) {
             int err_code = static_cast<int>(res.error());
-            if (attempt < max_attempts && isRetryableNetworkError(err_code)) {
+            // WHY：已交付过字节则不再重试（见上方 delivered 说明）
+            if (!delivered && attempt < max_attempts && isRetryableNetworkError(err_code)) {
                 retry_delay_ms *= 2;
                 continue;
+            }
+            if (delivered) {
+                spdlog::warn("[HttpClient] 流式传输中断但部分数据已交付，不重试以避免增量重复");
             }
             // 不可重试 → 将原始 Result 返回给调用方，由调用方决定如何处理
             return res;
@@ -256,7 +267,10 @@ httplib::Result HttpClient::postStreaming(
 
         // ── HTTP 错误 ──
         if (res->status != 200) {
-            if (attempt < max_attempts && isRetryableStatus(res->status)) {
+            // WHY：非 200 的响应体字节也会经 content_receiver 交付给下游，
+            // 此时重试同样会污染下游状态（错误体已被消费），故一并受
+            // delivered 约束。
+            if (!delivered && attempt < max_attempts && isRetryableStatus(res->status)) {
                 retry_delay_ms *= 2;
                 continue;
             }

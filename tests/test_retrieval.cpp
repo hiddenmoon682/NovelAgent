@@ -7,6 +7,8 @@
 #include <iostream>
 #include <cmath>
 #include <cstdio>
+#include <thread>
+#include <vector>
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -238,6 +240,115 @@ void test_cosine_similarity_basic() {
     auto res2 = store.search(v_orth, 3);
     // v_orth 应最接近自身
     CHECK(res2[0].id == "orth1" || res2[0].id == "same");
+
+    store.close();
+    cleanup(db_path);
+    PASS();
+}
+
+// 验证 flush() 不经 close() 即可持久化全部向量。
+//
+// 回归背景：saveToFile/flush 此前无锁且为 const，无法清除脏标记；
+// 修复后 flush 内部加写锁并在成功后清脏，行为上应保持落盘即时可读。
+void test_vector_store_flush_persists() {
+    TEST("VectorStore::flush — 不经 close 即持久化");
+
+    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_vs_flush.json";
+    cleanup(db_path);
+
+    retrieval::VectorStore store;
+    store.init(db_path);
+    store.insert("flush-1", {0.1f, 0.2f}, {{"k", "v"}});
+    store.flush();
+
+    // 未 close，另一实例从同一文件加载应能读到已落盘的向量
+    retrieval::VectorStore reader;
+    reader.init(db_path);
+    CHECK(reader.count() == 1);
+    CHECK(reader.contains("flush-1"));
+    reader.close();
+
+    store.close();
+    cleanup(db_path);
+    PASS();
+}
+
+// 验证 flush() 成功后清除脏标记：close() 不再重复落盘。
+//
+// 观察手段：flush 后删除磁盘文件再 close，若 dirty_ 已清除则 close 不会
+// 重建文件；修复前 dirty_ 无法被 const saveToFile 清除，close 会多写一次。
+void test_vector_store_flush_clears_dirty() {
+    TEST("VectorStore::flush — 成功后清除脏标记");
+
+    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_vs_dirty.json";
+    cleanup(db_path);
+
+    retrieval::VectorStore store;
+    store.init(db_path);
+    store.insert("dirty-1", {0.5f, 0.5f}, {});
+    store.flush();
+    CHECK(utils::file::exists(db_path));
+
+    cleanup(db_path);  // 外部删除文件
+    store.close();     // 脏标记已清除，close 不应重新落盘
+    CHECK(!utils::file::exists(db_path));
+
+    cleanup(db_path);
+    PASS();
+}
+
+// 并发冗余测试：多线程 insert 与 flush/search 交错执行不应崩溃且数据完整。
+//
+// 回归背景：修复前 flush 无锁读 entries_，与并发 insert 的 vector 扩容
+// 构成数据竞争（悬空迭代器/撞裂读）；修复后各操作均持锁，结果确定。
+void test_vector_store_concurrent_flush() {
+    TEST("VectorStore — 并发 insert/flush/search 无竞争");
+
+    const std::string db_path = "D:/C++Code/C++NovelAgent/build/tmp_test_vs_conc.json";
+    cleanup(db_path);
+
+    retrieval::VectorStore store;
+    store.init(db_path);
+
+    constexpr int kWriters = 2;
+    constexpr int kPerWriter = 50;
+
+    std::vector<std::thread> threads;
+    // 写线程：各自插入不重叠的 id
+    for (int w = 0; w < kWriters; ++w) {
+        threads.emplace_back([&store, w]() {
+            for (int i = 0; i < kPerWriter; ++i) {
+                store.insert("conc-" + std::to_string(w) + "-" + std::to_string(i),
+                             {static_cast<float>(w), static_cast<float>(i)}, {});
+            }
+        });
+    }
+    // flush 线程：与写入交错落盘
+    threads.emplace_back([&store]() {
+        for (int i = 0; i < 10; ++i) {
+            store.flush();
+        }
+    });
+    // 读线程：与写入/落盘交错搜索
+    threads.emplace_back([&store]() {
+        for (int i = 0; i < 20; ++i) {
+            (void)store.search({1.0f, 1.0f}, 5);
+            (void)store.count();
+        }
+    });
+
+    for (auto& t : threads) {
+        t.join();
+    }
+
+    CHECK(store.count() == kWriters * kPerWriter);
+
+    // 最终落盘后重新加载，验证文件内容完整
+    store.flush();
+    retrieval::VectorStore reader;
+    reader.init(db_path);
+    CHECK(reader.count() == kWriters * kPerWriter);
+    reader.close();
 
     store.close();
     cleanup(db_path);
@@ -498,6 +609,9 @@ int main() {
     test_vector_store_update();
     test_vector_store_batch_insert();
     test_cosine_similarity_basic();
+    test_vector_store_flush_persists();
+    test_vector_store_flush_clears_dirty();
+    test_vector_store_concurrent_flush();
 
     // NovelChunker 测试
     test_chunker_character();

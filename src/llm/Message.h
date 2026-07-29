@@ -45,6 +45,24 @@ inline MessageRole roleFromString(const std::string& s) {
     return MessageRole::User;
 }
 
+// null 安全的字符串字段读取：键缺失或值为 null 时回落默认值。
+//
+// WHY：OpenAI 协议中 assistant+tool_calls 消息的 content 合法值为 null
+// （本文件 to_json 也按此输出），而 j.value() 遇显式 null 会抛
+// type_error.302，导致序列化 round-trip 及真实 API 响应解析失败，
+// 必须先判 is_null 再取值。
+//
+// @param j        输入 JSON 对象。
+// @param key      字段名。
+// @param fallback 键缺失或为 null 时的默认值。
+// @return 字段值或默认值；字段存在但为非字符串非 null 类型时仍抛异常（与原行为一致）。
+inline std::string getStringOrDefault(const nlohmann::json& j, const char* key,
+                                      const std::string& fallback = "") {
+    auto it = j.find(key);
+    if (it == j.end() || it->is_null()) return fallback;
+    return it->get<std::string>();
+}
+
 // ============================================================================
 // ToolCall — LLM 请求调用的工具（function calling）
 // ============================================================================
@@ -81,12 +99,13 @@ inline void to_json(nlohmann::json& j, const ToolCall& tc) {
 // @param j  输入 JSON（OpenAI tool_call 对象）。
 // @param tc 输出的工具调用对象（被覆盖写入）。
 inline void from_json(const nlohmann::json& j, ToolCall& tc) {
-    tc.id = j.value("id", "");
-    tc.type = j.value("type", "function");
+    // WHY：统一用 null 安全读取，部分 provider 对可选字段会返回显式 null。
+    tc.id = getStringOrDefault(j, "id");
+    tc.type = getStringOrDefault(j, "type", "function");
     if (j.contains("function") && j["function"].is_object()) {
         const auto& func = j["function"];
-        tc.function_name = func.value("name", "");
-        tc.arguments = func.value("arguments", "");
+        tc.function_name = getStringOrDefault(func, "name");
+        tc.arguments = getStringOrDefault(func, "arguments");
     }
 }
 
@@ -171,22 +190,23 @@ inline void to_json(nlohmann::json& j, const Message& msg) {
 
 // Message 的 JSON 反序列化（nlohmann ADL 钩子）。
 //
-// 缺失的可选字段回落到默认空值，未知 role 回落为 user。
-// 注意：字段存在但类型不匹配（如 content 为 null）时 nlohmann 会抛 type_error。
+// 缺失或为 null 的可选字段回落到默认空值，未知 role 回落为 user。
+// WHY：to_json 对 assistant+tool_calls 的空 content 输出 null（OpenAI 协议），
+// 反序列化必须容忍 null 才能保证 round-trip 不抛异常。
 //
 // @param j   输入 JSON（OpenAI message 对象）。
 // @param msg 输出的消息对象（被覆盖写入）。
 inline void from_json(const nlohmann::json& j, Message& msg) {
-    msg.role = roleFromString(j.value("role", "user"));
-    msg.content = j.value("content", "");
+    msg.role = roleFromString(getStringOrDefault(j, "role", "user"));
+    msg.content = getStringOrDefault(j, "content");
     if (j.contains("tool_calls") && j["tool_calls"].is_array()) {
         msg.tool_calls = j["tool_calls"].get<std::vector<ToolCall>>();
     } else {
         msg.tool_calls.clear();
     }
-    msg.tool_call_id = j.value("tool_call_id", "");
-    msg.name = j.value("name", "");
-    msg.reasoning_content = j.value("reasoning_content", "");
+    msg.tool_call_id = getStringOrDefault(j, "tool_call_id");
+    msg.name = getStringOrDefault(j, "name");
+    msg.reasoning_content = getStringOrDefault(j, "reasoning_content");
 }
 
 // ============================================================================
@@ -314,20 +334,23 @@ inline void to_json(nlohmann::json& j, const LLMResponse& r) {
 // @param r 输出的响应对象（被覆盖写入）。
 inline void from_json(const nlohmann::json& j, LLMResponse& r) {
     // 顶层元数据
-    r.id = j.value("id", "");
-    r.model = j.value("model", "");
+    // WHY：OpenAI 协议中 system_fingerprint 可为 null，统一 null 安全读取。
+    r.id = getStringOrDefault(j, "id");
+    r.model = getStringOrDefault(j, "model");
     r.created = j.value("created", 0);
-    r.system_fingerprint = j.value("system_fingerprint", "");
+    r.system_fingerprint = getStringOrDefault(j, "system_fingerprint");
 
     // choices[0].message
     if (j.contains("choices") && j["choices"].is_array() && !j["choices"].empty()) {
         const auto& choice = j["choices"][0];
-        r.finish_reason = choice.value("finish_reason", "");
+        r.finish_reason = getStringOrDefault(choice, "finish_reason");
 
         if (choice.contains("message") && choice["message"].is_object()) {
             const auto& msg = choice["message"];
-            r.content = msg.value("content", "");
-            r.reasoning_content = msg.value("reasoning_content", "");
+            // WHY：真实 API（OpenAI/DeepSeek）对工具调用响应返回 content: null，
+            // 必须 null 容错，否则 chatNonStreaming 无法解析此类响应。
+            r.content = getStringOrDefault(msg, "content");
+            r.reasoning_content = getStringOrDefault(msg, "reasoning_content");
 
             if (msg.contains("tool_calls") && msg["tool_calls"].is_array()) {
                 r.tool_calls = msg["tool_calls"].get<std::vector<ToolCall>>();
