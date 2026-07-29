@@ -76,7 +76,7 @@ target_include_directories(novelagent_tools PUBLIC src)
 target_link_libraries(novelagent_tools PUBLIC novelagent_core)
 target_precompile_headers(novelagent_tools REUSE_FROM novelagent_core)
 
-set(APP_SOURCES src/NovelAgentApp.h src/NovelAgentApp.cpp)
+set(APP_SOURCES ${NOVELAGENT_APP})  # 定义于 cmake/Sources.cmake（集中登记）
 
 add_library(novelagent_app OBJECT ${APP_SOURCES})
 target_include_directories(novelagent_app PUBLIC src)

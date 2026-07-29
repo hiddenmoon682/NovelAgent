@@ -1,6 +1,7 @@
 #include "agent/tools/CharacterTools.h"
 
 #include "project/ProjectIO.h"
+#include "utils/IdUtils.h"
 #include "utils/SchemaUtils.h"
 
 #include <algorithm>
@@ -18,9 +19,7 @@ namespace {
 
 // 按 ID 查找角色
 Character* findCharacter(std::vector<Character>& chars, const std::string& id) {
-    auto it = std::find_if(chars.begin(), chars.end(),
-        [&](const Character& c) { return c.id == id; });
-    return (it != chars.end()) ? &(*it) : nullptr;
+    return utils::id::findById(chars, id);
 }
 
 // A6: 校验数组 ID 存在性（软校验——warn，不阻断）
@@ -117,17 +116,14 @@ json CreateCharacterTool::execute(const json& args) {
     // 生成 ID
     int max_num = 0;
     for (const auto& ch : project_->characters) {
-        if (ch.id.size() >= 5 && ch.id.substr(0, 5) == "char-") {
-            try { max_num = std::max(max_num, std::stoi(ch.id.substr(5))); }
-            catch (...) {}
+        // D2: 非标准 ID 解析失败时安全跳过，不参与编号统计
+        if (auto num = utils::id::tryParseIdNumber(ch.id, "char-")) {
+            max_num = std::max(max_num, *num);
         }
     }
 
     Character new_ch;
-    new_ch.id = "char-" + std::to_string(max_num + 1);
-    // 补零
-    if (max_num + 1 < 10)       new_ch.id = "char-00" + std::to_string(max_num + 1);
-    else if (max_num + 1 < 100) new_ch.id = "char-0" + std::to_string(max_num + 1);
+    new_ch.id = utils::id::formatSequentialId("char-", max_num + 1);
     new_ch.name = name;
     new_ch.role = args.value("role", "supporting");
 
@@ -463,13 +459,14 @@ json AddCharacterDevelopmentTool::execute(const json& args) {
     int max_dev = 0;
     std::string prefix = "dev-" + char_id + "-";
     for (const auto& dev : ch->development) {
-        if (dev.id.size() > prefix.size() && dev.id.substr(0, prefix.size()) == prefix) {
-            try { max_dev = std::max(max_dev, std::stoi(dev.id.substr(prefix.size()))); }
-            catch (...) {}
+        // D2: 非标准 ID 解析失败时安全跳过，不参与编号统计
+        if (auto num = utils::id::tryParseIdNumber(dev.id, prefix)) {
+            max_dev = std::max(max_dev, *num);
         }
     }
 
     CharacterDevelopment dev;
+    // 注意：dev ID 历史格式不补零（dev-char-001-1），保持不变以兼容磁盘存量数据
     dev.id         = prefix + std::to_string(max_dev + 1);
     dev.chapter_id = chapter_id;
     dev.summary    = summary;

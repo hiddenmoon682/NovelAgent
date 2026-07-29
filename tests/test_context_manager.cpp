@@ -393,6 +393,56 @@ void test_compact_insufficient_messages() {
     PASS();
 }
 
+void test_compact_cut_aligns_tool_boundary() {
+    TEST("Compactor — 切割点不拆开 assistant(tool_calls) 与 tool 结果");
+    agent::Compactor compactor;  // keep_exchanges=5 → 默认保留最近 10 条
+    CompactMockLLMClient llm;
+
+    // 构造 30 条消息，使默认切割点（索引 20）正好落在 tool 结果中间：
+    // 索引 19: assistant(tool_calls×2)，索引 20/21: 对应的 tool 结果
+    std::vector<llm::Message> messages;
+    for (int i = 0; i < 9; ++i) {
+        messages.push_back(llm::Message::user("问题 " + std::to_string(i)));
+        messages.push_back(llm::Message::assistant("回答 " + std::to_string(i)));
+    }
+    messages.push_back(llm::Message::user("需要工具"));           // 18
+    llm::Message a = llm::Message::assistant("");
+    a.tool_calls.push_back({.id = "call_a", .type = "function",
+                            .function_name = "t", .arguments = "{}"});
+    a.tool_calls.push_back({.id = "call_b", .type = "function",
+                            .function_name = "t", .arguments = "{}"});
+    messages.push_back(a);                                        // 19
+    messages.push_back(llm::Message::toolResult("call_a", "结果A")); // 20
+    messages.push_back(llm::Message::toolResult("call_b", "结果B")); // 21
+    for (int i = 0; i < 4; ++i) {
+        messages.push_back(llm::Message::user("后续问题 " + std::to_string(i)));
+        messages.push_back(llm::Message::assistant("后续回答 " + std::to_string(i)));
+    }                                                             // 22..29
+    CHECK(messages.size() == 30);
+
+    auto result = compactor.compact(messages, llm);
+
+    // 切割点从 20 回退到 19：assistant(tool_calls) 与其 tool 结果同在保留侧
+    CHECK(result.messages_compacted == 19);
+    // retained = 2(摘要对) + 11(assistant+2×tool+8 条后续) = 13
+    CHECK(result.retained.size() == 13);
+    CHECK(result.retained[2].role == llm::MessageRole::Assistant);
+    CHECK(result.retained[2].tool_calls.size() == 2);
+    CHECK(result.retained[3].role == llm::MessageRole::Tool);
+    CHECK(result.retained[3].tool_call_id == "call_a");
+    CHECK(result.retained[4].tool_call_id == "call_b");
+    // 保留区无孤儿 tool：每条 tool 消息前方存在携带匹配 id 的 assistant
+    for (size_t i = 0; i < result.retained.size(); ++i) {
+        if (result.retained[i].role != llm::MessageRole::Tool) continue;
+        bool paired = false;
+        for (size_t j = 0; j < i; ++j)
+            for (const auto& tc : result.retained[j].tool_calls)
+                if (tc.id == result.retained[i].tool_call_id) paired = true;
+        CHECK(paired);
+    }
+    PASS();
+}
+
 // =========================================================================
 // ContextBudgetEvaluator 降级可见性
 // =========================================================================
@@ -446,6 +496,7 @@ int main() {
     // Compactor
     test_compact_returns_retained();
     test_compact_insufficient_messages();
+    test_compact_cut_aligns_tool_boundary();
 
     // 降级可见性
     test_critical_warning();

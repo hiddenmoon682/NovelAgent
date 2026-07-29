@@ -1,6 +1,7 @@
 #include "agent/tools/OutlineTools.h"
 #include "project/Models.h"
 #include "project/ProjectIO.h"
+#include "utils/IdUtils.h"
 #include "utils/SchemaUtils.h"
 #include <algorithm>
 #include <spdlog/spdlog.h>
@@ -10,12 +11,10 @@ using json = nlohmann::json;
 
 namespace {
 Volume* findVolume(std::vector<Volume>& vols, const std::string& id) {
-    auto it = std::find_if(vols.begin(), vols.end(), [&](const Volume& v) { return v.id == id; });
-    return (it != vols.end()) ? &(*it) : nullptr;
+    return utils::id::findById(vols, id);
 }
 PlotThread* findPlotThread(std::vector<PlotThread>& pts, const std::string& id) {
-    auto it = std::find_if(pts.begin(), pts.end(), [&](const PlotThread& p) { return p.id == id; });
-    return (it != pts.end()) ? &(*it) : nullptr;
+    return utils::id::findById(pts, id);
 }
 
 // A6: 软校验——warn 不阻断
@@ -120,16 +119,14 @@ json CreateVolumeTool::execute(const json& args) {
 
     int max_num = 0;
     for (const auto& v : project_->outline.volumes) {
-        if (v.id.size() >= 5 && v.id.substr(0, 4) == "vol-") {
-            try { max_num = std::max(max_num, std::stoi(v.id.substr(4))); }
-            catch (...) {}
+        // D2: 非标准 ID 解析失败时安全跳过，不参与编号统计
+        if (auto num = utils::id::tryParseIdNumber(v.id, "vol-")) {
+            max_num = std::max(max_num, *num);
         }
     }
 
     Volume vol;
-    if (max_num + 1 < 10)       vol.id = "vol-00" + std::to_string(max_num + 1);
-    else if (max_num + 1 < 100) vol.id = "vol-0" + std::to_string(max_num + 1);
-    else                         vol.id = "vol-" + std::to_string(max_num + 1);
+    vol.id = utils::id::formatSequentialId("vol-", max_num + 1);
     vol.order = static_cast<int>(project_->outline.volumes.size()) + 1;
 
     vol.title             = title;
@@ -258,16 +255,14 @@ json CreatePlotThreadTool::execute(const json& args) {
 
     int max_num = 0;
     for (const auto& pt : project_->outline.plot_threads) {
-        if (pt.id.size() >= 4 && pt.id.substr(0, 3) == "pt-") {
-            try { max_num = std::max(max_num, std::stoi(pt.id.substr(3))); }
-            catch (...) {}
+        // D2: 非标准 ID 解析失败时安全跳过，不参与编号统计
+        if (auto num = utils::id::tryParseIdNumber(pt.id, "pt-")) {
+            max_num = std::max(max_num, *num);
         }
     }
 
     PlotThread pt;
-    if (max_num + 1 < 10)       pt.id = "pt-00" + std::to_string(max_num + 1);
-    else if (max_num + 1 < 100) pt.id = "pt-0" + std::to_string(max_num + 1);
-    else                         pt.id = "pt-" + std::to_string(max_num + 1);
+    pt.id = utils::id::formatSequentialId("pt-", max_num + 1);
 
     pt.name             = name;
     pt.description      = args.value("description", "");

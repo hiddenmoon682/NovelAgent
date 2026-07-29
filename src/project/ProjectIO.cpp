@@ -204,8 +204,8 @@ Project ProjectIO::load(const std::string& path) {
 // 将 Project 写回磁盘。
 // - 保存前刷新 modified 时间戳，确保格式版本为当前版本
 // - 各 JSON 文件分别写入
-// - 使用可变副本避免修改调用方持有的 Project 对象
-void ProjectIO::save(const Project& project) {
+// - 序列化用可变副本，但保存成功后会清除调用方 project 的脏标记（D4）
+void ProjectIO::save(Project& project) {
     const std::string& p = project.path;
     if (p.empty()) {
         throw std::runtime_error("Cannot save: project.path is empty");
@@ -253,7 +253,7 @@ void ProjectIO::save(const Project& project) {
 
     // save 成功，清除脏标记
     // 注意：mutableCopy 是栈上副本，需要修改原始 project 的 dirty_flags
-    const_cast<Project&>(project).markClean();
+    project.markClean();
 
     spdlog::info("Saved project '{}' to {} (dirty=0x{:x})", project.title, p, project.dirty_flags);
 }

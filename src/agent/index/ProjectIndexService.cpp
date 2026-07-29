@@ -207,7 +207,12 @@ IndexResult ProjectIndexService::indexAll(
             }
         }
         manifest.setModelFingerprint(model, embedding_gen_.dimension());
-        manifest.save(manifestPath());
+        // D3: 与下方全量路径保持一致——清单写失败不影响向量正确性，下次索引会重试
+        try {
+            manifest.save(manifestPath());
+        } catch (const std::exception& e) {
+            spdlog::warn("[ProjectIndexService] 清单保存失败（下次将重试）: {}", e.what());
+        }
         report("向量索引已是最新，无需重建");
         return result;
     }

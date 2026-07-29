@@ -83,11 +83,14 @@ void test_vector_store_insert_and_search() {
     auto results = store.search(query, 3);
 
     CHECK(results.size() == 3);
-    // 第一个结果应该是 id-1（与查询完全相同）
-    CHECK(results[0].id == "id-1");
-    CHECK(results[0].similarity > 0.99);  // 几乎完全相同
+    // id-1 与 id-3 方向相同，余弦相似度并列最高（≈1.0）；排序对并列元素无稳定性承诺，不能断言两者先后
+    CHECK(results[0].similarity > 0.99);
+    CHECK(results[1].similarity > 0.99);
+    CHECK((results[0].id == "id-1" && results[1].id == "id-3") ||
+          (results[0].id == "id-3" && results[1].id == "id-1"));
 
-    // 第二个结果应该是 id-3（比 id-2 更接近 id-1）
+    // id-2 与查询反向，相似度最低，应排最后
+    CHECK(results[2].id == "id-2");
     CHECK(results[1].similarity > results[2].similarity);
 
     store.close();

@@ -148,15 +148,16 @@ std::vector<SearchResult> VectorStore::search(
         results.push_back({entry.id, sim, entry.metadata});
     }
 
-    // 按相似度降序排序
-    std::sort(results.begin(), results.end(),
+    // 按相似度降序取 Top-K：只需前 top_k 个有序，用 partial_sort 免去全量排序
+    const size_t k = std::min(static_cast<size_t>(top_k), results.size());
+    std::partial_sort(results.begin(), results.begin() + k, results.end(),
         [](const SearchResult& a, const SearchResult& b) {
             return a.similarity > b.similarity;
         });
 
     // 截取 Top-K
-    if (static_cast<int>(results.size()) > top_k) {
-        results.resize(top_k);
+    if (results.size() > k) {
+        results.resize(k);
     }
 
     return results;

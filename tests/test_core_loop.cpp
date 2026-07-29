@@ -5,15 +5,19 @@
 #include "agent/tool/ToolRegistry.h"
 #include "agent/tool/ToolPipeline.h"
 #include "agent/core/AgentState.h"
+#include "agent/context/Compactor.h"
+#include "agent/context/TokenBudget.h"
 #include "llm/ILLMClient.h"
 #include "agent/context/Memory.h"
 #include "llm/Message.h"
+#include "llm/TokenCounter.h"
 #include "config/AppConfig.h"
 
 #include <nlohmann/json.hpp>
 #include <cassert>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -82,6 +86,60 @@ public:
     }
     agent::ToolCategory category() const override { return agent::ToolCategory::Content; }
 };
+
+// Mock 大结果工具 — 模拟单次返回大体积内容（轮内累积溢出的典型来源）
+class MockBigTool : public agent::BuiltInTool {
+public:
+    std::string name() const override { return "read_big"; }
+    std::string description() const override { return "读取大体积内容"; }
+    json parameters() const override { return json::object(); }
+    json execute(const json&) override {
+        // 约 3500 个英文单词 ≈ 4550 token（TokenCounter 按单词×1.3 估算）
+        std::string big;
+        big.reserve(21000);
+        for (int i = 0; i < 3500; ++i) big += "lorem ";
+        return {{"content", big}};
+    }
+    agent::ToolCategory category() const override { return agent::ToolCategory::Content; }
+};
+
+// Compactor 摘要生成专用 mock — 与主循环的 MockSeqLLMClient 隔离，
+// 避免轮内压缩消耗主循环的响应序列。
+class SummaryMockLLMClient : public llm::ILLMClient {
+public:
+    llm::LLMResponse chat(const std::vector<llm::Message>&,
+                          const std::vector<llm::ToolDefinition>&,
+                          const std::string&,
+                          llm::StreamCallbacks,
+                          const std::atomic<bool>*) override { return summary(); }
+    llm::LLMResponse chatNonStreaming(const std::vector<llm::Message>&,
+                                       const std::vector<llm::ToolDefinition>&,
+                                       const std::string&) override { return summary(); }
+    const ProviderConfig& config() const override { static ProviderConfig c; return c; }
+private:
+    static llm::LLMResponse summary() {
+        llm::LLMResponse r;
+        r.content = "【摘要】旧历史已压缩。";
+        r.finish_reason = "stop";
+        return r;
+    }
+};
+
+// 校验消息序列符合 OpenAI 协议：tool 消息必须紧随携带匹配 tool_call_id 的
+// assistant 消息，且每个 tool_call 在下一条非 tool 消息前都有结果。
+static bool isLegalMessageSequence(const std::vector<llm::Message>& msgs) {
+    std::set<std::string> pending;
+    for (const auto& m : msgs) {
+        if (m.role == llm::MessageRole::Tool) {
+            if (pending.erase(m.tool_call_id) == 0) return false;  // 孤儿 tool 消息
+        } else {
+            if (!pending.empty()) return false;  // 上一组 tool_calls 未全部回应
+            if (m.role == llm::MessageRole::Assistant)
+                for (const auto& tc : m.tool_calls) pending.insert(tc.id);
+        }
+    }
+    return pending.empty();
+}
 
 // ===========================================================================
 // 测试
@@ -349,6 +407,189 @@ void test_tool_lifecycle_callbacks() {
     PASS();
 }
 
+// ===========================================================================
+// 轮内累积溢出预防（on_tool_results_applied hook）
+// ===========================================================================
+
+void test_inround_compaction_on_big_tool_results() {
+    TEST("CoreLoop — 大工具结果触发轮内压缩且后续序列合法");
+    MockSeqLLMClient client;
+    // 第 1 轮：调用大结果工具
+    {
+        llm::LLMResponse r;
+        r.finish_reason = "tool_calls";
+        llm::ToolCall tc;
+        tc.id = "call_1";
+        tc.function_name = "read_big";
+        tc.arguments = "{}";
+        r.tool_calls.push_back(tc);
+        client.addResponse(r);
+    }
+    // 第 2 轮：最终文本（压缩后序列合法才能走到这里）
+    {
+        llm::LLMResponse r;
+        r.content = "完成";
+        r.finish_reason = "stop";
+        client.addResponse(r);
+    }
+
+    agent::ToolRegistry registry;
+    registry.registerBuiltInTool(std::make_unique<MockBigTool>());
+
+    llm::Memory conv;
+    // 预填历史对话，为 Compactor 提供可压缩区
+    for (int i = 0; i < 6; ++i) {
+        conv.addUser("历史问题内容较长用于制造可压缩区域第" + std::to_string(i) + "条");
+        conv.addAssistant("历史回答内容较长用于制造可压缩区域第" + std::to_string(i) + "条");
+    }
+    conv.addUser("读取大文件");
+
+    // 大结果回填后约 4800 token：超过 5000×80%=4000 的 AutoCompact 阈值，
+    // 但压缩后（保留窗口含大结果 ≈ 4600）仍低于模型上限 → 循环应继续
+    agent::TokenBudget budget;
+    budget.model_limit = 5000;
+    agent::Compactor compactor({.keep_exchanges = 2, .min_keep = 1});
+    SummaryMockLLMClient summary_llm;
+
+    int hook_calls = 0;
+    bool compacted = false;
+    agent::CoreLoopConfig cfg;
+    cfg.max_rounds = 5;
+    // 与 Agent::processSerial 中的真实 hook 同构：评估 → 压缩 → 复评
+    cfg.hooks.on_tool_results_applied = [&]() -> bool {
+        ++hook_calls;
+        int total = llm::TokenCounter::countMessages(conv.messages());
+        if (!budget.needsCompaction(total)) return true;
+        auto cr = compactor.compact(conv.messages(), summary_llm);
+        if (cr.messages_compacted > 0) {
+            compacted = true;
+            conv.clear();
+            for (auto& m : cr.retained) conv.inject(std::move(m));
+        }
+        int after = llm::TokenCounter::countMessages(conv.messages());
+        return budget.evaluate(after) < agent::ContextStatus::Error;
+    };
+
+    agent::ToolPipeline pipeline(registry, 0);
+    agent::CoreLoop loop(client, registry, pipeline);
+    auto result = loop.run(conv, registry.getToolDefinitions(), "", {}, cfg);
+
+    CHECK(hook_calls == 1);
+    CHECK(compacted);                          // 轮内压缩确实发生
+    CHECK(!result.budget_exhausted);           // 压缩后回到安全水位，循环继续
+    CHECK(result.response.content == "完成");
+    CHECK(result.rounds_executed == 2);
+    CHECK(isLegalMessageSequence(conv.messages()));  // 压缩后无孤儿 tool 消息
+    // 摘要对已替换旧历史
+    bool has_summary = false;
+    for (const auto& m : conv.messages())
+        if (m.content.find("被压缩的历史摘要") != std::string::npos) has_summary = true;
+    CHECK(has_summary);
+    PASS();
+}
+
+void test_budget_exhausted_graceful_stop() {
+    TEST("CoreLoop — 压缩不足时优雅终止而非抛异常");
+    MockSeqLLMClient client;
+    {
+        llm::LLMResponse r;
+        r.finish_reason = "tool_calls";
+        llm::ToolCall tc;
+        tc.id = "call_1";
+        tc.function_name = "read_big";
+        tc.arguments = "{}";
+        r.tool_calls.push_back(tc);
+        client.addResponse(r);
+    }
+    // 若循环未终止会消费这条响应 —— 用 callCount 验证未发起下一轮
+    {
+        llm::LLMResponse r;
+        r.content = "不应到达";
+        r.finish_reason = "stop";
+        client.addResponse(r);
+    }
+
+    agent::ToolRegistry registry;
+    registry.registerBuiltInTool(std::make_unique<MockBigTool>());
+
+    llm::Memory conv;
+    conv.addUser("读取大文件");
+
+    agent::CoreLoopConfig cfg;
+    cfg.max_rounds = 5;
+    // 模拟 Agent 侧“压缩后仍超模型上限”：hook 返回 false 要求终止
+    cfg.hooks.on_tool_results_applied = [&]() -> bool { return false; };
+
+    agent::ToolPipeline pipeline(registry, 0);
+    agent::CoreLoop loop(client, registry, pipeline);
+    auto result = loop.run(conv, registry.getToolDefinitions(), "", {}, cfg);
+
+    CHECK(result.budget_exhausted);
+    CHECK(result.response.tool_calls.empty());   // 已剥离，上层不会追加孤儿 assistant
+    CHECK(result.rounds_executed == 1);
+    CHECK(!result.error.empty());
+    CHECK(client.callCount() == 1);              // 未发起注定超限的下一轮 LLM 调用
+    CHECK(isLegalMessageSequence(conv.messages()));  // tool_result 已入 memory 且配对完整
+    CHECK(conv.messages().back().role == llm::MessageRole::Tool);
+    PASS();
+}
+
+void test_small_results_no_compaction() {
+    TEST("CoreLoop — 小结果路径不触发压缩（回归保护）");
+    MockSeqLLMClient client;
+    {
+        llm::LLMResponse r;
+        r.finish_reason = "tool_calls";
+        llm::ToolCall tc;
+        tc.id = "call_1";
+        tc.function_name = "read_chapter";
+        tc.arguments = "{}";
+        r.tool_calls.push_back(tc);
+        client.addResponse(r);
+    }
+    {
+        llm::LLMResponse r;
+        r.content = "章节总结";
+        r.finish_reason = "stop";
+        client.addResponse(r);
+    }
+
+    agent::ToolRegistry registry;
+    registry.registerBuiltInTool(std::make_unique<MockReadTool>());
+
+    g_read_calls = 0;
+    llm::Memory conv;
+    conv.addUser("帮我读第1章");
+
+    agent::TokenBudget budget;  // 默认 131072 上限，小结果远不及阈值
+    int hook_calls = 0;
+    bool compacted = false;
+    agent::CoreLoopConfig cfg;
+    cfg.max_rounds = 5;
+    cfg.hooks.on_tool_results_applied = [&]() -> bool {
+        ++hook_calls;
+        if (budget.needsCompaction(llm::TokenCounter::countMessages(conv.messages()))) {
+            compacted = true;  // 不应到达
+        }
+        return true;
+    };
+
+    agent::ToolPipeline pipeline(registry, 0);
+    agent::CoreLoop loop(client, registry, pipeline);
+    auto result = loop.run(conv, registry.getToolDefinitions(), "", {}, cfg);
+
+    // 行为与 test_basic_tool_call 完全一致：hook 存在但不改变任何路径
+    CHECK(hook_calls == 1);
+    CHECK(!compacted);
+    CHECK(!result.budget_exhausted);
+    CHECK(result.response.content == "章节总结");
+    CHECK(result.rounds_executed == 2);
+    CHECK(g_read_calls == 1);
+    CHECK(conv.messages().size() == 3);  // user + assistant(tc) + tool，未被压缩改写
+    CHECK(isLegalMessageSequence(conv.messages()));
+    PASS();
+}
+
 int main() {
     std::cout << "CoreLoop 测试:\n";
 
@@ -358,6 +599,9 @@ int main() {
     test_cancellation();
     test_state_machine_transitions();
     test_tool_lifecycle_callbacks();
+    test_inround_compaction_on_big_tool_results();
+    test_budget_exhausted_graceful_stop();
+    test_small_results_no_compaction();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 通过\n";
     return (tests_run == tests_passed) ? 0 : 1;

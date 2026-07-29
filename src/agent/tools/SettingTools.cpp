@@ -1,5 +1,6 @@
 #include "agent/tools/SettingTools.h"
 #include "project/ProjectIO.h"
+#include "utils/IdUtils.h"
 #include "utils/SchemaUtils.h"
 #include <algorithm>
 #include <spdlog/spdlog.h>
@@ -9,8 +10,7 @@ using json = nlohmann::json;
 
 namespace {
 Setting* findSetting(std::vector<Setting>& s, const std::string& id) {
-    auto it = std::find_if(s.begin(), s.end(), [&](const Setting& x) { return x.id == id; });
-    return (it != s.end()) ? &(*it) : nullptr;
+    return utils::id::findById(s, id);
 }
 
 // A6: 软校验——warn 不阻断
@@ -134,16 +134,14 @@ json CreateSettingTool::execute(const json& args) {
     // 生成 ID: setting-001 格式
     int max_num = 0;
     for (const auto& s : project_->settings) {
-        if (s.id.size() >= 9 && s.id.substr(0, 8) == "setting-") {
-            try { max_num = std::max(max_num, std::stoi(s.id.substr(8))); }
-            catch (...) {}
+        // D2: 非标准 ID 解析失败时安全跳过，不参与编号统计
+        if (auto num = utils::id::tryParseIdNumber(s.id, "setting-")) {
+            max_num = std::max(max_num, *num);
         }
     }
 
     Setting new_s;
-    if (max_num + 1 < 10)       new_s.id = "setting-00" + std::to_string(max_num + 1);
-    else if (max_num + 1 < 100) new_s.id = "setting-0" + std::to_string(max_num + 1);
-    else                        new_s.id = "setting-" + std::to_string(max_num + 1);
+    new_s.id = utils::id::formatSequentialId("setting-", max_num + 1);
 
     new_s.name            = name;
     new_s.category        = args.value("category", "location");

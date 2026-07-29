@@ -41,7 +41,10 @@ Project load(const std::string& path);
 // 将 Project 的 JSON 数据写回磁盘。
 // 保存前会刷新 modified 时间戳并确保格式版本为最新。
 // 注意：path 字段不会被写入 JSON。
-void save(const Project& project);
+//
+// 副作用：保存成功后会调用 project.markClean() 清除脏标记，
+// 因此参数为非 const 引用（D4：取代此前的 const_cast 写法）。
+void save(Project& project);
 
 // ── 单文件 JSON 读写 ──
 

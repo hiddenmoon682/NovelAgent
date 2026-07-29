@@ -8,6 +8,7 @@ set(NOVELAGENT_CONFIG
 
 set(NOVELAGENT_UTILS
     src/utils/FileUtils.h src/utils/FileUtils.cpp
+    src/utils/IdUtils.h src/utils/IdUtils.cpp
     src/utils/StringUtils.h src/utils/JsonUtils.h src/utils/SchemaUtils.h
 )
 
@@ -58,6 +59,7 @@ set(NOVELAGENT_AGENT
     src/agent/core/AgentState.h src/agent/core/AgentState.cpp
     src/agent/core/CoreLoop.h src/agent/core/CoreLoop.cpp
     src/agent/core/ExecutionTracer.h src/agent/core/ExecutionTracer.cpp
+    src/agent/core/SessionManager.h src/agent/core/SessionManager.cpp
     # tool/
     src/agent/tool/IToolProvider.h src/agent/tool/IToolProvider.cpp
     src/agent/tool/ToolRegistry.h src/agent/tool/ToolRegistry.cpp
@@ -112,4 +114,9 @@ set(NOVELAGENT_SKILL
     src/agent/skill/SkillLoader.h src/agent/skill/SkillLoader.cpp
     src/agent/skill/SkillRegistry.h src/agent/skill/SkillRegistry.cpp
     src/agent/skill/BuiltinSkills.h src/agent/skill/BuiltinSkills.cpp
+)
+
+set(NOVELAGENT_APP
+    src/NovelAgentApp.h src/NovelAgentApp.cpp
+    src/AppAssembly.cpp
 )

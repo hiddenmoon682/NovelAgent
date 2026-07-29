@@ -51,7 +51,14 @@ private:
     std::unique_ptr<agent::ProjectIndexService> index_service_;
     skill::SkillRegistry skill_registry_;
 
+    // 装配入口与分段辅助函数（定义在 AppAssembly.cpp，按功能段拆分，调用顺序即装配顺序）。
     void setupAgent(const std::vector<std::string>& disabledTools);
+    void setupLongTermMemoryAndSkills();
+    void registerBuiltInTools(const std::vector<std::string>& disabledTools);
+    void setupSystemPrompt();
+    void setupContextAndTokenBudget();
+    void setupPersistenceAndVectorStore();
+    void setupSummarySinkAndIndexService();
     // 组装 system prompt（人格 + 工具指引 + 技能上下文 + 延迟工具存根）。
     std::string buildSystemPrompt() const;
     // 技能禁用列表持久化（<项目>/.novelagent/skills.json）。

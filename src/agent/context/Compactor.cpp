@@ -95,6 +95,21 @@ CompactionResult Compactor::compact(
         if (keep_count == 0) keep_count = 1;
     }
     int compact_count = total_msgs - keep_count;
+
+    // WHY：保留窗口按“最近 N 条”切割，切割点可能落在 assistant(tool_calls)
+    // 与其 tool 结果之间——保留区将以孤儿 tool 消息开头（tool_call_id 无配对），
+    // 不符合 OpenAI 协议。向前回退切割点，直到保留区首条不是 tool 消息，
+    // 使 tool 结果与其 assistant 消息始终留在同一侧，保证工具循环中途
+    // 触发压缩后的消息序列仍然合法。
+    while (compact_count > 0 &&
+           messages[compact_count].role == llm::MessageRole::Tool) {
+        --compact_count;
+    }
+    if (compact_count <= 0) {
+        result.summary = "(切割点对齐后无可压缩消息)";
+        result.retained = messages;
+        return result;
+    }
     result.messages_compacted = compact_count;
 
     // 切割：前 compact_count 条送去压缩，剩余保留明文中

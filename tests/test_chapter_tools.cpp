@@ -296,6 +296,81 @@ void test_update_chapter_scenes_dangling_softcheck() {
 }
 
 // =========================================================================
+// D1+D2 回归测试（ID 生成统一 + 消除空 catch）
+// =========================================================================
+
+// D1 回归安全网：预置手动创建的非连续补零 ID + 非标准 ID，连续创建多章，
+// 验证新建 ID 不与任何存量 ID 重复且全局唯一。
+// 注意：此用例是回归安全网而非 fail-before-fix 证明——冲突回退分支属防御性
+// 代码，正常编号扫描下不可达（存量补零 ID 必然被解析计入 max，候选
+// pad(max+1) 不会与之重叠），无法构造让修复前失败的黑盒输入。
+void should_avoid_id_collision_when_manual_id_overlaps_sequence() {
+    TEST("create_chapter — 手动非连续 ID 不引发新建 ID 冲突");
+
+    TestProject tp;  // 自带 ch-001
+
+    // 手动预置非连续补零 ID（跳过 ch-002/ch-004）+ 一个非标准 ID
+    for (const char* id : {"ch-003", "ch-005", "ch-005x"}) {
+        Chapter ch;
+        ch.id = id;
+        ch.title = std::string("手动章 ") + id;
+        ch.order = static_cast<int>(tp.project.outline.chapters.size()) + 1;
+        tp.project.outline.chapters.push_back(ch);
+    }
+
+    agent::CreateChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+
+    // 连续创建 3 章，应从 max(1,3,5)+1=6 开始递增
+    for (int i = 0; i < 3; ++i) {
+        auto r = tool.execute({{"title", "新章节 " + std::to_string(i)}});
+        CHECK(r.value("success", false) == true);
+    }
+
+    // 新建 ID 遵循补零递增格式
+    const auto& chs = tp.project.outline.chapters;
+    CHECK(chs.size() == 7);
+    CHECK(chs[4].id == "ch-006");
+    CHECK(chs[5].id == "ch-007");
+    CHECK(chs[6].id == "ch-008");
+
+    // 全局唯一：任意两章 ID 不重复
+    for (size_t i = 0; i < chs.size(); ++i)
+        for (size_t j = i + 1; j < chs.size(); ++j)
+            CHECK(chs[i].id != chs[j].id);
+
+    PASS();
+}
+
+// D2 回归：非标准 ID（ch-abc）在编号统计中被跳过且不抛异常。
+void should_log_and_skip_when_id_suffix_not_numeric() {
+    TEST("create_chapter — 非标准 ID 尾号跳过统计且不抛异常");
+
+    TestProject tp;  // 自带 ch-001
+
+    Chapter odd;
+    odd.id = "ch-abc";
+    odd.title = "非标准 ID 章";
+    odd.order = 2;
+    tp.project.outline.chapters.push_back(odd);
+
+    agent::CreateChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+
+    // 不抛异常：异常已在 tryParseIdNumber 内部捕获并 debug 记录
+    json r;
+    try {
+        r = tool.execute({{"title", "新章节"}});
+    } catch (const std::exception& e) {
+        FAIL(std::string("意外抛出异常: ") + e.what());
+    }
+
+    CHECK(r.value("success", false) == true);
+    // ch-abc 不参与编号统计：max 仍为 1，新章为 ch-002
+    CHECK(r["chapter"]["id"] == "ch-002");
+
+    PASS();
+}
+
+// =========================================================================
 
 int main() {
     std::cout << "=== test_chapter_tools ===\n\n";
@@ -310,6 +385,8 @@ int main() {
     test_delete_chapter();
     test_update_chapter_scenes();
     test_update_chapter_scenes_dangling_softcheck();
+    should_avoid_id_collision_when_manual_id_overlaps_sequence();
+    should_log_and_skip_when_id_suffix_not_numeric();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;

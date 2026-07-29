@@ -1,5 +1,4 @@
 #include "agent/core/Agent.h"
-#include "agent/session/SessionPersistence.h"
 #include "agent/core/CoreLoop.h"
 #include "agent/context/Memory.h"
 #include "llm/LLMClientFactory.h"
@@ -40,7 +39,17 @@ Agent::Agent(llm::LLMClientFactory& factory, ToolRegistry& registry, llm::IMemor
     : factory_(factory), client_(factory.create()), registry_(registry), memory_(memory)
     , progressive_tools_(registry)
     , pipeline_(progressive_tools_)
+    , session_manager_(memory)
 {
+    // 会话边界时需同步清理 Agent 侧运行时状态（tracer/warnings/渐进式工具）
+    // 与刷新用量快照——这些状态属于 Agent 职责，通过回调注入给 SessionManager，
+    // 保持拆分前的行为不变。
+    session_manager_.setBoundaryResetHook([this] {
+        tracer_.clear();
+        last_warnings_.clear();
+        progressive_tools_.reset();
+    });
+    session_manager_.setUsageRefreshHook([this] { refreshUsage(); });
 }
 
 Agent::~Agent() = default;
@@ -54,75 +63,6 @@ void Agent::clearMemory() { memory_.clear(); }
 void Agent::setTokenBudget(TokenBudget budget) {
     budget_ = budget;
     refreshUsage();  // 预算变化后百分比需重算（启动时也借此建立初始用量）
-}
-
-void Agent::resetSession() {
-    // 多会话语义：旧会话保留在列表中（不归档），新建空会话并激活。
-    // 当前会话为空时不新建，避免反复点击堆积空会话。
-    if (persistence_ && !memory_.messages().empty()) {
-        try {
-            persistence_->save(memory_);       // 保存当前会话，保留在列表中
-            persistence_->createSession();     // 新建空会话并设为 active（已落盘空数组）
-        } catch (const std::exception& e) {
-            spdlog::warn("[Agent] 新建会话落盘失败（继续重置内存）: {}", e.what());
-        }
-    }
-
-    // system prompt 由 NovelAgentApp 装配（人格/工具指令/技能），clear()
-    // 不能连它一起清掉。会话边界优先经提供者重建，使运行期变化
-    //（如 save_skill 新增的技能目录）在新会话生效；无提供者时沿用旧值
-    std::string prompt = system_prompt_provider_ ? system_prompt_provider_()
-                                                 : memory_.systemPrompt();
-    memory_.clear();
-    memory_.setSystemPrompt(std::move(prompt));
-
-    tracer_.clear();
-    last_warnings_.clear();
-    progressive_tools_.reset();
-    refreshUsage();
-}
-
-bool Agent::switchSession(const std::string& id) {
-    if (!persistence_) return false;
-    try {
-        if (id == persistence_->activeSessionId()) return true;
-        persistence_->save(memory_);  // 切走前保存当前会话
-        if (!persistence_->switchSession(id)) return false;
-    } catch (const std::exception& e) {
-        spdlog::warn("[Agent] 切换会话失败: {}", e.what());
-        return false;
-    }
-    reloadActiveSession();
-    return true;
-}
-
-bool Agent::deleteSession(const std::string& id) {
-    if (!persistence_) return false;
-    bool was_active = false;
-    try {
-        was_active = (id == persistence_->activeSessionId());
-        if (!persistence_->deleteSession(id)) return false;
-    } catch (const std::exception& e) {
-        spdlog::warn("[Agent] 删除会话失败: {}", e.what());
-        return false;
-    }
-    // 删除非 active 会话不影响当前对话；删除 active 时持久层已切好新 active，重载即可
-    if (was_active) reloadActiveSession();
-    return true;
-}
-
-void Agent::reloadActiveSession() {
-    // 会话边界：同 resetSession，prompt 优先经提供者重建
-    std::string prompt = system_prompt_provider_ ? system_prompt_provider_()
-                                                 : memory_.systemPrompt();
-    memory_.clear();
-    memory_.setSystemPrompt(std::move(prompt));
-
-    tracer_.clear();
-    last_warnings_.clear();
-    progressive_tools_.reset();
-
-    loadSessionState();  // 从 active 会话恢复消息（空会话则保持空，内部已刷新用量）
 }
 
 // ===========================================================================
@@ -158,84 +98,9 @@ void Agent::applyCompaction(const CompactionResult& cr) {
 }
 
 // ===========================================================================
-// Memory 操作
+// Memory 操作与会话管理 — 已搬入 SessionManager（见 SessionManager.cpp），
+// Agent 侧仅保留头文件中的薄转发。
 // ===========================================================================
-
-bool Agent::pinMessage(size_t index) {
-    return memory_.pin(index);
-}
-
-bool Agent::unpinMessage(size_t index) {
-    return memory_.unpin(index);
-}
-
-bool Agent::editMessage(size_t index, std::string new_content) {
-    return memory_.edit(index, std::move(new_content));
-}
-
-// ===========================================================================
-// 对话回滚
-// ===========================================================================
-
-bool Agent::rewindTo(size_t index) {
-    if (index >= memory_.size()) return false;
-
-    auto pinned = memory_.pinnedIndices();
-    std::vector<size_t> lost_pins;
-    for (auto pi : pinned) {
-        if (pi > index) lost_pins.push_back(pi);
-    }
-    if (!lost_pins.empty()) {
-        std::string ids;
-        for (size_t i = 0; i < lost_pins.size(); ++i) {
-            if (i > 0) ids += ", ";
-            ids += "#" + std::to_string(lost_pins[i]);
-        }
-        spdlog::warn("[Agent] 回滚到 #{} 将丢弃 {} 条 pinned 消息 ({})",
-                     index, lost_pins.size(), ids);
-    }
-
-    memory_.truncateTo(index + 1);
-    spdlog::info("[Agent] 回滚到消息 #{} (保留 {} 条)", index, memory_.size());
-    return true;
-}
-
-std::vector<size_t> Agent::checkpointIndices() const {
-    std::vector<size_t> result;
-    const auto& all = memory_.all();
-    for (size_t i = 0; i < all.size(); ++i) {
-        if (all[i].role == llm::MessageRole::User) {
-            result.push_back(i);
-        }
-    }
-    return result;
-}
-
-// ===========================================================================
-// 会话持久化
-// ===========================================================================
-
-void Agent::saveSessionState() {
-    if (!persistence_) return;
-    persistence_->save(memory_);
-}
-
-void Agent::loadSessionState() {
-    if (!persistence_) return;
-    // 启动路径不得抛异常：会话恢复失败降级为空会话，不能阻止应用初始化
-    try {
-        auto loaded = persistence_->load();
-        if (!loaded.messages().empty()) {
-            // 只恢复对话消息；system prompt 以本次启动装配的为准（文件中也不存储 system）
-            auto snapshot = loaded.checkpoint();
-            snapshot.system_prompt = memory_.systemPrompt();
-            memory_.restore(snapshot);
-        }
-    } catch (const std::exception& e) {
-        spdlog::warn("[Agent] 会话恢复失败（从空会话开始）: {}", e.what());
-    }
-    refreshUsage();
-}
 
 void Agent::refreshUsage() {
     auto eval = budget_evaluator_.evaluate(memory_, budget_, memory_.systemPrompt(),
@@ -299,6 +164,28 @@ Agent::InternalResult Agent::processSerial(
         }
     };
 
+    // 轮内累积溢出的主动预防：工具结果回填后立即评估。
+    // WHY：on_round_complete 在 chat() 返回后、工具执行前触发（见 CoreLoop），
+    // 一轮内多个大体积工具结果（单个可达 32KB）回填后没有任何评估点，
+    // 累积可能使下一轮 LLM 调用直接超限。此处达 AutoCompact 阈值即复用
+    // 与发送前路径一致的压缩；压缩后仍超模型上限（Error）时返回 false，
+    // 让 CoreLoop 优雅收尾而非等 API 拒绝后回滚整轮对话。
+    config.hooks.on_tool_results_applied = [this, &memory]() -> bool {
+        auto ev = budget_evaluator_.evaluate(memory, budget_, memory.systemPrompt(),
+                                             client_->config().model, calibrator_);
+        if (ev.status < ContextStatus::AutoCompact) return true;
+        spdlog::info("[Agent] 工具结果回填后上下文已达 {}%, 自动压缩旧历史",
+                     budget_.usagePercent(ev.total_tokens));
+        auto cr = compactor_.compact(memory.messages(), *client_,
+            "自动压缩：工具结果回填后上下文超限");
+        if (cr.messages_compacted > 0) {
+            applyCompaction(cr);
+        }
+        auto after = budget_evaluator_.evaluate(memory, budget_, memory.systemPrompt(),
+                                                client_->config().model, calibrator_);
+        return after.status < ContextStatus::Error;
+    };
+
     // 渐进式：每轮动态获取工具列表
     auto result = loop.run(memory, effective_system_prompt,
                            std::move(callbacks), config);
@@ -309,6 +196,8 @@ Agent::InternalResult Agent::processSerial(
         r.raw_response.finish_reason = "cancelled";
     else if (result.loop_detected)
         r.raw_response.finish_reason = "loop_detected";
+    else if (result.budget_exhausted)
+        r.raw_response.finish_reason = "context_overflow";
     if (!result.response.content.empty() || !result.response.tool_calls.empty()) {
         llm::Message assistant;
         assistant.role = llm::MessageRole::Assistant;

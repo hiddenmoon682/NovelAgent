@@ -1,5 +1,6 @@
 #include "agent/tools/WorldRuleTools.h"
 #include "project/ProjectIO.h"
+#include "utils/IdUtils.h"
 #include "utils/SchemaUtils.h"
 #include <algorithm>
 #include <spdlog/spdlog.h>
@@ -9,8 +10,7 @@ using json = nlohmann::json;
 
 namespace {
 WorldRule* findRule(std::vector<WorldRule>& r, const std::string& id) {
-    auto it = std::find_if(r.begin(), r.end(), [&](const WorldRule& x) { return x.id == id; });
-    return (it != r.end()) ? &(*it) : nullptr;
+    return utils::id::findById(r, id);
 }
 
 // A6: 软校验——warn 不阻断
@@ -135,16 +135,14 @@ json CreateWorldRuleTool::execute(const json& args) {
     // 生成 ID: rule-001 格式
     int max_num = 0;
     for (const auto& r : project_->world_rules) {
-        if (r.id.size() >= 6 && r.id.substr(0, 5) == "rule-") {
-            try { max_num = std::max(max_num, std::stoi(r.id.substr(5))); }
-            catch (...) {}
+        // D2: 非标准 ID 解析失败时安全跳过，不参与编号统计
+        if (auto num = utils::id::tryParseIdNumber(r.id, "rule-")) {
+            max_num = std::max(max_num, *num);
         }
     }
 
     WorldRule new_r;
-    if (max_num + 1 < 10)       new_r.id = "rule-00" + std::to_string(max_num + 1);
-    else if (max_num + 1 < 100) new_r.id = "rule-0" + std::to_string(max_num + 1);
-    else                         new_r.id = "rule-" + std::to_string(max_num + 1);
+    new_r.id = utils::id::formatSequentialId("rule-", max_num + 1);
 
     new_r.name        = name;
     new_r.summary     = args.value("summary", "");

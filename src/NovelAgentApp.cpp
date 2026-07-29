@@ -1,9 +1,7 @@
 #include "NovelAgentApp.h"
 
-#include "agent/tools/BuiltInTool.h"
 #include "agent/index/ProjectIndexService.h"
 #include "agent/prompt/Prompts.h"
-#include "agent/skill/BuiltinSkills.h"
 #include "project/Models/Project.h"
 #include "utils/FileUtils.h"
 
@@ -27,63 +25,6 @@ NovelAgentApp::~NovelAgentApp() = default;
 agent::IIndexService* NovelAgentApp::indexService()
 {
     return index_service_.get();
-}
-
-void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
-{
-    // 长期记忆日志与技能发现均须先于工具注册完成
-    //（save_memory 依赖已初始化的 store；use_skill/save_skill 持有 registry 指针）
-    if (project_ && !project_->path.empty()) {
-        ltm_store_.init(project_->path + "/.novelagent/memories.json");
-
-        const std::string global_skills = utils::file::configDir() + "/skills";
-        skill::installBuiltinSkills(global_skills);
-
-        skill_registry_.addSearchPath(project_->path + "/skills");
-        skill_registry_.addSearchPath(global_skills);
-        skill_registry_.setDisabledSkills(loadDisabledSkills());
-        skill_registry_.discoverAll();
-    }
-
-    if (project_ && !project_->title.empty()) {
-        agent::ToolDependencies deps{project_, &vector_store_, &embedding_gen_,
-                                     &ltm_store_, &skill_registry_};
-        agent::BuiltInTool::registerAllTo(registry_, deps, disabledTools);
-    }
-
-    agent_.setSystemPrompt(buildSystemPrompt());
-    // 会话边界（新建/切换）时重建 prompt：save_skill 新增的技能目录
-    // 才能在下个会话对 LLM 可见（会话中途不重建，保 KV cache 稳定）
-    agent_.setSystemPromptProvider([this] { return buildSystemPrompt(); });
-
-    // 注入上下文管理组件
-    agent_.setProject(project_.get());
-    agent_.setCalibrator(&calibrator_);
-
-    // Token 预算先于持久化注入：启动恢复时的用量百分比需用真实模型上限计算
-    agent::TokenBudget budget;
-    budget.model_limit = client_.config().max_context_tokens;
-    agent_.setTokenBudget(budget);
-
-    // 仅项目已打开时启用持久化（避免空路径时写到盘符根目录 /.novelagent）
-    if (project_ && !project_->path.empty()) {
-        agent_.setPersistence(&persistence_);
-        agent_.loadSessionState();  // 启动时恢复 active 会话（system prompt 以本次装配为准）
-    }
-
-    if (project_ && !project_->path.empty()) {
-        std::string vec_path = project_->path + "/.novelagent/vectors.json";
-        vector_store_.init(vec_path);
-    }
-
-    // 会话压缩摘要自动沉淀到长期记忆日志
-    agent_.setSummarySink([this](const std::string& summary) {
-        if (ltm_store_.initialized())
-            ltm_store_.append(summary, "summary");
-    });
-
-    index_service_ = std::make_unique<agent::ProjectIndexService>(
-        project_, vector_store_, embedding_gen_, &ltm_store_);
 }
 
 std::string NovelAgentApp::buildSystemPrompt() const

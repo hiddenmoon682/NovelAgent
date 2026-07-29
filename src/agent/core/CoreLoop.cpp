@@ -216,6 +216,23 @@ CoreLoopResult CoreLoop::runImpl(
         }
 
         if (state_) state_->transition(AgentState::Thinking);
+
+        // ── 轮内预算检查：工具结果回填后、下一轮 LLM 调用前 ──
+        // WHY：这是一轮内 token 增长最陡的时点（多个大体积工具结果一次性入上下文），
+        // 也是现有两个压缩触发点（发送前评估、on_round_complete）之间的盲区；
+        // 不在此拦截，下一轮 chat() 只能被动收到 API 的 context_length_exceeded 400。
+        if (config.hooks.on_tool_results_applied && !config.hooks.on_tool_results_applied()) {
+            // WHY：优雅终止而非抛异常——tool_result 已合法入 memory，抛异常会让
+            // Agent::process 回滚整轮对话、丢失用户输入。收尾方式与 max_rounds
+            // 到顶一致：剥离 tool_calls，避免上层再追加无配对结果的 assistant 消息。
+            spdlog::warn("[CoreLoop] 工具结果回填后上下文仍超限，提前终止循环 (round={})", round);
+            response.tool_calls.clear();
+            r.response = response;
+            r.budget_exhausted = true;
+            r.rounds_executed = round + 1;
+            r.error = "上下文超限：自动压缩后仍不足，工具循环已提前终止";
+            return r;
+        }
     }
 
     // 达到最大轮数

@@ -3,6 +3,7 @@
 #include "llm/TokenCounter.h"
 #include "project/ProjectIO.h"
 #include "utils/FileUtils.h"
+#include "utils/IdUtils.h"
 #include "utils/SchemaUtils.h"
 
 #include <algorithm>
@@ -21,9 +22,7 @@ namespace {
 Chapter* findChapter(std::vector<Chapter>& chapters,
                      const std::string& chapter_id)
 {
-    auto it = std::find_if(chapters.begin(), chapters.end(),
-        [&](const Chapter& ch) { return ch.id == chapter_id; });
-    return (it != chapters.end()) ? &(*it) : nullptr;
+    return utils::id::findById(chapters, chapter_id);
 }
 
 // A6: 校验单值 string ID 和 vector<string> ID 是否存在。
@@ -265,26 +264,26 @@ json CreateChapterTool::execute(const json& args) {
     int max_ch_num = 0;
     for (const auto& ch : project_->outline.chapters) {
         max_order = std::max(max_order, ch.order);
-        if (ch.id.size() >= 3 && ch.id.substr(0, 3) == "ch-") {
-            try {
-                int num = std::stoi(ch.id.substr(3));
-                max_ch_num = std::max(max_ch_num, num);
-            } catch (...) {}
+        // D2: 非标准 ID（如 ch-abc）解析失败时安全跳过，不参与编号统计
+        if (auto num = utils::id::tryParseIdNumber(ch.id, "ch-")) {
+            max_ch_num = std::max(max_ch_num, *num);
         }
     }
 
     Chapter new_ch;
     // C6: 生成 ID 后校验唯一性（防御非标准 ID 格式导致的编号冲突）
     int candidate_num = max_ch_num + 1;
-    std::string candidate_id = "ch-" + std::to_string(candidate_num);
-    if (candidate_num < 10)      candidate_id = "ch-00" + std::to_string(candidate_num);
-    else if (candidate_num < 100) candidate_id = "ch-0" + std::to_string(candidate_num);
+    std::string candidate_id = utils::id::formatSequentialId("ch-", candidate_num);
     if (findChapter(project_->outline.chapters, candidate_id)) {
         // 编号冲突（手动创建的 ID 与自增编号重叠），递增到下一个可用编号
-        while (findChapter(project_->outline.chapters, "ch-" + std::to_string(++candidate_num))) {}
-        if (candidate_num < 10)      candidate_id = "ch-00" + std::to_string(candidate_num);
-        else if (candidate_num < 100) candidate_id = "ch-0" + std::to_string(candidate_num);
-        else                           candidate_id = "ch-" + std::to_string(candidate_num);
+        // WHY: 查重必须用补零格式（ch-005）——存量 ID 均为补零格式，
+        // 此前用未补零的 "ch-" + std::to_string() 查重永远匹配不到，冲突检测形同虚设（D1）
+        // WHY: 本分支为防御性代码，正常编号扫描下不可达——存量补零 ID 必然被
+        // tryParseIdNumber 解析计入 max，候选 pad(max+1) 不会与之重叠；
+        // 保留以防未来 ID 格式规则变化
+        do {
+            candidate_id = utils::id::formatSequentialId("ch-", ++candidate_num);
+        } while (findChapter(project_->outline.chapters, candidate_id));
         spdlog::warn("[create_chapter] ID 冲突，改为 {}", candidate_id);
     }
     new_ch.id = candidate_id;

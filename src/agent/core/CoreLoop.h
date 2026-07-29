@@ -23,6 +23,13 @@ struct CoreLoopHooks {
     // input_tokens/output_tokens 为 API 返回的当前轮次实际值。
     // estimated_tokens 为 LLM 调用前对 conversation 的原始估算值。
     std::function<void(int input_tokens, int output_tokens, int estimated_tokens)> on_round_complete;
+
+    // 工具结果回填 memory 之后、下一轮 LLM 调用之前触发。
+    // WHY：on_round_complete 的触发点在 chat() 返回后、工具执行前，覆盖不了
+    // 工具结果回填带来的 token 增量（单结果可达 32KB×N）——这是轮内累积
+    // 溢出的盲区。调用方（Agent）在此评估预算并按需压缩；返回 false 表示
+    // 压缩后仍超限，CoreLoop 将优雅终止循环而非等下一轮 API 返回 400。
+    std::function<bool()> on_tool_results_applied;
 };
 
 struct CoreLoopConfig {
@@ -46,8 +53,9 @@ struct CoreLoopResult {
 
     bool cancelled = false;        //  外部取消
     bool loop_detected = false;    //  重复调用检测后终止
+    bool budget_exhausted = false; //  工具结果回填后上下文超限且压缩不足，提前终止
 
-    // 终止描述，仅在 cancelled / loop_detected 时非空。
+    // 终止描述，仅在 cancelled / loop_detected / budget_exhausted 时非空。
     std::string error;
 
     // ── 执行统计 ──
