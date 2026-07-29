@@ -22,7 +22,8 @@ foreach(name test_tool_registry test_agent test_chapter_tools
              test_character_tools test_shell_tools
              test_setting_tools test_world_rule_tools
              test_outline_tools test_style_tools test_core_loop
-             test_skill_registry test_search_memory_tools)
+             test_skill_registry test_search_memory_tools
+             test_progressive_tool_provider)
     add_novelagent_test(${name} "novelagent_core;novelagent_tools")
 endforeach()
 
@@ -37,7 +38,8 @@ if(EXISTS "D:/SoftWare/msys2/mingw64/bin")
                     test_character_tools test_shell_tools
                     test_setting_tools test_world_rule_tools
                     test_outline_tools test_style_tools test_core_loop
-                    test_skill_registry test_search_memory_tools)
+                    test_skill_registry test_search_memory_tools
+                    test_progressive_tool_provider)
     set_property(TEST ${CORE_TESTS} ${TOOLS_TESTS}
         APPEND PROPERTY ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:D:/SoftWare/msys2/mingw64/bin")
