@@ -50,32 +50,36 @@ description: 当用户想创建、编写或定制一个新技能（Skill）时�
 - 若同名技能已存在，先提醒用户 save_skill 会覆盖原内容
 )MD";
 
+// 内置技能条目：目录名 + 嵌入的 SKILL.md 全文。
 struct BuiltinSkill {
-    const char* dir_name;
-    const char* content;
+    const char* dir_name;   // 技能目录名（落盘时作为 <skills_dir>/<dir_name>/）
+    const char* content;    // SKILL.md 完整内容（frontmatter + 正文）
 };
 
+// 内置技能清单：随应用二进制分发，启动时由 installBuiltinSkills 落盘。
 const BuiltinSkill kBuiltinSkills[] = {
     {"create-skill", kCreateSkillMd},
 };
 
 } // namespace
 
+// 将全部内置技能安装到指定技能根目录（不存在才写入）。
+// 语义：已存在的 SKILL.md 一律跳过 —— 尊重用户修改，但删除后下次启动会恢复出厂内容。
 void installBuiltinSkills(const std::string& skills_dir) {
     namespace fs = std::filesystem;
-    std::error_code ec;
+    std::error_code ec;  // 全程用 error_code，文件系统异常不抛出、不中断启动
 
     for (const auto& s : kBuiltinSkills) {
-        fs::path dir = fs::path(skills_dir) / s.dir_name;
-        fs::path file = dir / "SKILL.md";
+        fs::path dir = fs::path(skills_dir) / s.dir_name;  // 拼技能目录：<skills_dir>/<dir_name>
+        fs::path file = dir / "SKILL.md";                  // 拼文件路径：<skills_dir>/<dir_name>/SKILL.md
         if (fs::exists(file, ec))
             continue; // 尊重用户已有（可能被修改过的）版本
 
         fs::create_directories(dir, ec);
         if (ec)
-            continue;
+            continue;  // 建目录失败（权限等）则跳过该技能
 
-        std::ofstream out(file, std::ios::binary);
+        std::ofstream out(file, std::ios::binary);  // 二进制写，避免 CRLF 转换
         if (out.is_open())
             out << s.content;
     }
