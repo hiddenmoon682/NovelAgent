@@ -7,17 +7,29 @@ find_program(CCACHE ccache)
 if(CCACHE)
     set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE}")
     set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE}")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        # ccache 按可执行名把 c++.exe 保守归类为 compiler_type=other，进而误触发
+        # Clang 专用的 PCH mtime 硬检查（不受 sloppiness 控制）：清理重建后
+        # cmake_pch.hxx mtime 变化 → PCH 必 miss → 全部 TU 级联 miss（实测命中率
+        # 仅 0.8%）。内联声明真实类型 gcc 后清理重建可 100% 命中。
+        # 用 launcher 内联参数（ccache 4.8+）而非 --set-config，避免污染用户级
+        # 全局配置影响其它项目。
+        list(APPEND CMAKE_C_COMPILER_LAUNCHER "compiler_type=gcc")
+        list(APPEND CMAKE_CXX_COMPILER_LAUNCHER "compiler_type=gcc")
+    endif()
     message(STATUS "Using ccache: ${CCACHE}")
     # pch_defines: 忽略 PCH 中嵌入的 __DATE__/__TIME__ 变化，避免无意义 cache miss
     # time_macros: 忽略源文件中 __TIME__/__DATE__/__TIMESTAMP__ 宏，提升命中率
-    set(ENV{CCACHE_SLOPPINESS} "pch_defines,time_macros")
-    execute_process(COMMAND ${CCACHE} --set-config sloppiness=pch_defines,time_macros
+    # include_file_mtime/ctime: 忽略被包含文件（含 .gch）的 mtime/ctime，改用
+    #   内容哈希判定命中——清理重建后 PCH 时间戳变化不再导致全量 cache miss
+    set(ENV{CCACHE_SLOPPINESS} "pch_defines,time_macros,include_file_mtime,include_file_ctime")
+    execute_process(COMMAND ${CCACHE} --set-config sloppiness=pch_defines,time_macros,include_file_mtime,include_file_ctime
         OUTPUT_QUIET ERROR_QUIET)
     # max_size 10G：默认 5G 在全量构建 + PCH + 多分支切换下容易触发
     # LRU 淘汰，压低命中率；提升上限让历史对象文件留得住
     execute_process(COMMAND ${CCACHE} --set-config max_size=10G
         OUTPUT_QUIET ERROR_QUIET)
-    message(STATUS "ccache sloppiness: pch_defines,time_macros; max_size: 10G")
+    message(STATUS "ccache sloppiness: pch_defines,time_macros,include_file_mtime,include_file_ctime; max_size: 10G")
 endif()
 
 if(MSVC)
