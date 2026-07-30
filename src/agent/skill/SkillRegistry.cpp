@@ -97,15 +97,17 @@ std::vector<SkillMetadata> SkillRegistry::listSkills() const {
 // 由 LLM 调用 use_skill 工具按需加载全文，避免技能增多时上下文膨胀。
 std::string SkillRegistry::getSkillContext() const {
     std::unique_lock lock(mutex_);  // 常驻技能的 ensureLoaded 会写入缓存
-    std::ostringstream catalog;  // 按需技能目录
-    std::ostringstream resident; // 常驻技能全文
+    std::ostringstream catalog;  // 按需技能目录（仅名称+描述）
+    std::ostringstream resident; // 常驻技能全文（完整 Markdown）
 
+    // ── 遍历分流：按 always 把启用技能拆成“常驻全文”与“按需目录”两桶 ──
     for (auto& s : skills_) {
         if (!s.enabled)
-            continue;
+            continue;  // 禁用技能对 LLM 完全隐藏
 
         if (s.always) {
-            loader_.ensureLoaded(s);
+            // 常驻技能：渲染完整内容（标题 + 描述 + 正文 + 命令列表）
+            loader_.ensureLoaded(s);  // 懒加载正文到缓存
             if (!s.emoji.empty())
                 resident << s.emoji << " ";
             resident << "### " << s.name << "\n";
@@ -113,6 +115,7 @@ std::string SkillRegistry::getSkillContext() const {
                 resident << s.description << "\n\n";
             resident << s.content << "\n";
 
+            // 附带该技能提供的斜杠命令（渲染时补斜杠）
             if (!s.commands.empty()) {
                 resident << "**Commands:**\n";
                 for (const auto& cmd : s.commands) {
@@ -124,6 +127,7 @@ std::string SkillRegistry::getSkillContext() const {
             }
             resident << "\n";
         } else {
+            // 按需技能：仅列一行“名称: 描述”，正文留给 use_skill 加载
             catalog << "- " << s.name;
             if (!s.description.empty())
                 catalog << ": " << s.description;
@@ -134,17 +138,19 @@ std::string SkillRegistry::getSkillContext() const {
     std::string catalog_str = catalog.str();
     std::string resident_str = resident.str();
     if (catalog_str.empty() && resident_str.empty())
-        return {};
+        return {};  // 无任何可用技能时返回空串，prompt 不注入该段
 
+    // ── 最终拼接：先按需目录（带使用指引），后常驻全文 ──
     std::ostringstream ctx;
     if (!catalog_str.empty()) {
+        // 用 XML 标签包裹目录，并附一句引导：匹配时先调 use_skill 再执行
         ctx << "以下技能可按需使用：当任务与某技能描述匹配时，"
                "先调用 use_skill 工具加载其完整内容，再按内容指引执行。\n"
             << "<available_skills>\n" << catalog_str << "</available_skills>\n";
     }
     if (!resident_str.empty()) {
         if (!catalog_str.empty())
-            ctx << "\n";
+            ctx << "\n";  // 两段之间空行分隔
         ctx << resident_str;
     }
     return ctx.str();

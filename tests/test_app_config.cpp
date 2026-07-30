@@ -42,13 +42,13 @@ void test_legacy_context_window_loaded() {
         {"name", "deepseek"},
         {"api_key", "sk-xxx"},
         {"base_url", "https://api.deepseek.com"},
-        {"model", "deepseek-chat"},
+        {"model", "deepseek-v4-flash"},
         {"context_window", 65536},
         {"temperature", 0.7},
         {"max_tokens", 4096},
     };
     ProviderConfig c = pj.get<ProviderConfig>();
-    CHECK(c.max_context_tokens == 65536);   // 旧字段值生效，而非默认 131072
+    CHECK(c.max_context_tokens == 65536);   // 旧字段值生效，而非默认 1000000
     CHECK(c.name == "deepseek");
     CHECK(c.supports_cache_control == false); // 旧 config 无此字段，用默认值
     PASS();
@@ -83,7 +83,7 @@ void test_missing_uses_default() {
         {"name", "x"},
     };
     ProviderConfig c = pj.get<ProviderConfig>();
-    CHECK(c.max_context_tokens == 131072);
+    CHECK(c.max_context_tokens == 1000000);
     PASS();
 }
 
@@ -149,7 +149,7 @@ void test_roundtrip_legacy_config_upgraded() {
                 {"name", "deepseek"},
                 {"api_key", "sk-legacy"},
                 {"base_url", "https://api.deepseek.com"},
-                {"model", "deepseek-chat"},
+                {"model", "deepseek-v4-flash"},
                 {"context_window", 65536},
                 {"temperature", 0.5},
                 {"max_tokens", 8192},

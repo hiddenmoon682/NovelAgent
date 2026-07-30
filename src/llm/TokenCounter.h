@@ -12,8 +12,8 @@
 //
 //   // 带校准的估算（需要 TokenCounter 实例）
 //   TokenCounter counter;
-//   int estimated = TokenCounter::countTokensCalibrated("你好 world", "deepseek-chat", &counter);
-//   counter.calibrate("deepseek-chat", estimated, actual_from_api);
+//   int estimated = TokenCounter::countTokensCalibrated("你好 world", "deepseek-v4-flash", &counter);
+//   counter.calibrate("deepseek-v4-flash", estimated, actual_from_api);
 
 #include "llm/Message.h"
 
@@ -51,7 +51,7 @@ public:
     // ===================================================================
 
     // 注册一次校准观测值。
-    // model      模型名（如 "deepseek-chat", "gpt-4o"）
+    // model      模型名（如 "deepseek-v4-flash", "gpt-4o"）
     // estimated  请求前的启发式估算 token 数
     // actual     API 返回的真实 prompt_tokens
     void calibrate(const std::string& model, int estimated, int actual);
