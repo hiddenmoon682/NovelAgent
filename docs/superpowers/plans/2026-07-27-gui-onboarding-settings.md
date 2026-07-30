@@ -198,7 +198,7 @@ void AppConfig::ensureDefaultProviders() {
         p.model = model;
         providers[name] = p;
     };
-    ensure("deepseek", "https://api.deepseek.com", "deepseek-chat");
+    ensure("deepseek", "https://api.deepseek.com", "deepseek-v4-flash");
     ensure("kimi", "https://api.moonshot.cn/v1", "kimi-k2-turbo-preview");
     ensure("claude", "https://api.anthropic.com", "claude-sonnet-4-20250514");
 }

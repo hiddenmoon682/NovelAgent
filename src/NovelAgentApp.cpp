@@ -60,18 +60,21 @@ std::string NovelAgentApp::skillSettingsPath() const
     return project_->path + "/.novelagent/skills.json";
 }
 
+// 从 <项目>/.novelagent/skills.json 读取被禁用的技能名列表。
+// 任何异常路径（无项目、文件缺失、JSON 损坏）都安全地返回空列表。
 std::vector<std::string> NovelAgentApp::loadDisabledSkills() const
 {
     std::vector<std::string> disabled;
     if (!project_ || project_->path.empty())
-        return disabled;
+        return disabled;  // 项目未打开：无持久化路径，直接返回空
 
     const std::string text = utils::file::readText(skillSettingsPath());
     if (text.empty())
-        return disabled;
+        return disabled;  // 文件不存在或为空：尚无禁用记录
 
     try {
         auto j = nlohmann::json::parse(text);
+        // 读取 "disabled_skills" 数组；字段缺失时默认空数组
         for (const auto& name : j.value("disabled_skills", std::vector<std::string>{}))
             disabled.push_back(name);
     } catch (...) {

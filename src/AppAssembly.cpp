@@ -28,18 +28,20 @@ void NovelAgentApp::setupLongTermMemoryAndSkills()
     if (project_ && !project_->path.empty()) {
         ltm_store_.init(project_->path + "/.novelagent/memories.json");
 
+        // 内置技能安装到全局目录，再登记项目级 + 全局两个搜索路径
         const std::string global_skills = utils::file::configDir() + "/skills";
         skill::installBuiltinSkills(global_skills);
 
-        skill_registry_.addSearchPath(project_->path + "/skills");
-        skill_registry_.addSearchPath(global_skills);
-        skill_registry_.setDisabledSkills(loadDisabledSkills());
-        skill_registry_.discoverAll();
+        skill_registry_.addSearchPath(project_->path + "/skills");  // 项目级优先
+        skill_registry_.addSearchPath(global_skills);               // 全局兜底
+        skill_registry_.setDisabledSkills(loadDisabledSkills());    // 恢复用户禁用列表
+        skill_registry_.discoverAll();                              // 扫描并加载技能元数据
     }
 }
 
 void NovelAgentApp::registerBuiltInTools(const std::vector<std::string>& disabledTools)
 {
+    // 仅项目有效（有标题）时注册；依赖包以指针传入，工具借此访问向量库/记忆/技能
     if (project_ && !project_->title.empty()) {
         agent::ToolDependencies deps{project_, &vector_store_, &embedding_gen_,
                                      &ltm_store_, &skill_registry_};

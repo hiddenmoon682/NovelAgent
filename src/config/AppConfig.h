@@ -19,16 +19,16 @@
 #include <nlohmann/json.hpp>
 
 struct ProviderConfig {
-    std::string name;
-    std::string api_key;
-    std::string base_url;       // 例如 "https://api.deepseek.com"
-    std::string model;          // 例如 "deepseek-chat"
-    int max_context_tokens = 131072; // 每次请求发送给 LLM 的最大上下文 token 数（应用层预算上限，非模型上下文窗口大小）
-    double temperature = 0.7;
-    int max_tokens = 4096;
-    bool supports_cache_control = false; // 是否支持显式 cache_control 标记（Anthropic API 需开启）
-    bool enable_thinking = false;        // 是否启用 DeepSeek thinking 模式（默认关闭，token 消耗大）
-    std::string reasoning_effort = "high"; // 推理努力度: "high" / "max" / "medium" / "low"
+    std::string name;                          // 提供商名称（如 "deepseek" / "kimi" / "claude"）
+    std::string api_key;                       // API 密钥
+    std::string base_url;                      // 接口地址，例如 "https://api.deepseek.com"
+    std::string model;                         // 模型名，例如 "deepseek-v4-flash"
+    int max_context_tokens = 1000000;          // 单次请求发送的最大上下文 token 数（应用层预算上限，非模型窗口大小）
+    double temperature = 0.7;                  // 采样温度，越高输出越随机
+    int max_tokens = 393216;                   // 单次回复的最大生成 token 数
+    bool supports_cache_control = false;       // 是否支持显式 cache_control 标记（Anthropic API 需开启）
+    bool enable_thinking = false;              // 是否启用 DeepSeek thinking 模式（默认关闭，token 消耗大）
+    std::string reasoning_effort = "high";     // 推理努力度: "high" / "max" / "medium" / "low"
 };
 
 // 手写序列化（替代 NLOHMANN_DEFINE_TYPE_INTRUSIVE）：
@@ -55,7 +55,7 @@ inline void from_json(const nlohmann::json& j, ProviderConfig& c) {
     c.base_url               = j.value("base_url", std::string{});
     c.model                  = j.value("model", std::string{});
     c.temperature            = j.value("temperature", 0.7);
-    c.max_tokens             = j.value("max_tokens", 4096);
+    c.max_tokens             = j.value("max_tokens", 393216);
     c.supports_cache_control = j.value("supports_cache_control", false);
     c.enable_thinking        = j.value("enable_thinking", false);
     c.reasoning_effort       = j.value("reasoning_effort", "high");
@@ -67,7 +67,7 @@ inline void from_json(const nlohmann::json& j, ProviderConfig& c) {
     } else if (j.contains("context_window") && !j["context_window"].is_null()) {
         c.max_context_tokens = j["context_window"].get<int>();
     } else {
-        c.max_context_tokens = 131072;
+        c.max_context_tokens = 1000000;
     }
 }
 

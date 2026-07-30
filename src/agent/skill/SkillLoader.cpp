@@ -59,6 +59,7 @@ SkillLoader::discover(const std::filesystem::path& dir) const {
 }
 
 void SkillLoader::ensureLoaded(SkillMetadata& skill) const {
+    // 幂等：正文已加载过则直接返回，避免重复读盘
     if (skill.content_loaded)
         return;
 
@@ -72,37 +73,39 @@ void SkillLoader::ensureLoaded(SkillMetadata& skill) const {
     }
 
     std::string line;
-    bool in_frontmatter = false;
-    bool past_frontmatter = false;
-    bool first_line = true;
-    std::ostringstream body;
+    bool in_frontmatter = false;    // 正处于首个 --- 与次个 --- 之间（元数据区）
+    bool past_frontmatter = false;  // 已越过次个 ---，进入正文区
+    bool first_line = true;         // 仅首行需要剥 BOM
+    std::ostringstream body;        // 收集正文
 
+    // 状态机：用两个 --- 分隔符界定 frontmatter，只取其后的正文
     while (std::getline(file, line)) {
         if (!line.empty() && line.back() == '\r')
-            line.pop_back();
+            line.pop_back();        // 兼容 Windows CRLF 行尾
         if (first_line) {
-            stripBom(line);
+            stripBom(line);         // 剥 UTF-8 BOM，避免影响首个 --- 判定
             first_line = false;
         }
 
         if (line == "---") {
             if (!in_frontmatter && !past_frontmatter) {
-                in_frontmatter = true;
+                in_frontmatter = true;   // 首个 ---：进入 frontmatter
                 continue;
             }
             if (in_frontmatter) {
                 in_frontmatter = false;
-                past_frontmatter = true;
+                past_frontmatter = true;  // 次个 ---：frontmatter 结束，正文开始
                 continue;
             }
+            // 正文里再出现的 --- 不处理，落入下方按正文收集
         }
 
         if (past_frontmatter)
-            body << line << "\n";
+            body << line << "\n";   // 仅收集 frontmatter 之后的行
     }
 
     skill.content = body.str();
-    skill.content_loaded = true;
+    skill.content_loaded = true;    // 标记已加载（即使正文为空也算成功）
 }
 
 bool SkillLoader::checkGating(const SkillMetadata& skill) const {
