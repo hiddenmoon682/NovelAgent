@@ -44,6 +44,12 @@
 - `ProjectAccess` 将 `Project&` 适配为两个接口
 - Phase 3.5 子 Agent 只获取 `IProjectReader&`，确保并行安全
 
+### 上下文分层 — 规则层 vs 技能层
+- **全局规则**（`~/.novelagent/rules.md`）：跨项目、每次对话都需要的硬约束/静态参考（如叙事结构模板），经 `RulesProvider` 注入 system prompt
+- **项目规则**（`<project>/.novelagent/rules.md`）：单项目定制约束，叠加在全局规则之后
+- **按需技能**（`skills/<name>/SKILL.md`）：流程性、任务触发的操作指引，经 `use_skill` 按需加载
+- **原则**：每次都需要的静态内容应进规则层，而非常驻技能（`always: true`）
+
 ---
 
 ## 封装规则

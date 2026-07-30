@@ -2,6 +2,8 @@
 
 #include "agent/skill/BuiltinSkills.h"
 
+#include "utils/FileUtils.h"
+
 #include <filesystem>
 #include <fstream>
 
@@ -61,6 +63,27 @@ const BuiltinSkill kBuiltinSkills[] = {
     {"create-skill", kCreateSkillMd},
 };
 
+// 默认全局规则：静态叙事结构参考（自 plot-structure 技能正文下沉，
+// 经 RulesProvider 每次注入 system prompt，不再依赖常驻技能）。
+const char* kDefaultRulesMd = R"MD(# 叙事结构参考
+
+## 三幕式结构
+- **第一幕（建置）**：介绍角色、世界观、核心冲突
+- **第二幕（对抗）**：升级矛盾、midpoint 转折
+- **第三幕（解决）**：高潮对决、收束伏笔
+
+## 起承转合（网文常用）
+- 起：开篇钩子，3 章内建立核心悬念
+- 承：展开世界观，深化角色关系
+- 转：重大反转或危机
+- 合：阶段性收束 + 新钩子
+
+## 节奏控制
+- 每 3-5 章设置一个小高潮
+- 每卷结尾设置悬念钩子
+- 张弛有度：紧张情节后安排日常/感情戏缓冲
+)MD";
+
 } // namespace
 
 // 将全部内置技能安装到指定技能根目录（不存在才写入）。
@@ -82,6 +105,21 @@ void installBuiltinSkills(const std::string& skills_dir) {
         std::ofstream out(file, std::ios::binary);  // 二进制写，避免 CRLF 转换
         if (out.is_open())
             out << s.content;
+    }
+}
+
+// 将默认全局规则安装到 <config_dir>/rules.md（不存在才写入）。
+// 语义与 installBuiltinSkills 一致：尊重用户已有（可能被修改过）的版本，
+// 删除后下次启动恢复出厂内容；写入失败（权限等）静默跳过，不中断启动。
+void installDefaultRules(const std::string& config_dir) {
+    const std::string path = utils::file::joinPath(config_dir, "rules.md");
+    if (utils::file::exists(path))
+        return; // 尊重用户已有版本
+
+    try {
+        utils::file::writeText(path, kDefaultRulesMd);  // 父目录缺失时自动创建
+    } catch (...) {
+        // 写入失败不中断启动，下次启动重试
     }
 }
 

@@ -11,6 +11,7 @@
 #include "retrieval/VectorStore.h"
 #include "retrieval/EmbeddingGenerator.h"
 #include "agent/memory/LongTermMemoryStore.h"
+#include "agent/prompt/RulesProvider.h"
 #include "agent/skill/SkillRegistry.h"
 
 struct Project;
@@ -52,6 +53,7 @@ private:
     agent::LongTermMemoryStore ltm_store_;          // 长期记忆日志
     std::unique_ptr<agent::ProjectIndexService> index_service_;  // 项目索引服务
     skill::SkillRegistry skill_registry_;           // 技能注册表
+    agent::prompt::RulesProvider rules_provider_;   // 规则层（全局 + 项目规则叠加）
 
     // 装配入口与分段辅助函数（定义在 AppAssembly.cpp，按功能段拆分，调用顺序即装配顺序）。
     void setupAgent(const std::vector<std::string>& disabledTools);

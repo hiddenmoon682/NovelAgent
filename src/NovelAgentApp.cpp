@@ -16,6 +16,7 @@ NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
     , storage_(project_ ? project_->path : "")
     , persistence_(storage_)
     , embedding_gen_(provider)
+    , rules_provider_(utils::file::configDir())
 {
     setupAgent(std::move(disabledTools));
 }
@@ -34,6 +35,11 @@ std::string NovelAgentApp::buildSystemPrompt() const
     if (project_ && !project_->path.empty()) {
         system_prompt += "\n\n";
         system_prompt += agent::prompt::kToolUseInstructions;
+
+        // 规则层：全局 + 项目规则叠加（会话边界重读盘，改文件下个会话即生效）
+        std::string rules = rules_provider_.combined(project_->path);
+        if (!rules.empty())
+            system_prompt += "\n\n" + rules;
 
         // 渐进式技能上下文：常驻技能全文 + 按需技能目录（use_skill 加载）
         std::string skill_ctx = skill_registry_.getSkillContext();

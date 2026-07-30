@@ -31,6 +31,7 @@ void NovelAgentApp::setupLongTermMemoryAndSkills()
         // 内置技能安装到全局目录，再登记项目级 + 全局两个搜索路径
         const std::string global_skills = utils::file::configDir() + "/skills";
         skill::installBuiltinSkills(global_skills);
+        skill::installDefaultRules(utils::file::configDir());  // 默认全局规则（rules.md）同步落盘
 
         skill_registry_.addSearchPath(project_->path + "/skills");  // 项目级优先
         skill_registry_.addSearchPath(global_skills);               // 全局兜底
