@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026-07-30] 移除 Shell/PowerShell 工具
+
+### 删除 — ShellTools（YAGNI + 安全面收缩）
+- 删除 `src/agent/tools/ShellTools.h/.cpp`（`run_powershell` 工具）与 `tests/test_shell_tools.cpp`；
+  工具靠 `REGISTER_TOOL_NP` 自注册，源文件删除即自动从注册表移除，无需改装配/注册代码。
+- 理由：纯小说创作 Agent 用不到 Shell 执行能力，删除后减少提示注入下的安全面；
+  同时消除独占 ~161.6s 的 test_shell_tools 慢测试（ctest 全量墙钟从 ~167s 降至 10s 量级）。
+- 同步清理：`cmake/Sources.cmake`、`tests/CMakeLists.txt`（两处测试列表）、`CLAUDE.md`（安全规则/RAII 示例）。
+
 ## [2026-07-27] 真正的多会话 + Token 用量展示
 
 ### 新增功能 — 多会话存储与编排

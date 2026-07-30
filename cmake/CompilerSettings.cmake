@@ -13,7 +13,11 @@ if(CCACHE)
     set(ENV{CCACHE_SLOPPINESS} "pch_defines,time_macros")
     execute_process(COMMAND ${CCACHE} --set-config sloppiness=pch_defines,time_macros
         OUTPUT_QUIET ERROR_QUIET)
-    message(STATUS "ccache sloppiness: pch_defines,time_macros")
+    # max_size 10G：默认 5G 在全量构建 + PCH + 多分支切换下容易触发
+    # LRU 淘汰，压低命中率；提升上限让历史对象文件留得住
+    execute_process(COMMAND ${CCACHE} --set-config max_size=10G
+        OUTPUT_QUIET ERROR_QUIET)
+    message(STATUS "ccache sloppiness: pch_defines,time_macros; max_size: 10G")
 endif()
 
 if(MSVC)

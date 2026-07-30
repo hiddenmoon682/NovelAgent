@@ -4,6 +4,9 @@
 
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
+// postStreaming 返回 httplib::Result（HttpClient.h 仅前向声明），
+// 消费返回值需要完整类型，故在实现文件中包含
+#include <httplib.h>
 
 #include <stdexcept>
 

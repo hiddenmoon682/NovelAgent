@@ -88,12 +88,6 @@
 
 ## 安全规则
 
-### ShellTools
-- **黑名单** ~40 关键词（含 PowerShell 缩写），拦截删除/格式化/下载/提权
-- **允许**管道 `|`、重定向 `>`、分隔符 `;` `&&`（正常 shell 操作）
-- 输出上限 100KB
-- 安全声明：`isDangerousCommand()` 不提供绝对安全
-
 ### 工具参数
 - `SchemaUtils::object()` 默认 `additionalProperties: false` — 拒绝 LLM 传入未定义字段
 - Phase 5 将添加完整参数 Schema 校验
@@ -144,7 +138,6 @@
 ## C++ 专项规则
 
 ### RAII — 所有资源必须由类管理
-- 文件句柄：`std::unique_ptr<FILE, decltype(&_pclose)>`（见 `ShellTools.cpp`）
 - 互斥锁 + 容器：封装为 RAII 类（见 `ConnectionCache` in `LLMClient.cpp`）
 - 临时目录/文件：构造创建、析构清理（见测试中的 `TestProject`）
 - 输出通道所有权：`std::unique_ptr<IOutputChannel>`（见 `NovelAgentApp`）

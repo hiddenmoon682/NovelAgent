@@ -9,11 +9,19 @@
 // 多线程场景请通过 LLMClientFactory 为每个执行上下文创建独立的 LLMClient（从而独立的 HttpClient）。
 
 #include <nlohmann/json_fwd.hpp>
-#include <httplib.h>
 
 #include <functional>
 #include <string>
 #include <memory>
+
+// 前向声明 httplib 类型 —— httplib.h 约 349KB（header-only），
+// 若在此包含会经 LLMClient.h / EmbeddingGenerator.h 传播到大量 TU，显著拖慢编译。
+// 完整定义仅在实现文件中包含（HttpClient.cpp；LLMClient.cpp 因消费
+// postStreaming 的返回值也需自行 #include <httplib.h>）。
+namespace httplib {
+class Client;
+class Result;
+} // namespace httplib
 
 namespace llm {
 
@@ -119,9 +127,9 @@ private:
     // 构造完整的请求路径（path_prefix + path）。
     std::string fullPath(const std::string& path) const;
 
-    // 构造 Authorization + Content-Type 等标准请求头。
-    httplib::Headers defaultHeaders() const;
-
+    // 注：标准请求头（Authorization/Content-Type 等）的构造已移至
+    // HttpClient.cpp 的文件内部函数 —— httplib::Headers 是别名，
+    // 无法前向声明，留在头文件会迫使包含 httplib.h。
 };
 
 } // namespace llm

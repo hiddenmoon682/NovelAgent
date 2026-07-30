@@ -96,7 +96,6 @@ set(NOVELAGENT_TOOLS
     src/agent/tools/SettingTools.h src/agent/tools/SettingTools.cpp
     src/agent/tools/WorldRuleTools.h src/agent/tools/WorldRuleTools.cpp
     src/agent/tools/OutlineTools.h src/agent/tools/OutlineTools.cpp
-    src/agent/tools/ShellTools.h src/agent/tools/ShellTools.cpp
     src/agent/tools/SearchMemoryTools.h src/agent/tools/SearchMemoryTools.cpp
     src/agent/tools/SaveMemoryTool.h src/agent/tools/SaveMemoryTool.cpp
     src/agent/tools/StyleTools.h src/agent/tools/StyleTools.cpp

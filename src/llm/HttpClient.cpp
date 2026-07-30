@@ -70,22 +70,29 @@ std::string HttpClient::fullPath(const std::string& path) const
 }
 
 // ===========================================================================
-// defaultHeaders — 构造每个 HTTP 请求都携带的默认请求头
+// makeDefaultHeaders — 构造每个 HTTP 请求都携带的默认请求头
 //
 // 包含:
 //   Authorization — Bearer Token 认证，使用配置中的 API Key
 //   Content-Type — 固定 application/json（所有请求体均为 JSON）
 //   User-Agent  — 客户端标识，方便服务端识别调用来源
+//
+// 文件内部函数（非成员方法）：httplib::Headers 是别名无法前向声明，
+// 若作为成员方法会迫使 HttpClient.h 包含 httplib.h（编译传播）。
 // ===========================================================================
 
-httplib::Headers HttpClient::defaultHeaders() const
+namespace {
+
+httplib::Headers makeDefaultHeaders(const HttpConfig& config)
 {
     return {
-        {"Authorization", "Bearer " + config_.api_key},
+        {"Authorization", "Bearer " + config.api_key},
         {"Content-Type", "application/json"},
         {"User-Agent", "NovelAgent/0.3.0"}
     };
 }
+
+} // namespace
 
 // ===========================================================================
 // post — 非流式 JSON POST（发送完整 JSON 请求体，等待完整 JSON 响应）
@@ -114,7 +121,7 @@ nlohmann::json HttpClient::post(
 {
     std::string path_full = fullPath(path);
     std::string body_str = body.dump();
-    auto headers = defaultHeaders();
+    auto headers = makeDefaultHeaders(config_);
 
     spdlog::debug("[HttpClient] POST {} (body {} bytes)", path_full, body_str.size());
 
@@ -208,7 +215,7 @@ httplib::Result HttpClient::postStreaming(
     std::function<bool(const char* data, size_t len)> content_receiver)
 {
     std::string path_full = fullPath(path);
-    auto headers = defaultHeaders();
+    auto headers = makeDefaultHeaders(config_);
 
     const int max_attempts = config_.max_retries > 0 ? config_.max_retries : 2;
     int retry_delay_ms = config_.retry_base_delay_ms;

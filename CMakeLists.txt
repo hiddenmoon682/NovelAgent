@@ -64,6 +64,14 @@ set(COMMON_LIBS
 add_library(novelagent_core OBJECT ${CORE_SOURCES})
 target_include_directories(novelagent_core PUBLIC src)
 target_compile_definitions(novelagent_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
+if(WIN32)
+    # 与 Qt6::Platform 强制的 UNICODE/_UNICODE 保持一致：
+    # 否则 GUI 目标（链接 Qt6 后带 -DUNICODE）与 novelagent_core 的 PCH
+    # 宏不一致，GCC 拒绝复用 PCH（-Winvalid-pch “UNICODE is defined”）。
+    # 项目内 Win32 调用均显式使用 A 后缀函数（如 CreateProcessA），
+    # 此定义不改变任何运行时行为，仅修复 PCH 命中。
+    target_compile_definitions(novelagent_core PUBLIC UNICODE _UNICODE)
+endif()
 target_link_libraries(novelagent_core PUBLIC ${COMMON_LIBS})
 target_precompile_headers(novelagent_core PRIVATE
     <string> <vector> <map> <algorithm> <sstream>
@@ -75,6 +83,31 @@ add_library(novelagent_tools OBJECT ${TOOLS_SOURCES})
 target_include_directories(novelagent_tools PUBLIC src)
 target_link_libraries(novelagent_tools PUBLIC novelagent_core)
 target_precompile_headers(novelagent_tools REUSE_FROM novelagent_core)
+
+# ── 测试专用预链接 STATIC 库 ──
+# 29 个测试原先各自把 core/tools 的全部对象文件重新链接一遍；
+# 预先归档成 .a 后，链接器按需拉取归档成员（core 无静态初始化副作用，
+# 可安全惰性链接），显著缩短测试链接耗时。
+# 注意：主程序目标（app/qt/gui）不受影响，仍直接链接 OBJECT 库。
+# 使用要求（include/defs/依赖）需手动复制自 novelagent_core ——
+# 由 $<TARGET_OBJECTS> 构造的 STATIC 库不继承源 OBJECT 库的 INTERFACE 属性。
+add_library(novelagent_core_prelinked STATIC $<TARGET_OBJECTS:novelagent_core>)
+target_include_directories(novelagent_core_prelinked PUBLIC src)
+target_compile_definitions(novelagent_core_prelinked PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
+if(WIN32)
+    target_compile_definitions(novelagent_core_prelinked PUBLIC UNICODE _UNICODE)
+endif()
+target_link_libraries(novelagent_core_prelinked PUBLIC ${COMMON_LIBS})
+
+# tools 预链接库：仅含 tools 对象，core 依赖经 core_prelinked 传递。
+# 重要：tools 对象靠 REGISTER_TOOL 的文件级静态初始化自注册，
+# 普通归档链接会丢弃未被直接引用的成员 → 工具注册消失。
+# 整体包含由 tests/CMakeLists.txt 的 TOOLS_PRELINKED 用显式的
+# --whole-archive/--no-whole-archive 标志对实现（不用
+# $<LINK_LIBRARY:WHOLE_ARCHIVE,...>，它在 MinGW-GNU 上展开为
+# --push-state/--pop-state，本工具链的 lld MinGW 前端不识别）。
+add_library(novelagent_tools_prelinked STATIC $<TARGET_OBJECTS:novelagent_tools>)
+target_link_libraries(novelagent_tools_prelinked PUBLIC novelagent_core_prelinked)
 
 set(APP_SOURCES ${NOVELAGENT_APP})  # 定义于 cmake/Sources.cmake（集中登记）
 
@@ -118,6 +151,8 @@ if(BUILD_GUI)
         Qt6::Core Qt6::Quick Qt6::QuickControls2
     )
     set_target_properties(novelagent_qt PROPERTIES AUTOMOC ON)
+    # 复用 core 的 PCH（UNICODE 宏已在 novelagent_core 上统一，可安全复用）
+    target_precompile_headers(novelagent_qt REUSE_FROM novelagent_core)
 
     qt_add_resources(novelagent_qt "qml_resources"
         PREFIX "/qml"

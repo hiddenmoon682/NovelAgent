@@ -13,5 +13,27 @@
         "CMAKE_PREFIX_PATH": "D:/SoftWare/msys2/mingw64"
       }
     }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "description": "显式 jobs=26，文档化 Ninja 默认并行度（逻辑核心数+2，本机 24 核 → 26）",
+      "configurePreset": "default",
+      "jobs": 26
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "default",
+      "description": "并行跑 ctest（jobs=24，本机逻辑核心数），失败不中断其余用例，仅失败时输出详情",
+      "configurePreset": "default",
+      "execution": {
+        "jobs": 24,
+        "stopOnFailure": false
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }
