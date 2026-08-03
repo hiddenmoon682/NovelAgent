@@ -1,5 +1,98 @@
 # Changelog
 
+## [2026-08-03] TokenBudget 注入粒度细化：装配层只注入模型上限
+
+### 重构 — 装配层不再依赖 TokenBudget 结构，仅注入真实模型上限值
+- `Agent` 新增 `setModelLimit(int)`（内联，更新 `budget_.model_limit` 并刷新用量快照），
+  移除 `setTokenBudget(TokenBudget)`；
+- `AppAssembly::setupContextAndTokenBudget` 改为 `agent_.setModelLimit(client_.config().max_context_tokens)`，
+  不再构造 `TokenBudget` 对象；
+- `tests/test_agent.cpp` 相应改用 `setModelLimit(600)`；
+- 说明：注入粒度从「整个 TokenBudget 对象」细化为「单个模型上限值」，装配层无需了解
+  预算结构（warning/critical 阈值沿用默认值），与 Agent 解耦更彻底。
+
+## [2026-08-03] 移除 Agent 类的 project_ 字段
+
+### 删除 — Agent 不应持有 Project 引用，项目依赖已由工具层 ToolDependencies 独立接收
+- 移除 `Agent::project_` 成员（`Agent.h`）及其 setter `setProject`；
+- 移除 `AppAssembly::setupContextAndTokenBudget` 中的 `agent_.setProject(project_.get())` 调用；
+- 移除 `Agent.h` 中不再需要的 `struct Project;` 前向声明；
+- 说明：该字段仅有 setter 写入、Agent 内部从未读取（system prompt 构建在 `NovelAgentApp`，
+  不经过 `project_`），为历史遗留死代码。解耦后 Agent 只关注 LLM 编排核心逻辑，
+  项目上下文由工具层 `ToolDependencies` 独立注入。
+
+## [2026-08-03] 移除内置工具禁用机制
+
+### 删除 — 内置工具是 Agent 固定功能，无需用户禁用，禁用机制无实际需求
+- 移除 `NovelAgentApp` 构造函数的 `disabledTools` 参数及 `setupAgent`/`registerBuiltInTools`
+  透传链路；
+- 移除 `BuiltInTool::registerAllTo` 的 `disabled` 参数与过滤逻辑，内置工具全部注册；
+- 说明：该禁用机制自始为预留骨架（`QmlBridge` 调用点一直传空列表，无实际作用），
+  且内置工具是 Agent 固定功能、普通用户无禁用入口，故整体移除，`registerBuiltInTools`
+  恢复为无参全量注册。
+
+## [2026-08-03] 保留描述中的双引号（单引号标量内为字面量）
+
+### 修复 — save_skill 写盘不再剔除描述中的双引号
+- `SkillTools::sanitizeFrontmatterValue` 移除双引号剔除分支：写盘已用 YAML 单引号标量包裹，
+  双引号在单引号标量内是字面量，无需剔除，改为仅对单引号执行 `''` 翻倍、其余字符原样保留，
+  避免描述被篡改（如 `她说"你好"` 变 `她说你好`）；
+- 同步：`test_yaml_edge_cases` 往返断言补充双引号保留校验；`test_skill_registry` 10/10 通过。
+
+## [2026-08-03] 移除技能 emoji 字段
+
+### 删除 — 技能元数据不再包含可选图标
+- 删除 `SkillMetadata::emoji` 字段及 frontmatter 的 `emoji` 键解析（一般技能不配置图标，
+  该字段无实用价值）；
+- 同步清理：`SaveSkillTool` 写盘不再输出 `emoji` 行、schema 参数移除，`SkillRegistry` 常驻
+  技能标题不再加 emoji 前缀，`BuiltinSkills` 内置技能去掉 `emoji` 行，`QmlBridge` skillList 与
+  `SkillPopup.qml` 展示移除 emoji，`skills/plot-structure/SKILL.md` 去掉 `emoji` 行；
+- 同步：`test_frontmatter_parse` 移除 emoji 断言，`test_save_skill_injection` 移除 emoji 注入
+  参数；`test_skill_registry` 10/10 通过。
+
+## [2026-08-03] 编译链接启用死代码消除（gc-sections）
+
+### 构建 — 减小可执行文件体积并略加速链接
+- `cmake/CompilerSettings.cmake`：GCC/Clang 分支新增 `-ffunction-sections -fdata-sections`
+  编译选项（每个函数/数据拆到独立节）与 `-Wl,--gc-sections` 链接选项（剔除未被引用的节），
+  显著减小 exe 体积并让链接器处理更少输入；
+- 与既有 `--icf=safe` 兼容；工具自注册（`REGISTER_TOOL`）依赖全局注册表引用，属正常符号
+  引用，不会被 gc-sections 误删；
+- 注意：新增编译选项会改变各 TU 的编译结果，首次全量重建时 ccache 命中清零（预期），
+  后续增量构建恢复命中。
+
+## [2026-08-03] 引入 yaml-cpp 解析 SKILL.md frontmatter
+
+### 重构 — SkillLoader::parseFrontmatter 用 yaml-cpp 替换手写状态机
+- `cmake/FetchDependencies.cmake` 新增 yaml-cpp 依赖：优先 `find_package(yaml-cpp)` 命中 MSYS2
+  pacman 安装的版本（`mingw-w64-x86_64-yaml-cpp` 0.8.0，共享库），未安装则回退 FetchContent
+  从 GitHub 浅克隆源码编译（固定 0.8.0 保证目标名 `yaml-cpp::yaml-cpp`）；
+- `CMakeLists.txt`：`COMMON_LIBS` 追加 `yaml-cpp::yaml-cpp`，`NEEDED_DLLS` 追加
+  `libyaml-cpp.dll`（MSYS2 为共享库，随 GUI 部署）；
+- `SkillLoader::parseFrontmatter` 用 yaml-cpp 全量解析前以 `---` 分隔符提取文本块，字段集
+  （name/description/emoji/always/commands）与既有行为完全一致，`always` 兼容布尔与字符串写法；
+- `SaveSkillTool` 写盘时 `description`/`emoji` 改用 YAML 单引号标量包裹（首版双引号包裹
+  经评审发现：双引号标量内反斜杠会触发转义解析导致写入非法 YAML，改单引号后反斜杠与
+  裸值冒号均按字面量处理），`sanitize` 同步将单引号翻倍为 `''` 转义；
+- `parseFrontmatter` 捕获 YAML 解析异常时直接抛异常（开发期不兼容存量，不符合协议即拒绝，
+  不再逐行提取标量字段兜底），由 `discover` 捕获后跳过该技能并告警，不中断整体扫描；
+- `always` 解析补齐 `on/On/ON` 写法（与 yaml-cpp 布尔语义一致）；
+- 新增 `test_yaml_edge_cases` 覆盖非法 YAML 跳过、`always: on`、反斜杠写盘往返。
+  `test_save_skill_injection` 恢复通过，`test_skill_registry` 10/10 通过。
+
+## [2026-08-03] 移除技能环境门控体系（required_bins / required_envs / os_restrict）
+
+### 删除 — SkillMetadata 环境门控字段
+- 删除 `SkillMetadata::required_bins`、`required_envs`、`os_restrict` 三个字段及
+  frontmatter 的 `required_bins`/`bins`、`required_envs`/`envs`、`os` 键解析；
+- 删除 `SkillLoader::isBinaryAvailable`（内部经 `std::system` 调 `where`/`which`）、
+  `isEnvAvailable`（`std::getenv`）与 `currentOS`（编译宏）——与已移除的 Shell 执行能力
+  方向一致，纯小说创作技能无需依赖外部可执行文件、环境变量或平台差异；
+- 移除 `discover` 阶段的 `checkGating` 门控过滤，技能一经发现即注册；
+- 同步：`test_skill_registry` 注入用例改注入 `commands` 保持防护意图、`SkillTools` 注释、
+  `docs/superpowers/plans/2026-07-30-yaml-cpp-integration.md` 字段集描述、`SkillMetadata` 注释
+  （去除“门控”“跳过环境门控”残留表述）。
+
 ## [2026-07-30] 移除 Shell/PowerShell 工具
 
 ### 删除 — ShellTools（YAGNI + 安全面收缩）

@@ -59,6 +59,7 @@ set(TOOLS_SOURCES ${NOVELAGENT_TOOLS})
 set(COMMON_LIBS
     nlohmann_json::nlohmann_json spdlog::spdlog
     httplib::httplib OpenSSL::SSL OpenSSL::Crypto
+    yaml-cpp::yaml-cpp
 )
 
 add_library(novelagent_core OBJECT ${CORE_SOURCES})
@@ -176,6 +177,7 @@ if(WIN32 AND EXISTS "D:/SoftWare/msys2/mingw64/bin")
         libssl-3-x64.dll libcrypto-3-x64.dll
         libspdlog-1.17.dll libwinpthread-1.dll
         libgcc_s_seh-1.dll libstdc++-6.dll
+        libyaml-cpp.dll
     )
     if(BUILD_GUI)
         foreach(dll ${NEEDED_DLLS})

@@ -39,6 +39,12 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic -pipe)
     # 使用 lld 链接器（比 GNU ld 快 3-5x）
     add_link_options(-fuse-ld=lld)
+    # 死代码消除：把每个函数/数据拆到独立节，链接时剔除未被引用的节，
+    # 可显著减小 exe 体积并让链接器处理更少输入（略加速链接）。
+    # 与 --icf=safe 兼容；工具自注册（REGISTER_TOOL）依赖全局注册表引用，
+    # 属正常符号引用，不会被 gc-sections 误删。
+    add_compile_options(-ffunction-sections -fdata-sections)
+    add_link_options(-Wl,--gc-sections)
     # Release: lld 链接器优化
     #   --icf=safe: 相同代码折叠（安全模式，保留指针唯一性语义）
     #   -O1:       基础链接时优化（哈希表/重定位，代价极低）

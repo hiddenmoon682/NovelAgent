@@ -501,9 +501,7 @@ void test_context_overflow_end_to_end() {
 
     // 预算 600：warm-up 轮次远低于 80% AutoCompact 阈值（发送前评估不干扰），
     // 大结果回填后无论怎么压缩都超 model_limit → 复评 Error → hook 返回 false
-    agent::TokenBudget budget;
-    budget.model_limit = 600;
-    agent.setTokenBudget(budget);
+    agent.setModelLimit(600);
 
     // 两轮 warm-up：确保压缩切割点落在旧历史，本轮 user 输入留在保留窗口
     agent.process("历史对话一");

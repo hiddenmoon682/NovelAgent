@@ -1,6 +1,5 @@
 #include "agent/tools/BuiltInTool.h"
 #include "agent/tool/ToolRegistry.h"
-#include <algorithm>
 
 namespace agent {
 
@@ -13,14 +12,14 @@ void BuiltInTool::registerFactory(std::string name, Factory factory) {
     factories().push_back({std::move(name), std::move(factory)});
 }
 
+// 将全部已注册的内置工具工厂实例化并注册到传入的注册表。
+// 由 App 装配阶段（setupAgent）调用一次；每个工具工厂用共享依赖 deps 构造，
+// 使其能访问项目/向量库/记忆/技能等资源。
 void BuiltInTool::registerAllTo(ToolRegistry& registry,
-                                 const ToolDependencies& deps,
-                                 const std::vector<std::string>& disabled) {
-    for (auto& entry : factories()) {
-        if (std::find(disabled.begin(), disabled.end(), entry.name) != disabled.end())
-            continue;
+                                 const ToolDependencies& deps) {
+    // 遍历静态工厂表（REGISTER_TOOL 宏在静态初始化时填充），逐个实例化并注册
+    for (auto& entry : factories())
         registry.registerBuiltInTool(entry.factory(deps));
-    }
 }
 
 const std::vector<std::string>& BuiltInTool::registeredToolNames() {

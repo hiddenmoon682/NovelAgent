@@ -155,6 +155,6 @@ overflow 发生后，有两种恢复手段：
 | `src/llm/HttpClient.h` | 新增 `ContextOverflowError` 或错误码枚举 |
 | `src/llm/HttpClient.cpp` | `parseApiError()` 检测 `context_length_exceeded` 并抛专用异常 |
 | `src/llm/LLMClient.h/cpp` | catch 专用异常并透传 |
-| `src/agent/Agent.cpp` | 区分溢出异常 + 设置错误标记 |
+| `src/agent/core/Agent.cpp` | 区分溢出异常 + 设置错误标记 |
 | `src/cli/ReplHandler.cpp` | 展示溢出恢复选项 |
 | `src/cli/CommandParser.cpp` | 注册 `/truncate` 命令 |

@@ -8,8 +8,7 @@
 #include <nlohmann/json.hpp>
 
 NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
-                               std::shared_ptr<Project> project,
-                               std::vector<std::string> disabledTools)
+                               std::shared_ptr<Project> project)
     : client_(provider)
     , agent_(client_, registry_, memory_)
     , project_(project ? std::move(project) : std::make_shared<Project>())
@@ -18,7 +17,7 @@ NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
     , embedding_gen_(provider)
     , rules_provider_(utils::file::configDir())
 {
-    setupAgent(std::move(disabledTools));
+    setupAgent();
 }
 
 NovelAgentApp::~NovelAgentApp() = default;

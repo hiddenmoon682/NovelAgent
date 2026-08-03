@@ -14,6 +14,9 @@ void SkillRegistry::addSearchPath(std::filesystem::path dir) {
     search_paths_.push_back(std::move(dir));
 }
 
+// 扫描全部搜索路径并重建技能列表。
+// 行为：先清空旧列表，遍历各路径发现技能，按名称去重（先发现者优先），
+// 并依据禁用集合标记每个技能是否启用。仅供加载阶段调用，之后用 get/loadContent 查询。
 void SkillRegistry::discoverAll() {
     std::unique_lock lock(mutex_);
     skills_.clear();
@@ -21,10 +24,10 @@ void SkillRegistry::discoverAll() {
 
     for (const auto& dir : search_paths_) {
         for (auto& skill : loader_.discover(dir)) {
-            if (seen.count(skill.name))
+            if (seen.count(skill.name))   // 同名技能只保留先发现的（项目级优先）
                 continue;
             seen.insert(skill.name);
-            skill.enabled = disabled_names_.count(skill.name) == 0;
+            skill.enabled = disabled_names_.count(skill.name) == 0;  // 禁用集中则停用
             skills_.push_back(std::move(skill));
         }
     }
@@ -108,8 +111,6 @@ std::string SkillRegistry::getSkillContext() const {
         if (s.always) {
             // 常驻技能：渲染完整内容（标题 + 描述 + 正文 + 命令列表）
             loader_.ensureLoaded(s);  // 懒加载正文到缓存
-            if (!s.emoji.empty())
-                resident << s.emoji << " ";
             resident << "### " << s.name << "\n";
             if (!s.description.empty())
                 resident << s.description << "\n\n";

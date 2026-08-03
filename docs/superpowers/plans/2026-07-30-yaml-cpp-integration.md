@@ -8,13 +8,13 @@
 NovelAgent 的技能元数据解析器 `SkillLoader::parseFrontmatter`（`src/agent/skill/SkillLoader.cpp:141`）是一个手写的 YAML 子集解析器，仅识别逐行 `key: value` 与块状数组。面对行业标准 SKILL.md 写法时存在缺陷：
 
 - 多行块标量 `description: |` 会被解析成字面量 `|`，后续缩进内容丢失；
-- 流式数组 `bins: [git, python]` 不支持（值被丢弃）；
+- 流式数组 `commands: [{name: x}]` 不支持（值被丢弃）；
 - 引号剥离逻辑粗糙，可能误伤合法值。
 
 引入成熟的 yaml-cpp 库可获得完整 YAML 兼容性与健壮性，使 NovelAgent 真正对齐 OpenCode 等业界 SKILL.md 约定。
 
 **范围（已确认）**：
-- 仅替换解析器，保持现有字段集（`name`/`description`/`emoji`/`always`/`required_bins`+`bins`/`required_envs`+`envs`/`os`/`commands`）与全部现有行为；
+- 仅替换解析器，保持现有字段集（`name`/`description`/`emoji`/`always`/`commands`）与全部现有行为；
 - 不扩展 `SkillMetadata` 结构，不新增 `allowed_tools`/`version` 等字段；
 - 完全移除手写解析逻辑，不保留双轨回退。
 
@@ -60,9 +60,6 @@ endif()
   - `name`：`as<std::string>("")`，空则回退目录名（保留现有兜底）；
   - `description` / `emoji`：`as<std::string>("")`；
   - `always`：`as<bool>(false)`；
-  - `required_bins`：取 `required_bins` 或别名 `bins`，遍历 sequence → `vector<string>`；
-  - `required_envs`：取 `required_envs` 或别名 `envs`；
-  - `os_restrict`：取 `os`；
   - `commands`：sequence of map，读取 `name`/`description`，丢弃无名命令。
 - 保留：`root_dir = parent_path`；文件不可打开时 `throw`（由 `discover` 捕获 → 跳过 + 告警）。
 - CRLF、空行、引号、多行块标量、流式数组均由 yaml-cpp 原生处理。
@@ -70,7 +67,7 @@ endif()
 - 删除原手写解析中不再需要的逐行状态机代码。
 
 ### 5. 头文件 — `src/agent/skill/SkillLoader.h`
-`parseFrontmatter` 签名不变；`isBinaryAvailable`/`isEnvAvailable`/`currentOS`（供 `checkGating` 使用）保留。一般无需改动头文件。
+`parseFrontmatter` 签名不变。一般无需改动头文件。
 
 ### 6. 测试 — `tests/test_skill_registry.cpp`
 现有用例必须全部保持绿色（不改断言）：
@@ -81,7 +78,7 @@ endif()
 - `test_content_read_failure`（仅 name 的 frontmatter）
 - `test_save_skill_tool`（写后重发现往返）
 
-可选新增（低风险，展示新能力）：多行 `description: |` 与流式数组 `bins: [git, python]` 的解析用例。
+可选新增（低风险，展示新能力）：多行 `description: |` 与流式数组 `commands: [{name: x}]` 的解析用例。
 
 ## 受影响文件
 
@@ -96,7 +93,7 @@ endif()
 
 1. 配置与构建：`cmake --preset default && cmake --build build`。
 2. 运行技能测试：`ctest --test-dir build -R skill`（或直接跑 `test_skill_registry`），确认全部绿色。
-3. 手工验证新能力：创建一个含 `description: |` 多行描述与 `bins: [git]` 流式数组的技能，确认解析正确（旧解析器会丢信息）。
+3. 手工验证新能力：创建一个含 `description: |` 多行描述与 `commands: [{name: x}]` 流式数组的技能，确认解析正确（旧解析器会丢信息）。
 4. 启动应用，确认内置 `create-skill` 技能正常加载并出现在 system prompt。
 5. 若为共享库，确认 yaml-cpp DLL 已拷贝到 `novelagent_gui` 旁且应用可启动。
 

@@ -4,6 +4,8 @@
 
 #include "utils/FileUtils.h"
 
+#include <spdlog/spdlog.h>
+
 #include <filesystem>
 #include <fstream>
 
@@ -14,7 +16,6 @@ namespace {
 // create-skill 元技能：引导用户创建符合规范的新技能，最终用 save_skill 落盘。
 const char* kCreateSkillMd = R"MD(---
 name: create-skill
-emoji: "🛠"
 description: 当用户想创建、编写或定制一个新技能（Skill）时使用，引导用户明确需求并生成规范的 SKILL.md
 ---
 
@@ -99,12 +100,17 @@ void installBuiltinSkills(const std::string& skills_dir) {
             continue; // 尊重用户已有（可能被修改过的）版本
 
         fs::create_directories(dir, ec);
-        if (ec)
-            continue;  // 建目录失败（权限等）则跳过该技能
+        if (ec) {
+            // 建目录失败（权限等）则跳过该技能，记录便于诊断
+            spdlog::warn("[Skills] 创建技能目录失败，跳过 {}: {}", dir.string(), ec.message());
+            continue;
+        }
 
         std::ofstream out(file, std::ios::binary);  // 二进制写，避免 CRLF 转换
         if (out.is_open())
             out << s.content;
+        else
+            spdlog::warn("[Skills] 无法打开技能文件，跳过 {}: {}", file.string(), s.dir_name);
     }
 }
 
@@ -118,8 +124,11 @@ void installDefaultRules(const std::string& config_dir) {
 
     try {
         utils::file::writeText(path, kDefaultRulesMd);  // 父目录缺失时自动创建
+    } catch (const std::exception& e) {
+        // 写入失败不中断启动，下次启动重试；记录原因便于诊断
+        spdlog::warn("[Skills] 默认规则写入失败: {}: {}", path, e.what());
     } catch (...) {
-        // 写入失败不中断启动，下次启动重试
+        spdlog::warn("[Skills] 默认规则写入失败(未知异常): {}", path);
     }
 }
 

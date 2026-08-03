@@ -23,14 +23,16 @@ class LongTermMemoryStore;
 
 // ============================================================================
 // ToolDependencies — 工具构造所需的共享依赖集合
+// 工具的工厂函数在构造时按需取用其中的成员；未用到的成员可为 nullptr。
 // ============================================================================
 
 struct ToolDependencies {
-    std::shared_ptr<Project> project;
-    retrieval::IVectorStore* vector_store = nullptr;
-    retrieval::IEmbeddingGenerator* embedding_gen = nullptr;
-    LongTermMemoryStore* memory_store = nullptr;   // 长期记忆日志（可选）
-    skill::SkillRegistry* skill_registry = nullptr;
+    std::shared_ptr<Project> project;              // 当前小说项目（工具读写项目数据）。
+                                                   // 共享所有权：工具与 App 共享同一项目实例
+    retrieval::IVectorStore* vector_store = nullptr;          // 语义检索向量库（RAG 查询）
+    retrieval::IEmbeddingGenerator* embedding_gen = nullptr;  // 文本嵌入生成器（写入向量库前向量化）
+    LongTermMemoryStore* memory_store = nullptr;              // 长期记忆日志（save_memory 等记忆工具，可选）
+    skill::SkillRegistry* skill_registry = nullptr;           // 技能注册表（use_skill/save_skill 等技能工具）
 };
 
 // ============================================================================
@@ -63,8 +65,7 @@ public:
     static void registerFactory(std::string name, Factory factory);
 
     static void registerAllTo(class ToolRegistry& registry,
-                               const ToolDependencies& deps,
-                               const std::vector<std::string>& disabled = {});
+                               const ToolDependencies& deps);
 
     static const std::vector<std::string>& registeredToolNames();
 

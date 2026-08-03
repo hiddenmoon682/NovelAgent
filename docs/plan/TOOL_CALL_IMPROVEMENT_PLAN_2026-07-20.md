@@ -53,7 +53,7 @@ Agent::process()                        # 入口：输入校验 → 状态机 �
 
 **改进方案**：引入 `ThreadPool` 并行执行独立工具。
 
-- 已有 `src/agent/ThreadPool.h`（Phase 4 的并行子 Agent 基础设施）
+- 已有 `src/agent/tool/ThreadPool.h`（Phase 4 的并行子 Agent 基础设施）
 - 工具间无依赖时并行，有依赖推断目前不现实（LLM 不表达依赖关系）
 - 简单策略：所有工具并行，`ThreadPool::parallelFor` 即可
 
@@ -184,9 +184,9 @@ struct ToolLifecycleCallbacks {
 
 | 文件 | 改动概要 |
 |------|---------|
-| `src/agent/ToolCallLoop.cpp` | JSON 归一化 + 溢出恢复 catch + 动态轮数 |
-| `src/agent/ToolPipeline.h/cpp` | 并行执行（可选）+ 工具级重试 + 生命周期回调 |
-| `src/agent/ToolPipeline.h` | `kMaxRetries` 常量 |
+| `src/agent/core/CoreLoop.cpp` | JSON 归一化 + 溢出恢复 catch + 动态轮数 |
+| `src/agent/tool/ToolPipeline.h/cpp` | 并行执行（可选）+ 工具级重试 + 生命周期回调 |
+| `src/agent/tool/ToolPipeline.h` | `kMaxRetries` 常量 |
 | `src/llm/ILLMClient.h` | 确保 chat() 异常含 context overflow 信息 |
 | `src/tools/`（新建 chain_tool） | ToolChain 元工具实施 |
 | 不修改：`Conversation.h`、`ParameterValidator.h`、`IToolProvider.h` | 接口稳定无需动 |

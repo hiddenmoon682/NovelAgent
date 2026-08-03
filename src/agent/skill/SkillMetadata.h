@@ -13,19 +13,15 @@ struct SkillCommand {
 };
 
 // 单个技能的元数据与按需加载的正文，对应一个 SKILL.md，
-// 贯穿发现、门控、注册、加载全流程。
+// 贯穿发现、注册、加载全流程。
 struct SkillMetadata {
     std::string name;             // 技能名（frontmatter 缺省时取目录名）
     std::string description;      // 一句话描述（列入 <available_skills> 目录，供 LLM 判断是否匹配）
-    std::string emoji;            // 可选图标（常驻技能标题前缀）
-    // always=true: 全文常驻 system prompt（并跳过环境门控）；
+    // always=true: 全文常驻 system prompt；
     // 否则仅在目录中列出名称/描述，由 LLM 通过 use_skill 工具按需加载。
     bool always = false;
     // 用户级开关：禁用的技能对 LLM 完全隐藏（不进目录、use_skill 拒绝加载）。
     bool enabled = true;
-    std::vector<std::string> required_bins;   // 门控：要求 PATH 中存在的可执行文件
-    std::vector<std::string> required_envs;   // 门控：要求非空的环境变量
-    std::vector<std::string> os_restrict;     // 门控：允许的 OS（linux/darwin/win32），空 = 不限
     std::filesystem::path root_dir;           // 技能目录（SKILL.md 所在目录）
     std::vector<SkillCommand> commands;       // 技能声明的斜杠命令列表
 

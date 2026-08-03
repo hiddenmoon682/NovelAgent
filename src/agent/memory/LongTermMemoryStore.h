@@ -33,19 +33,19 @@ struct MemoryEntry {
 class LongTermMemoryStore {
 public:
     // 初始化并从文件加载日志；文件不存在或格式无效时从空开始（不抛异常）。
-    // @param path 日志文件路径（通常为 <project>/.novelagent/memories.json）。
+    // path 为日志文件路径（通常为 <project>/.novelagent/memories.json）。
     void init(const std::string& path);
 
     // 追加一条记忆并立即持久化。
-    // @param text 记忆内容；为空时不写入。
-    // @param kind 记忆类型，可选值：fact / preference / event / summary；
-    //             传空串时默认为 fact。
-    // @return 生成的条目 id（如 "mem-1721980800-3"）；text 为空或未
-    //         init() 时不写入并返回空串。
+    // text 为记忆内容；为空时不写入。
+    // kind 为记忆类型，可选值：fact / preference / event / summary；
+    //      传空串时默认为 fact。
+    // 返回生成的条目 id（如 "mem-1721980800-3"）；text 为空或未
+    // init() 时不写入并返回空串。
     std::string append(const std::string& text, const std::string& kind);
 
     // 删除指定 id 的记忆并立即持久化。
-    // @return true = 已删除；false = 未找到该 id。
+    // 返回 true = 已删除；false = 未找到该 id。
     bool remove(const std::string& id);
 
     // 全部记忆条目的副本（线程安全）。
@@ -57,14 +57,16 @@ public:
     bool initialized() const;
 
 private:
+    // 从日志文件加载并重建条目（init 时调用）。
     void loadFromFile();
-    void saveToFile() const;  // 调用方需持有锁
+    // 将当前条目写回日志文件；调用方需持有锁。
+    void saveToFile() const;
 
-    std::string path_;
-    std::vector<MemoryEntry> entries_;
-    int seq_ = 0;             // 同秒内追加的去重序号
-    bool initialized_ = false;
-    mutable std::mutex mutex_;
+    std::string path_;                          // 日志文件路径（init 时赋值）
+    std::vector<MemoryEntry> entries_;          // 内存中的记忆条目（按追加顺序）
+    int seq_ = 0;                               // 同秒内追加的去重序号
+    bool initialized_ = false;                  // 是否已完成 init()
+    mutable std::mutex mutex_;                  // 保护 entries_/seq_ 等状态，支持跨线程读写
 };
 
 } // namespace agent

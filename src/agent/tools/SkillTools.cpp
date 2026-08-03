@@ -40,14 +40,18 @@ bool isValidSkillName(const std::string& name) {
 }
 
 // frontmatter 单行字段消毒：换行会注入任意元数据字段（如 always: true
-// 提权常驻、bins 触发命令执行），"---" 行会提前终结 frontmatter。
+// 提权常驻、commands 注入命令列表），"---" 行会提前终结 frontmatter。
+// 写盘用 YAML 单引号标量包裹，故单引号需翻倍转义（\'→''）；双引号在单
+// 引号标量内是字面量，无需剔除，原样保留以不丢描述内容。
 std::string sanitizeFrontmatterValue(const std::string& raw) {
     std::string out;
     out.reserve(raw.size());
     for (char c : raw) {
         if (c == '\n' || c == '\r')
             out += ' ';
-        else if (c != '"')  // 引号可逃逸带引号字段（如 emoji）
+        else if (c == '\'')
+            out += "''";
+        else
             out += c;
     }
     return out;
@@ -83,7 +87,6 @@ json SaveSkillTool::parameters() const {
         {"name",        utils::schema::stringProp("技能名，小写字母数字加连字符，如 dialogue-polish")},
         {"description", utils::schema::stringProp("一句话描述技能用途与适用时机（LLM 依此决定是否加载）")},
         {"content",     utils::schema::stringProp("技能正文 Markdown：使用场景、执行步骤、注意事项等")},
-        {"emoji",       utils::schema::stringProp("可选，展示用 emoji 图标")},
         {"always",      utils::schema::booleanProp("可选，是否全文常驻上下文（默认 false，按需加载）")}
     }, {"name", "description", "content"});
 }
@@ -97,7 +100,6 @@ json SaveSkillTool::execute(const json& args) {
     const std::string name = args.value("name", "");
     const std::string description = sanitizeFrontmatterValue(args.value("description", ""));
     const std::string content = args.value("content", "");
-    const std::string emoji = sanitizeFrontmatterValue(args.value("emoji", ""));
     const bool always = args.value("always", false);
 
     if (!isValidSkillName(name))
@@ -118,9 +120,10 @@ json SaveSkillTool::execute(const json& args) {
 
     out << "---\n";
     out << "name: " << name << "\n";
-    out << "description: " << description << "\n";
-    if (!emoji.empty())
-        out << "emoji: \"" << emoji << "\"\n";
+    // description 用 YAML 单引号标量包裹：单引号内反斜杠与裸值冒号
+    // （如注入的 "always: true"）均按字面量处理，不会误判为 map 值或转义序列；
+    // 描述中的单引号已由 sanitize 翻倍为 ''。name 已校验为字母数字连字符，裸值安全。
+    out << "description: '" << description << "'\n";
     if (always)
         out << "always: true\n";
     out << "---\n\n";

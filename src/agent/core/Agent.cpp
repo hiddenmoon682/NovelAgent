@@ -60,11 +60,6 @@ void Agent::setSystemPrompt(std::string prompt) {
 
 void Agent::clearMemory() { memory_.clear(); }
 
-void Agent::setTokenBudget(TokenBudget budget) {
-    budget_ = budget;
-    refreshUsage();  // 预算变化后百分比需重算（启动时也借此建立初始用量）
-}
-
 // ===========================================================================
 // Compaction — 纯变换 + Agent 决定 apply
 // ===========================================================================

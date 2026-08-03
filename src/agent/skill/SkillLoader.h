@@ -14,15 +14,14 @@
 
 namespace skill {
 
-// 无状态的技能加载器：扫描目录、解析 frontmatter、按需读正文、环境门控。
+// 无状态的技能加载器：扫描目录、解析 frontmatter、按需读正文。
 // 所有方法均为 const，缓存写入由调用方持有的 SkillMetadata 承载。
 class SkillLoader {
 public:
     // 递归扫描目录，发现全部 SKILL.md 并解析其 frontmatter 元数据。
-    // 仅返回通过环境门控（checkGating）的技能；解析失败的技能记日志后跳过。
-    // 不读取正文（content 留空，交由 ensureLoaded 按需加载）。
+    // 解析失败的技能记日志后跳过，不读取正文（content 留空，交由 ensureLoaded 按需加载）。
     // @param dir 技能根目录；不存在或不可遍历时返回空列表，不抛异常。
-    // @return 当前环境可用技能的元数据列表。
+    // @return 发现的技能元数据列表。
     std::vector<SkillMetadata> discover(const std::filesystem::path& dir) const;
 
     // 确保技能正文已加载（渐进式披露的第二级，幂等）。
@@ -33,22 +32,10 @@ public:
     // @param skill 目标技能元数据，content / content_loaded 字段会被写入。
     void ensureLoaded(SkillMetadata& skill) const;
 
-    // 环境门控（gating）检查：判断技能在当前运行环境是否可用。
-    // 依次校验 os 限制、required_bins（PATH 中可执行文件）、
-    // required_envs（非空环境变量）；always=true 的技能跳过全部门控。
-    // @return true = 技能在当前环境可用。
-    bool checkGating(const SkillMetadata& skill) const;
-
 private:
-    // 只读 frontmatter 构造元数据（name/description/emoji/always/
-    // bins/envs/os/commands，不读正文）；文件无法打开时抛异常。
+    // 只读 frontmatter 构造元数据（name/description/always/commands，不读正文）；
+    // 用 yaml-cpp 解析前以 “---” 分隔符提取文本块；文件无法打开或 YAML 非法时抛异常。
     SkillMetadata parseFrontmatter(const std::filesystem::path& file) const;
-    // 可执行文件是否在 PATH 中（Windows 用 where，其余用 which 探测）。
-    bool isBinaryAvailable(const std::string& bin) const;
-    // 环境变量是否存在且非空。
-    bool isEnvAvailable(const std::string& env) const;
-    // 当前平台标识（linux / darwin / win32 / unknown）。
-    std::string currentOS() const;
 };
 
 } // namespace skill

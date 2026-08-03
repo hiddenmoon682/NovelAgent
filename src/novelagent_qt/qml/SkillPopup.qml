@@ -124,8 +124,7 @@ Popup {
                         Row {
                             spacing: Theme.gapXs
                             Label {
-                                text: (modelData.emoji.length > 0 ? modelData.emoji + " " : "")
-                                      + modelData.name
+                                text: modelData.name
                                 font.family: Theme.fontUi
                                 font.pixelSize: Theme.sizeUi
                                 font.weight: Font.DemiBold

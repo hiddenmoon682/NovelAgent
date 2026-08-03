@@ -358,7 +358,6 @@ QVariantList QmlBridge::skillList() const {
         QVariantMap m;
         m.insert(QStringLiteral("name"), QString::fromStdString(s.name));
         m.insert(QStringLiteral("description"), QString::fromStdString(s.description));
-        m.insert(QStringLiteral("emoji"), QString::fromStdString(s.emoji));
         m.insert(QStringLiteral("always"), s.always);
         m.insert(QStringLiteral("enabled"), s.enabled);
         list.push_back(m);

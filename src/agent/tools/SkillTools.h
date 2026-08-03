@@ -30,7 +30,7 @@ public:
 
 // 创建或更新技能（供 create-skill 元技能引导用户创建新技能时落盘）。
 // 写入 <项目>/skills/<name>/SKILL.md 并刷新注册表，新技能立即可用。
-// 参数: name / description / content 必填，emoji / always 可选
+// 参数: name / description / content 必填，always 可选
 // 返回: { ok, path } 或 { error }
 class SaveSkillTool : public BuiltInTool {
     std::shared_ptr<Project> project_;

@@ -11,16 +11,24 @@
 #include "project/Models/Project.h"
 #include "utils/FileUtils.h"
 
-void NovelAgentApp::setupAgent(const std::vector<std::string>& disabledTools)
+// 装配入口：依序调用各分段辅助函数完成 Agent 全部初始化。
+// 调用顺序即装配顺序，各段依赖关系：记忆/技能先就绪 → 工具注册 →
+// prompt → 上下文/预算 → 持久化/向量库 → 摘要/索引。
+void NovelAgentApp::setupAgent()
 {
     setupLongTermMemoryAndSkills();
-    registerBuiltInTools(disabledTools);
+    registerBuiltInTools();
     setupSystemPrompt();
     setupContextAndTokenBudget();
     setupPersistenceAndVectorStore();
     setupSummarySinkAndIndexService();
 }
 
+// 初始化长期记忆日志与技能系统（装配第一段，须先于工具注册）。
+// 步骤：绑定长期记忆到项目目录 → 安装内置技能与默认规则 → 登记项目级/全局搜索路径
+// 并恢复禁用列表 → 扫描加载技能。
+// 须最先执行的原因：save_memory/use_skill/save_skill 等工具以指针持有
+// ltm_store_ 与 skill_registry_，若先注册工具后初始化，工具首次调用会拿到空状态。
 void NovelAgentApp::setupLongTermMemoryAndSkills()
 {
     // 长期记忆日志与技能发现均须先于工具注册完成
@@ -30,8 +38,9 @@ void NovelAgentApp::setupLongTermMemoryAndSkills()
 
         // 内置技能安装到全局目录，再登记项目级 + 全局两个搜索路径
         const std::string global_skills = utils::file::configDir() + "/skills";
+        // 配置内置技能与默认规则所在路径（缺失时写入，已存在则跳过）
         skill::installBuiltinSkills(global_skills);
-        skill::installDefaultRules(utils::file::configDir());  // 默认全局规则（rules.md）同步落盘
+        skill::installDefaultRules(utils::file::configDir());
 
         skill_registry_.addSearchPath(project_->path + "/skills");  // 项目级优先
         skill_registry_.addSearchPath(global_skills);               // 全局兜底
@@ -40,16 +49,21 @@ void NovelAgentApp::setupLongTermMemoryAndSkills()
     }
 }
 
-void NovelAgentApp::registerBuiltInTools(const std::vector<std::string>& disabledTools)
+// 将内置工具注册到工具注册表（仅项目有效时执行）。
+// 依赖包以指针传入，工具借此访问项目/向量库/嵌入生成器/长期记忆/技能。
+void NovelAgentApp::registerBuiltInTools()
 {
     // 仅项目有效（有标题）时注册；依赖包以指针传入，工具借此访问向量库/记忆/技能
     if (project_ && !project_->title.empty()) {
         agent::ToolDependencies deps{project_, &vector_store_, &embedding_gen_,
                                      &ltm_store_, &skill_registry_};
-        agent::BuiltInTool::registerAllTo(registry_, deps, disabledTools);
+        agent::BuiltInTool::registerAllTo(registry_, deps);
     }
 }
 
+// 设置系统 prompt 并注册 prompt 重建 provider。
+// 关键点：会话边界（新建/切换）时重建 prompt，使 save_skill 新增的技能目录
+// 在下个会话对 LLM 可见；会话中途不重建，以保持 KV cache 稳定。
 void NovelAgentApp::setupSystemPrompt()
 {
     agent_.setSystemPrompt(buildSystemPrompt());
@@ -58,18 +72,20 @@ void NovelAgentApp::setupSystemPrompt()
     agent_.setSystemPromptProvider([this] { return buildSystemPrompt(); });
 }
 
+// 注入上下文管理组件（Token 校准器）并设置 Token 预算。
+// WHY：预算须先于持久化注入，启动恢复会话时的用量百分比需用真实模型上限计算。
 void NovelAgentApp::setupContextAndTokenBudget()
 {
     // 注入上下文管理组件
-    agent_.setProject(project_.get());
     agent_.setCalibrator(&calibrator_);
 
-    // Token 预算先于持久化注入：启动恢复时的用量百分比需用真实模型上限计算
-    agent::TokenBudget budget;
-    budget.model_limit = client_.config().max_context_tokens;
-    agent_.setTokenBudget(budget);
+    // 注入真实模型上下文上限（先于持久化注入：启动恢复会话时的用量百分比需用真实上限计算）
+    agent_.setModelLimit(client_.config().max_context_tokens);
 }
 
+// 启用会话持久化并初始化向量存储。
+// 两步均仅项目已打开时执行，避免空路径时写到盘符根目录 /.novelagent；
+// 持久化同时会在启动时恢复 active 会话（system prompt 以本次装配为准）。
 void NovelAgentApp::setupPersistenceAndVectorStore()
 {
     // 仅项目已打开时启用持久化（避免空路径时写到盘符根目录 /.novelagent）
@@ -84,6 +100,9 @@ void NovelAgentApp::setupPersistenceAndVectorStore()
     }
 }
 
+// 装配摘要沉淀与索引服务（装配收尾段）。
+// 步骤：① 注册摘要回调，会话压缩产生的摘要自动 append 到长期记忆日志；
+// ② 创建项目索引服务，绑定项目、向量库、嵌入生成器与长期记忆存储。
 void NovelAgentApp::setupSummarySinkAndIndexService()
 {
     // 会话压缩摘要自动沉淀到长期记忆日志

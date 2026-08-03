@@ -34,9 +34,9 @@ std::atomic<retrieval::IEmbeddingGenerator*> g_embedding_gen{nullptr};
 
 ## 2. ContextManager 职责过重（优先级：高）
 
-**位置:** `src/agent/ContextManager.h`
+**位置:** `src/agent/context/`（ContextManager 已拆分为 Compactor / ContextBudgetEvaluator / TokenBudget 等组件）
 
-**现状:** ContextManager 承担 5 个独立职责：
+**现状:** 原 ContextManager 承担 5 个独立职责：
 
 | 职责 | 方法 |
 |------|------|
@@ -60,7 +60,7 @@ ContextManager 持有它并委托。ContextManager 变成纯粹的"上下文组�
 
 ## 3. Agent 会话管理职责可分离（优先级：中）
 
-**位置:** `src/agent/Agent.h` / `src/agent/Agent.cpp`
+**位置:** `src/agent/core/Agent.h` / `src/agent/core/Agent.cpp`
 
 **现状:** Agent 混合了：
 - LLM 交互编排（processSerial / processParallel / buildEffectivePrompt）
@@ -81,7 +81,7 @@ Agent 只保留 process() / execute() 核心路径，通过组合调用 SessionM
 
 ## 4. processSerial 中 Token 校准回调耦合（优先级：中）
 
-**位置:** `src/agent/Agent.cpp:251-266`
+**位置:** `src/agent/core/Agent.cpp:251-266`
 
 **现状:**
 ```cpp

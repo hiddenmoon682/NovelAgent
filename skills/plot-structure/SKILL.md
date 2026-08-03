@@ -1,6 +1,5 @@
 ---
 name: plot-structure
-emoji: "📐"
 description: 为当前章节推荐并生成叙事结构建议，在规划章节结构或用户使用 /structure 命令时使用
 commands:
   - name: structure

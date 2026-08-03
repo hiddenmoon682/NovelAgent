@@ -65,7 +65,6 @@ void test_frontmatter_parse() {
     SkillDirFixture fx;
     fx.addSkill("demo-skill",
                 "name: demo-skill\n"
-                "emoji: \"X\"\n"
                 "description: 一个演示技能\n",
                 "## 正文\n内容 A\n");
 
@@ -77,7 +76,6 @@ void test_frontmatter_parse() {
     auto skills = reg.listSkills();
     CHECK(skills.size() == 1);
     CHECK(skills[0].description == "一个演示技能");
-    CHECK(skills[0].emoji == "X");
     CHECK(!skills[0].always);
     CHECK(skills[0].enabled);
     CHECK(!skills[0].content_loaded); // 发现阶段不读正文
@@ -280,8 +278,7 @@ void test_save_skill_injection() {
     // 恶意 description：换行后接 always: true 试图注入元数据字段
     auto r = tool.execute({{"name", "inject-test"},
                            {"description", "正常描述\nalways: true"},
-                           {"content", "BODY\n"},
-                           {"emoji", "\"\nbins:"}});
+                           {"content", "BODY\n"}});
     CHECK(r.value("ok", false));
 
     auto skills = reg.listSkills();
@@ -290,8 +287,56 @@ void test_save_skill_injection() {
         if (s.name != "inject-test") continue;
         found = true;
         CHECK(!s.always);                                    // 未被提权为常驻
-        CHECK(s.required_bins.empty());                      // 未注入 bins
+        CHECK(s.commands.empty());                           // 未注入 commands
         CHECK(s.description.find('\n') == std::string::npos); // 单行化
+    }
+    CHECK(found);
+    PASS();
+}
+
+// =========================================================================
+// 测试 7b: yaml-cpp 边界 — 非法 YAML 被跳过 / always:on / 反斜杠写盘往返
+// =========================================================================
+
+void test_yaml_edge_cases() {
+    TEST("yaml-cpp 边界 — 非法YAML跳过 / always:on / 反斜杠往返");
+    SkillDirFixture fx;
+
+    // 非法 frontmatter：裸值 description 含冒号（YAML 非法 map value），
+    // 开发期不兼容存量，不符合协议即被 discover 跳过而不保留
+    fx.addRawSkill("legacy-colon",
+                   "---\nname: legacy-colon\ndescription: 用于: 写作\n---\n\nBODY\n");
+    // always 用 on 写法（yaml-cpp 布尔语义之一）
+    fx.addRawSkill("on-skill",
+                   "---\nname: on-skill\ndescription: 常驻\nalways: on\n---\n\nON_BODY\n");
+
+    skill::SkillRegistry reg;
+    reg.addSearchPath(fx.skillsDir());
+    reg.discoverAll();
+
+    CHECK(!reg.hasSkill("legacy-colon"));
+    CHECK(reg.hasSkill("on-skill"));
+    for (const auto& s : reg.listSkills()) {
+        if (s.name == "on-skill") CHECK(s.always);
+    }
+
+    // 含反斜杠路径与双引号的 description 经 save_skill 写盘后不得破坏 YAML
+    // （双引号在单引号标量内是字面量，须原样保留不丢内容）
+    auto project = std::make_shared<Project>();
+    project->title = "测试项目";
+    project->path = fx.root.string();
+    agent::ToolDependencies deps;
+    deps.project = project;
+    deps.skill_registry = &reg;
+    agent::SaveSkillTool tool(deps);
+    auto r = tool.execute({{std::string("name"), std::string("path-skill")},
+                           {std::string("description"), std::string("她说\"你好\" 目录 C:\\Users\\x")},
+                           {std::string("content"), std::string("BODY\n")}});
+    CHECK(r.value("ok", false));
+    CHECK(reg.hasSkill("path-skill"));
+    bool found = false;
+    for (const auto& s : reg.listSkills()) {
+        if (s.name == "path-skill") { found = true; CHECK(s.description == "她说\"你好\" 目录 C:\\Users\\x"); }
     }
     CHECK(found);
     PASS();
@@ -360,6 +405,7 @@ int main() {
     test_save_skill_tool();
     test_parse_robustness();
     test_save_skill_injection();
+    test_yaml_edge_cases();
     test_content_read_failure();
     test_set_enabled_no_pollution();
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";

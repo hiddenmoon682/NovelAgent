@@ -12,7 +12,7 @@
 | 工件 | 方案 | 状态 |
 |------|------|------|
 | `docs/design/PROGRESSIVE_TOOL_LOADING.md` | Stub + ToolSearch + API 硬约束（三层架构） | **设计阶段**，未实现 |
-| `src/agent/ContextualToolProvider.h/.cpp` | 关键词匹配自动激活类别（简化方案） | **已实现**，但未接入流水线 |
+| `src/agent/tool/ContextualToolProvider.h/.cpp` | 关键词匹配自动激活类别（简化方案） | **已实现**，但未接入流水线 |
 
 两者是**两条独立的技术路线**，并非迭代关系。
 
@@ -76,8 +76,8 @@ processSerial() 入口处：
 
 | 文件 | 关键行 | 说明 |
 |------|--------|------|
-| `src/agent/ContextualToolProvider.h` | 全文件 | 类声明 |
-| `src/agent/ContextualToolProvider.cpp` | 全文件 | 完整实现 |
-| `src/agent/Agent.h` | L147, L177 | `toolContext()` getter 和 `tool_context_` 成员 |
-| `src/agent/Agent.cpp` | L58 | 初始化列表 |
-| `src/agent/Agent.cpp` | L259 | `registry_.getToolDefinitions()` — 应替换的位置 |
+| `src/agent/tool/ContextualToolProvider.h` | 全文件 | 类声明 |
+| `src/agent/tool/ContextualToolProvider.cpp` | 全文件 | 完整实现 |
+| `src/agent/core/Agent.h` | L147, L177 | `toolContext()` getter 和 `tool_context_` 成员 |
+| `src/agent/core/Agent.cpp` | L58 | 初始化列表 |
+| `src/agent/core/Agent.cpp` | L259 | `registry_.getToolDefinitions()` — 应替换的位置 |

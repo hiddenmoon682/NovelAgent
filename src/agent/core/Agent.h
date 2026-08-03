@@ -22,8 +22,6 @@ class LLMClientFactory;
 class TokenCounter;
 } // namespace llm
 
-struct Project;
-
 namespace agent {
 
 // Agent 执行配置（工具循环限制与加载策略）。
@@ -58,10 +56,13 @@ public:
     void setExecutionConfig(AgentExecutionConfig config) { exec_config_ = config; }
     const AgentExecutionConfig& executionConfig() const { return exec_config_; }
 
-    // 注入项目上下文（非拥有指针，调用方保证存活期；供构建 system prompt）。
-    void setProject(const Project* p) { project_ = p; }
-    // 注入 Token 预算配置（同时刷新用量快照）。
-    void setTokenBudget(TokenBudget budget);
+    // 注入模型上下文上限（token）并刷新用量快照。
+    // 相比注入整个 TokenBudget，装配层只需提供真实模型上限值，无需了解预算结构；
+    // 其余阈值（warning/critical）沿用 TokenBudget 默认值。
+    void setModelLimit(int limit) {
+        budget_.model_limit = limit;
+        refreshUsage();  // 预算变化后百分比需重算（启动时也借此建立初始用量）
+    }
     const TokenBudget& tokenBudget() const { return budget_; }
     // 注入 Token 校准器（非拥有指针，可选；调用方保证存活期）。
     void setCalibrator(llm::TokenCounter* cal) { calibrator_ = cal; }
@@ -186,7 +187,6 @@ private:
     ContextBudgetEvaluator budget_evaluator_;
     Compactor compactor_;
     TokenBudget budget_;
-    const Project* project_ = nullptr;
     llm::TokenCounter* calibrator_ = nullptr;
     std::function<void(const std::string&)> summary_sink_;   // 压缩摘要沉淀回调
     std::vector<std::string> last_warnings_;

@@ -103,7 +103,7 @@ public:
     Q_INVOKABLE QString lastProjectPath() const;
 
     // ── 技能管理 ──
-    // 技能列表：[{name, description, emoji, always, enabled}, ...]；未初始化返回空。
+    // 技能列表：[{name, description, always, enabled}, ...]；未初始化返回空。
     Q_INVOKABLE QVariantList skillList() const;
     // 启用/禁用技能并持久化；生成中或技能不存在时返回 false。
     Q_INVOKABLE bool setSkillEnabled(const QString& name, bool enabled);

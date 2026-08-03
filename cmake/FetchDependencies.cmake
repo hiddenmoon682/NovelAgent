@@ -37,3 +37,18 @@ target_include_directories(httplib INTERFACE ${CMAKE_SOURCE_DIR}/third_party/cpp
 target_compile_definitions(httplib INTERFACE CPPHTTPLIB_OPENSSL_SUPPORT)
 target_link_libraries(httplib INTERFACE OpenSSL::SSL OpenSSL::Crypto ws2_32 crypt32)
 add_library(httplib::httplib ALIAS httplib)
+
+# --- yaml-cpp ---
+# SKILL.md frontmatter 解析（YAML 全量兼容）。优先用 MSYS2 pacman 安装的版本；
+# 未安装则回退到 FetchContent 从 GitHub 浅克隆源码编译（固定 0.8.0 保证目标名）。
+find_package(yaml-cpp QUIET)
+if(NOT yaml-cpp_FOUND)
+    FetchContent_Declare(yaml-cpp
+        GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
+        GIT_TAG 0.8.0
+        GIT_SHALLOW TRUE
+    )
+    set(YAML_CPP_BUILD_TESTS OFF CACHE INTERNAL "")
+    set(YAML_CPP_BUILD_TOOLS OFF CACHE INTERNAL "")
+    FetchContent_MakeAvailable(yaml-cpp)
+endif()
