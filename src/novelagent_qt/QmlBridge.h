@@ -45,6 +45,7 @@ class QmlBridge : public QObject {
     Q_PROPERTY(QString providerName READ providerName NOTIFY modelChanged)
     Q_PROPERTY(int totalTokens READ totalTokens NOTIFY usageChanged)
     Q_PROPERTY(int contextPercent READ contextPercent NOTIFY usageChanged)
+    Q_PROPERTY(QString currentSessionId READ currentSessionId NOTIFY currentSessionIdChanged)
 
 public:
     explicit QmlBridge(QObject* parent = nullptr);
@@ -65,6 +66,16 @@ public:
     Q_INVOKABLE void sendMessage(const QString& text);
     Q_INVOKABLE void cancelRequest();
     Q_INVOKABLE void newSession();
+    // 多会话并行（阶段 4）：当前查看会话 id（pool 会话）。
+    QString currentSessionId() const { return current_session_id_; }
+    // 新建一个多会话池会话并设为当前，返回其 id（空串 = 未就绪）。
+    Q_INVOKABLE QString createPoolSession();
+    // 切换到指定 pool 会话（仅切焦点，不阻塞）。
+    Q_INVOKABLE bool switchPoolSession(const QString& sessionId);
+    // 向指定 pool 会话发送消息（多会话并行路径）。
+    Q_INVOKABLE void sendMessageToSession(const QString& sessionId, const QString& text);
+    // 删除指定 pool 会话（返回是否存在；删除当前会话后自动切到剩余池会话）。
+    Q_INVOKABLE bool deletePoolSession(const QString& sessionId);
     // 会话列表（按最近使用降序）：[{id, title, active, updatedAt}, ...]；未就绪返回空。
     Q_INVOKABLE QVariantList sessionList() const;
     // 切换到指定会话（保存当前会话后重载）；生成中/未就绪返回 false。
@@ -114,16 +125,18 @@ public:
 
 signals:
     // 流式输出（逐 token 推送到 QML）
-    void tokenReceived(const QString& delta);
-    void reasoningReceived(const QString& delta);
-    void toolCallStarted(const QString& toolName);
-    void toolCallFinished(const QString& toolName, bool ok);
-    void responseComplete(const QString& fullText);
+    void tokenReceived(const QString& sessionId, const QString& delta);
+    void reasoningReceived(const QString& sessionId, const QString& delta);
+    void toolCallStarted(const QString& sessionId, const QString& toolName);
+    void toolCallFinished(const QString& sessionId, const QString& toolName, bool ok);
+    void responseComplete(const QString& sessionId, const QString& fullText);
     void errorOccurred(const QString& message);
     // 新会话已创建或已切换会话，QML 据此重建聊天流
     void sessionReset();
     // 会话列表变化（新建/切换/删除/标题自动提取后），侧栏据此刷新
     void sessionsChanged();
+    // 当前查看会话变化（多会话焦点）
+    void currentSessionIdChanged();
 
     // 状态变化
     void agentReadyChanged();
@@ -140,7 +153,7 @@ signals:
 
 private:
     void setStatus(const QString& text);
-    void runAgent(std::string input);
+    void runAgent(const std::string& session_id, std::string input);
     // 在当前线程同步执行一次索引（调用方负责线程/busy 约束），异常已内部吐掉。
     void runIndexUpdate(bool force);
     void joinWorker();
@@ -159,6 +172,8 @@ private:
     std::atomic<bool> busy_{false};
     std::atomic<bool> cancel_requested_{false};
     std::thread worker_;
+    QString current_session_id_;  // 多会话并行：当前查看会话 id（阶段 4）
+    QStringList recent_sessions_;  // 多会话并行：最近使用顺序（前端维护，B2/D3）
 };
 
 } // namespace qtui

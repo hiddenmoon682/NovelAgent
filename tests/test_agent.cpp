@@ -133,7 +133,7 @@ void test_simple_conversation() {
     llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
     llm::Memory memory;
-    agent::Agent agent(factory, registry, memory);
+    agent::Agent agent(factory, registry);
 
     auto response = agent.process("Hi");
 
@@ -204,7 +204,7 @@ void test_tool_call_loop() {
     );
 
     llm::Memory memory;
-    agent::Agent agent(factory, registry, memory);
+    agent::Agent agent(factory, registry);
     auto response = agent.process("echo test");
 
     CHECK(response.content == "工具已执行完毕");
@@ -218,42 +218,6 @@ void test_tool_call_loop() {
     CHECK(agent.memory().all()[2].role == llm::MessageRole::Tool);
     CHECK(agent.memory().all()[3].role == llm::MessageRole::Assistant);
     CHECK(agent.memory().all()[3].content == "工具已执行完毕");
-
-    server.stop();
-    PASS();
-}
-
-// =========================================================================
-// 测试 3: execute 模式（不修改 conversation）
-// =========================================================================
-
-void test_execute_mode() {
-    TEST("execute 模式 — 不修改内部对话历史");
-
-    MockServer server;
-    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
-                                                 httplib::Response& res) {
-        if (isStreamRequest(req)) {
-            std::string body = llm::test::sseContentChunk("查询结果") +
-                               llm::test::sseFinishChunk("stop") +
-                               llm::test::sseDone;
-            res.set_content(body, "text/event-stream");
-        } else {
-            res.set_content(nonStreamJson("查询结果"), "application/json");
-        }
-    });
-    server.start();
-
-    llm::LLMClientFactory factory(makeConfig(server.port));
-    agent::ToolRegistry registry;
-    llm::Memory memory;
-    agent::Agent agent(factory, registry, memory);
-
-    auto response = agent.execute("查询项目状态");
-
-    CHECK(response.content == "查询结果");
-    // execute 不修改内部对话历史
-    CHECK(agent.memory().empty());
 
     server.stop();
     PASS();
@@ -283,7 +247,7 @@ void test_conversation_management() {
     llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
     llm::Memory memory;
-    agent::Agent agent(factory, registry, memory);
+    agent::Agent agent(factory, registry);
 
     // 第一轮
     agent.process("第一句话");
@@ -318,7 +282,7 @@ void test_empty_input() {
     llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
     llm::Memory memory;
-    agent::Agent agent(factory, registry, memory);
+    agent::Agent agent(factory, registry);
 
     auto response = agent.process("");
     CHECK(response.content.empty());
@@ -350,7 +314,7 @@ void test_exception_recovery() {
     llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
     llm::Memory memory;
-    agent::Agent agent(factory, registry, memory);
+    agent::Agent agent(factory, registry);
 
     // 异常前状态正确
     CHECK(agent.canAcceptInput());
@@ -397,7 +361,7 @@ void test_session_persisted_after_message() {
     llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
     llm::Memory memory;
-    agent::Agent agent(factory, registry, memory);
+    agent::Agent agent(factory, registry);
 
     // 绑定 SessionPersistence，使 processUserMessage 末尾的 saveSessionState 真正落盘
     FileStorageBackend storage(tmp);
@@ -411,13 +375,13 @@ void test_session_persisted_after_message() {
     auto response = agent.process("帮我写第二章开头");
     CHECK(response.content == "第二章开头");
 
-    // 处理后：索引已创建，active 会话文件含本轮 user + assistant 两条消息
-    json index = json::parse(utils::file::readText(indexPath));
-    const std::string activeId = index["active"].get<std::string>();
-    CHECK(!activeId.empty());
+    // 处理后：当前池会话按 id 落盘（D3），会话文件含本轮 user + assistant 两条消息
+    CHECK(!agent.sessionIds().empty());
+    const std::string sid = agent.sessionIds().front();
+    CHECK(utils::file::exists(tmp + "/.novelagent/sessions/" + sid + ".json"));
 
     json after = json::parse(utils::file::readText(
-        tmp + "/.novelagent/sessions/" + activeId + ".json"));
+        tmp + "/.novelagent/sessions/" + sid + ".json"));
     CHECK(after.is_array());
     CHECK(after.size() == 2);
     CHECK(after[0]["role"] == "user");
@@ -426,6 +390,77 @@ void test_session_persisted_after_message() {
 
     // token 用量缓存应已刷新（供 StatusBar 展示）
     CHECK(agent.contextUsage().total_tokens > 0);
+
+    server.stop();
+    utils::file::removeDir(tmp);
+    PASS();
+}
+
+// =========================================================================
+// 测试: 延迟创建 — 经 Agent.process 端到端链路：newSession 不落盘，首条消息才创建会话
+// =========================================================================
+
+void test_lazy_creation_via_process() {
+    TEST("延迟创建 — process 端到端：newSession 不落盘，首条消息才创建会话");
+
+    const std::string tmp = (std::filesystem::temp_directory_path() /
+                             "tmp_test_lazy_process").string();
+    if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
+    ProjectIO::createProjectDir(tmp, "延迟创建测试");
+
+    MockServer server;
+    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        if (isStreamRequest(req)) {
+            std::string body = llm::test::sseContentChunk("回复") +
+                               llm::test::sseFinishChunk("stop") +
+                               llm::test::sseDone;
+            res.set_content(body, "text/event-stream");
+        } else {
+            res.set_content(nonStreamJson("回复"), "application/json");
+        }
+    });
+    server.start();
+
+    llm::LLMClientFactory factory(makeConfig(server.port));
+    agent::ToolRegistry registry;
+    llm::Memory memory;
+    agent::Agent agent(factory, registry);
+
+    FileStorageBackend storage(tmp);
+    agent::SessionPersistence persistence(storage);
+    agent.setPersistence(&persistence);
+
+    const std::string indexPath = tmp + "/.novelagent/sessions/index.json";
+
+    // 第一条消息：当前池会话按 id 落盘（方案 C：首条消息才写文件）
+    auto r1 = agent.process("第一条消息");
+    CHECK(r1.content == "回复");
+    CHECK(!agent.pendingNewSession());
+    CHECK(agent.sessionIds().size() == 1);
+    const std::string a_id = agent.sessionIds().front();
+    CHECK(utils::file::exists(tmp + "/.novelagent/sessions/" + a_id + ".json"));
+
+    // 新建会话：新池会话在池中但未落盘（pending）
+    agent.newSession();
+    CHECK(agent.pendingNewSession());
+    CHECK(agent.sessionIds().size() == 2);
+
+    // 首条消息 → 落盘为新会话 B（含 user + assistant 两条）
+    auto r2 = agent.process("新会话的第一条消息");
+    CHECK(r2.content == "回复");
+    CHECK(!agent.pendingNewSession());
+    CHECK(agent.sessionIds().size() == 2);
+    const std::string b_id = agent.sessionIds().back();
+    CHECK(b_id != a_id);
+    CHECK(utils::file::exists(tmp + "/.novelagent/sessions/" + b_id + ".json"));
+    json b = json::parse(utils::file::readText(
+        tmp + "/.novelagent/sessions/" + b_id + ".json"));
+    CHECK(b.is_array());
+    CHECK(b.size() == 2);
+    CHECK(b[0]["role"] == "user");
+    CHECK(b[0]["content"] == "新会话的第一条消息");
+    CHECK(b[1]["role"] == "assistant");
 
     server.stop();
     utils::file::removeDir(tmp);
@@ -497,7 +532,7 @@ void test_context_overflow_end_to_end() {
     );
 
     llm::Memory memory;
-    agent::Agent agent(factory, registry, memory);
+    agent::Agent agent(factory, registry);
 
     // 预算 600：warm-up 轮次远低于 80% AutoCompact 阈值（发送前评估不干扰），
     // 大结果回填后无论怎么压缩都超 model_limit → 复评 Error → hook 返回 false
@@ -544,18 +579,249 @@ void test_context_overflow_end_to_end() {
 }
 
 // =========================================================================
+// 测试: 历史层归档链路 — Agent 压缩后按会话 id 归档被压缩消息
+// =========================================================================
+
+void test_history_sink_wiring() {
+    TEST("历史层归档 — 压缩后按会话 id 归档被压缩消息到完整历史层");
+
+    const std::string tmp = (std::filesystem::temp_directory_path() /
+                             "tmp_test_history_sink").string();
+    if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
+    ProjectIO::createProjectDir(tmp, "历史归档测试");
+
+    MockServer server;
+    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        if (isStreamRequest(req)) {
+            std::string body = llm::test::sseContentChunk("回复") +
+                               llm::test::sseFinishChunk("stop") +
+                               llm::test::sseDone;
+            res.set_content(body, "text/event-stream");
+        } else {
+            // Compactor 摘要请求走非流式路径
+            res.set_content(nonStreamJson("【摘要】旧历史已压缩"), "application/json");
+        }
+    });
+    server.start();
+
+    llm::LLMClientFactory factory(makeConfig(server.port));
+    agent::ToolRegistry registry;
+    llm::Memory memory;
+    agent::Agent agent(factory, registry);
+
+    FileStorageBackend storage(tmp);
+    agent::SessionPersistence persistence(storage);
+    agent.setPersistence(&persistence);
+
+    // 生成 8 轮对话 = 16 条消息（> keep_exchanges=5 的 10 条保留窗口，可压缩）
+    for (int i = 0; i < 8; ++i) agent.process("第 " + std::to_string(i) + " 条消息");
+    CHECK(agent.memory().size() == 16);
+
+    // 手动压缩：触发 applyCompaction → runtime 直接 appendHistory（D4，无 sink）
+    auto cr = agent.compactConversation();
+    CHECK(cr.messages_compacted > 0);
+
+    // 完整历史层已按会话 id 落盘：<sid>.history 含被压缩消息（D4 直接落盘验证）
+    const std::string sid = agent.sessionIds().front();
+    auto history = persistence.loadHistory(sid);
+    CHECK(history.size() == static_cast<size_t>(cr.messages_compacted));
+
+    // 空消息不被归档：清空后无可压缩内容，compactConversation 返回 0 且不触发
+    // 归档（applyCompaction 仅在 compacted 非空时落盘）。
+    agent.clearMemory();
+    const size_t history_before = persistence.loadHistory(sid).size();
+    auto cr2 = agent.compactConversation();
+    CHECK(cr2.messages_compacted == 0);
+    CHECK(persistence.loadHistory(sid).size() == history_before);
+
+    server.stop();
+    utils::file::removeDir(tmp);
+    PASS();
+}
+
+// =========================================================================
+// 测试: 多会话并行池 — 每个会话独立 SessionRuntime，可并行/独立对话
+// =========================================================================
+
+void test_multi_session_pool() {
+    TEST("多会话池 — createSession 独立运行时，process(session_id) 独立对话");
+
+    MockServer server;
+    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        if (isStreamRequest(req)) {
+            std::string body = llm::test::sseContentChunk("回复") +
+                               llm::test::sseFinishChunk("stop") +
+                               llm::test::sseDone;
+            res.set_content(body, "text/event-stream");
+        } else {
+            res.set_content(nonStreamJson("【摘要】旧历史已压缩"), "application/json");
+        }
+    });
+    server.start();
+
+    llm::LLMClientFactory factory(makeConfig(server.port));
+    agent::ToolRegistry registry;
+    llm::Memory memory;
+    agent::Agent agent(factory, registry);
+
+    // 建两个会话：各自独立 SessionRuntime
+    const std::string sid1 = agent.createSession();
+    const std::string sid2 = agent.createSession();
+    CHECK(sid1 != sid2);
+    CHECK(agent.sessionIds().size() == 2);
+
+    // 各自 process，独立回复
+    auto r1 = agent.process(sid1, "消息一");
+    auto r2 = agent.process(sid2, "消息二");
+    CHECK(r1.content == "回复");
+    CHECK(r2.content == "回复");
+
+    // 会话内存独立：各自含 user+assistant 两条，不互相污染
+    CHECK(agent.session(sid1)->memory().size() == 2);
+    CHECK(agent.session(sid2)->memory().size() == 2);
+    CHECK(agent.session(sid1)->memory().messages()[0].content == "消息一");
+    CHECK(agent.session(sid2)->memory().messages()[0].content == "消息二");
+
+    // 不存在的会话 → session_not_found，不抛异常
+    auto rn = agent.process("s-nonexistent", "hi");
+    CHECK(rn.finish_reason == "session_not_found");
+
+    // 删除会话 → 池里移除
+    CHECK(agent.deleteSessionRuntime(sid1));
+    CHECK(agent.sessionIds().size() == 1);
+    CHECK(agent.session(sid2) != nullptr);
+
+    server.stop();
+    PASS();
+}
+
+// =========================================================================
+// 测试: 多会话持久化 — 按 session_id 落盘 CS 恢复
+// =========================================================================
+
+void test_multi_session_persistence() {
+    TEST("多会话持久化 — process 后按 session_id 落盘，重启可恢复");
+
+    const std::string tmp = (std::filesystem::temp_directory_path() /
+                             "tmp_test_multi_persist").string();
+    if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
+    ProjectIO::createProjectDir(tmp, "多会话持久化测试");
+
+    MockServer server;
+    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        if (isStreamRequest(req)) {
+            std::string body = llm::test::sseContentChunk("回复") +
+                               llm::test::sseFinishChunk("stop") +
+                               llm::test::sseDone;
+            res.set_content(body, "text/event-stream");
+        } else {
+            res.set_content(nonStreamJson("【摘要】旧历史已压缩"), "application/json");
+        }
+    });
+    server.start();
+
+    FileStorageBackend storage(tmp);
+    agent::SessionPersistence persistence(storage);
+
+    llm::LLMClientFactory factory(makeConfig(server.port));
+    agent::ToolRegistry registry;
+    llm::Memory memory;
+    agent::Agent agent(factory, registry);
+    agent.setPersistence(&persistence);
+
+    // 建会话并 process → 按 id 落盘
+    const std::string sid1 = agent.createSession();
+    agent.process(sid1, "持久化消息");
+    CHECK(agent.session(sid1)->persisted());
+    CHECK(utils::file::exists(tmp + "/.novelagent/sessions/" + sid1 + ".json"));
+
+    // 用持久化层按 id 直接读回：内容一致
+    auto loaded = persistence.load(sid1);
+    CHECK(loaded.messages().size() == 2);
+    CHECK(loaded.messages()[0].content == "持久化消息");
+
+    // 恢复路径：新建一个能定位到同一 id 的 runtime，loadSessionState 恢复（P5：deps 构造注入）
+    agent::SessionRuntime rt(sid1, factory, registry, agent::SessionRuntimeDeps{
+        .persistence = &persistence,
+    });
+    rt.loadSessionState();
+    CHECK(rt.memory().messages().size() == 2);
+    CHECK(rt.memory().messages()[0].content == "持久化消息");
+
+    server.stop();
+    utils::file::removeDir(tmp);
+    PASS();
+}
+
+// =========================================================================
+// 测试: 多会话并行 — 共享线程池上两个会话并发执行
+// =========================================================================
+
+void test_parallel_sessions() {
+    TEST("多会话并行 — 两个会话并发 process 各自独立完成");
+
+    MockServer server;
+    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        if (isStreamRequest(req)) {
+            std::string body = llm::test::sseContentChunk("回复") +
+                               llm::test::sseFinishChunk("stop") +
+                               llm::test::sseDone;
+            res.set_content(body, "text/event-stream");
+        } else {
+            res.set_content(nonStreamJson("【摘要】旧历史已压缩"), "application/json");
+        }
+    });
+    server.start();
+
+    llm::LLMClientFactory factory(makeConfig(server.port));
+    agent::ToolRegistry registry;
+    llm::Memory memory;
+    agent::Agent agent(factory, registry);
+
+    const std::string sid1 = agent.createSession();
+    const std::string sid2 = agent.createSession();
+
+    // 两个线程并发提交两个会话的 process（共享线程池 4 线程，可并行）
+    std::thread t1([&] {
+        auto r = agent.process(sid1, "并行消息一");
+        CHECK(r.content == "回复");
+    });
+    std::thread t2([&] {
+        auto r = agent.process(sid2, "并行消息二");
+        CHECK(r.content == "回复");
+    });
+    t1.join();
+    t2.join();
+
+    // 两会话内存各自独立、互不污染
+    CHECK(agent.session(sid1)->memory().messages()[0].content == "并行消息一");
+    CHECK(agent.session(sid2)->memory().messages()[0].content == "并行消息二");
+
+    server.stop();
+    PASS();
+}
+
+// =========================================================================
 
 int main() {
     std::cout << "=== test_agent ===\n\n";
 
     test_simple_conversation();
     test_tool_call_loop();
-    test_execute_mode();
     test_conversation_management();
     test_empty_input();
     test_session_persisted_after_message();
+    test_lazy_creation_via_process();
     test_exception_recovery();
     test_context_overflow_end_to_end();
+    test_history_sink_wiring();
+    test_multi_session_pool();
+    test_multi_session_persistence();
+    test_parallel_sessions();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;

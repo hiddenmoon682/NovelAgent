@@ -52,6 +52,11 @@ public:
 
     // 按类别获取工具名称列表。
     virtual std::vector<std::string> toolNamesByCategory(ToolCategory category) const = 0;
+
+    // 工具是否只读（E7/P4）：默认按名称前缀启发式；具体提供者可覆盖（如 ToolRegistry 用显式标记）。
+    virtual bool isReadOnly(const std::string& name) const;
+    // 默认前缀启发式（get_/list_/read_/search_）。
+    static bool defaultIsReadOnly(const std::string& name);
 };
 
 // 受限工具提供者 — 仅暴露白名单中的工具。
@@ -69,6 +74,7 @@ public:
                             const nlohmann::json& args) override;
     bool has(const std::string& name) const override;
     std::vector<std::string> toolNamesByCategory(ToolCategory category) const override;
+    bool isReadOnly(const std::string& name) const override;
 
 private:
     IToolProvider& parent_;

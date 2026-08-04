@@ -403,7 +403,8 @@ Rectangle {
             root.reloadHistory()  // 新建会话为空；切换/删除后加载目标会话历史
         }
 
-        function onTokenReceived(delta) {
+        function onTokenReceived(sessionId, delta) {
+            if (sessionId !== bridge.currentSessionId) return
             var idx = root.lastStreamingAssistant()
             if (idx >= 0)
                 chatModel.setProperty(idx, "content", chatModel.get(idx).content + delta)
@@ -411,7 +412,8 @@ Rectangle {
                 root.appendAssistant(delta, "")
         }
 
-        function onReasoningReceived(delta) {
+        function onReasoningReceived(sessionId, delta) {
+            if (sessionId !== bridge.currentSessionId) return
             var idx = root.lastStreamingAssistant()
             if (idx >= 0)
                 chatModel.setProperty(idx, "reasoning", chatModel.get(idx).reasoning + delta)
@@ -419,7 +421,8 @@ Rectangle {
                 root.appendAssistant("", delta)
         }
 
-        function onToolCallStarted(toolName) {
+        function onToolCallStarted(sessionId, toolName) {
+            if (sessionId !== bridge.currentSessionId) return
             var idx = root.lastStreamingAssistant()
             if (idx >= 0) {
                 var it = chatModel.get(idx)
@@ -432,7 +435,8 @@ Rectangle {
                                streaming: false, toolName: toolName, toolStatus: "running" })
         }
 
-        function onToolCallFinished(toolName, ok) {
+        function onToolCallFinished(sessionId, toolName, ok) {
+            if (sessionId !== bridge.currentSessionId) return
             for (var i = chatModel.count - 1; i >= 0; --i) {
                 var it = chatModel.get(i)
                 if (it.type === "tool" && it.toolName === toolName && it.toolStatus === "running") {
@@ -442,7 +446,8 @@ Rectangle {
             }
         }
 
-        function onResponseComplete(fullText) {
+        function onResponseComplete(sessionId, fullText) {
+            if (sessionId !== bridge.currentSessionId) return
             root.finalizeRunningTools("ok")
             var idx = root.lastStreamingAssistant()
             if (idx >= 0) {

@@ -60,6 +60,7 @@ set(NOVELAGENT_AGENT
     src/agent/core/CoreLoop.h src/agent/core/CoreLoop.cpp
     src/agent/core/ExecutionTracer.h src/agent/core/ExecutionTracer.cpp
     src/agent/core/SessionManager.h src/agent/core/SessionManager.cpp
+    src/agent/core/SessionRuntime.h src/agent/core/SessionRuntime.cpp
     # tool/
     src/agent/tool/IToolProvider.h src/agent/tool/IToolProvider.cpp
     src/agent/tool/ToolRegistry.h src/agent/tool/ToolRegistry.cpp

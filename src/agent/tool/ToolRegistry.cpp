@@ -18,7 +18,8 @@ void ToolRegistry::registerTool(
     const nlohmann::json& parameters,
     ToolCategory category,
     std::function<nlohmann::json(const nlohmann::json&)> fn,
-    std::string brief)
+    std::string brief,
+    bool is_readonly)
 {
     if (brief.empty()) brief = description;  // 空则回退 description
     tools_.push_back({
@@ -27,7 +28,8 @@ void ToolRegistry::registerTool(
         std::move(brief),
         parameters,  // 拷贝一次（注册阶段非热路径）
         category,
-        std::move(fn)
+        std::move(fn),
+        is_readonly
     });
 }
 
@@ -48,8 +50,15 @@ void ToolRegistry::registerBuiltInTool(std::unique_ptr<BuiltInTool> tool)
         [raw](const nlohmann::json& args) {
             return raw->execute(args);
         },
-        raw->brief()
+        raw->brief(),
+        raw->isReadOnly()
     );
+}
+
+bool ToolRegistry::isReadOnly(const std::string& name) const {
+    const ToolEntry* e = findTool(name);
+    if (e && e->is_readonly) return true;   // 显式标记只读优先
+    return IToolProvider::defaultIsReadOnly(name);  // 否则前缀启发式（保留只读工具共享锁）
 }
 
 // ===========================================================================

@@ -80,7 +80,7 @@ Rectangle {
             Button {
                 id: newSessionBtn
                 text: "+ 新建"
-                onClicked: bridge.newSession()
+                onClicked: bridge.createPoolSession()
                 contentItem: Text {
                     text: newSessionBtn.text
                     font.family: Theme.fontUi
@@ -131,7 +131,7 @@ Rectangle {
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: if (!model.active) bridge.switchSession(model.sid)
+                    onClicked: if (!model.active) bridge.switchPoolSession(model.sid)
                 }
 
                 RowLayout {
@@ -139,7 +139,16 @@ Rectangle {
                     spacing: Theme.gapSm
                     Rectangle {
                         width: 7; height: 7; radius: 3.5
-                        color: model.active ? Theme.agentTint : Theme.textFaint
+                        color: model.running ? Theme.warning
+                                             : (model.active ? Theme.agentTint : Theme.textFaint)
+                        // 运行中会话用警示色圆点提示（阶段 4）
+                        Rectangle {
+                            visible: model.running
+                            anchors.fill: parent
+                            radius: 3.5
+                            color: "transparent"
+                            border.color: Theme.warning
+                        }
                     }
                     Label {
                         text: model.name

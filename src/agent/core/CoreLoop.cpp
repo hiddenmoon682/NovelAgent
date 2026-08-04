@@ -25,10 +25,12 @@ void addAssistantFromResponse(llm::IMemory& memory, llm::LLMResponse& response) 
 }
 
 // 构造取消提示 assistant 消息，用于取消时维持一问一答对话格式。
+// is_control 标记：UI 据此把该占位消息过滤/渲染为"已取消"，不当作真实回复。
 llm::Message cancelledAssistant() {
     llm::Message msg;
     msg.role = llm::MessageRole::Assistant;
     msg.content = "对话已被用户取消，请等待下一条用户输入。";
+    msg.is_control = true;
     return msg;
 }
 } // anonymous namespace

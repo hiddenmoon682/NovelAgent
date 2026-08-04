@@ -17,6 +17,7 @@
 
 #include "llm/Message.h"
 
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -150,6 +151,10 @@ private:
     static constexpr double kMaxCorrection = 3.0;
 
     std::unordered_map<std::string, ModelCalibration> models_;
+
+    // 多会话并发安全（D8）：保护 models_ 的读写（calibrate/apply/getCorrection/
+    // reset/resetAll/calibratedModels/stats）。无状态静态方法不持锁。
+    mutable std::mutex mutex_;
 };
 
 } // namespace llm

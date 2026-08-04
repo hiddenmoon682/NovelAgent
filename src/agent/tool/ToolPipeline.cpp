@@ -12,23 +12,22 @@
 
 namespace agent {
 
-bool ToolPipeline::isReadOnly(const std::string& name) {
-    static constexpr std::array kPrefixes = {
-        std::string_view{"get_"},
-        std::string_view{"list_"},
-        std::string_view{"read_"},
-        std::string_view{"search_"},
-    };
-    for (auto prefix : kPrefixes) {
-        if (name.starts_with(prefix))
-            return true;
-    }
-    return false;
-}
-
 llm::MemoryDiff ToolPipeline::execute(const std::vector<llm::ToolCall>& tool_calls)
 {
     llm::MemoryDiff diff;
+
+    // 跨会话共享的项目锁（D7/P2）：含写工具 → 独占锁，纯读 → 共享锁。
+    // 多会话并行下多个 ToolPipeline 共享同一把锁，防止并发写 project 数据竞争。
+    bool has_write = false;
+    for (const auto& tc : tool_calls) {
+        if (!tools_.isReadOnly(tc.function_name)) { has_write = true; break; }
+    }
+    std::unique_lock<std::shared_mutex> uq;
+    std::shared_lock<std::shared_mutex> sh;
+    if (project_lock_) {
+        if (has_write) uq = std::unique_lock<std::shared_mutex>(*project_lock_);
+        else           sh = std::shared_lock<std::shared_mutex>(*project_lock_);
+    }
 
     // 每轮重建 schema 缓存（工具集可能因 tool_search 增长）
     schema_cache_.clear();
@@ -66,7 +65,7 @@ llm::MemoryDiff ToolPipeline::execute(const std::vector<llm::ToolCall>& tool_cal
 
     // 写工具在主线程按序执行（保证 Project 修改的顺序性，且此时无并发读）
     for (size_t i = 0; i < n; ++i) {
-        if (isReadOnly(tool_calls[i].function_name))
+        if (tools_.isReadOnly(tool_calls[i].function_name))
             continue;
         const auto& tc = tool_calls[i];
         spdlog::info("[ToolPipeline] 串行执行: {} (id={})", tc.function_name, tc.id);
@@ -75,7 +74,7 @@ llm::MemoryDiff ToolPipeline::execute(const std::vector<llm::ToolCall>& tool_cal
 
     // 写工具完成后，只读工具提交到 ThreadPool 并发执行
     for (size_t i = 0; i < n; ++i) {
-        if (!isReadOnly(tool_calls[i].function_name))
+        if (!tools_.isReadOnly(tool_calls[i].function_name))
             continue;
         is_async[i] = true;
         futures[i] = pool_->submit([this, &tc = tool_calls[i]]() -> std::string {

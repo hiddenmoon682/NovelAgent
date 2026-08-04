@@ -1,10 +1,25 @@
 # NovelAgent 审查状态总览
 
-> 最后更新：2026-07-27（新增 SIGINT_HANDLING_REVIEW + CLI_REMOVAL_PLAN + BOOTSTRAP_SLIM_PLAN）
+> 最后更新：2026-08-03（新增 MULTI_SESSION_PARALLEL_REVIEW 架构评审）
 
 ---
 
 **当前审查状态**：所有已注册审查批次均已完成或确认无需修复。Serial Tool Call 路径两轮共 30 项发现已全部清零。
+
+---
+
+## 〇、多会话并行架构评审（MULTI_SESSION_PARALLEL_REVIEW_2026-08-03.md）— 待评审
+
+**目标**：支持「后台会话继续运行」，将单实例 Agent 重构为「每会话一个运行时」。
+
+**状态**：📋 待评审（用户确认演进方向后转入实施）。
+
+**核心结论**：
+- 方向正确：须将「会话运行时状态」（memory/state/tools/client）从 Agent 单例拆出，改为每会话一份。
+- 关键约束：`LLMClient` 单实例不安全（httplib 内部状态不可共享），注释明确要求多线程用 `LLMClientFactory` 每上下文创建独立实例 —— 恰好支持每会话独立 client。
+- 建议分阶段实施（阶段 0→5），每阶段独立回归。
+
+---
 
 ---
 

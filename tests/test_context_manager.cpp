@@ -4,6 +4,7 @@
 #include "agent/context/ContextBudgetEvaluator.h"
 #include "agent/context/TokenBudget.h"
 #include "agent/context/Memory.h"
+#include "agent/core/SessionManager.h"
 #include "agent/session/SessionPersistence.h"
 #include "llm/ILLMClient.h"
 #include "llm/TokenCounter.h"
@@ -86,7 +87,7 @@ private:
 // =========================================================================
 
 void test_session_save_load() {
-    TEST("SessionPersistence — 保存和加载往返");
+    TEST("SessionPersistence — 按 session_id 保存和加载往返（D3）");
 
     const std::string tmp = tmpPath("tmp_test_session_enhanced");
     ProjectIO::createProjectDir(tmp, "测试");
@@ -97,8 +98,8 @@ void test_session_save_load() {
     conv.addUser("消息一");
     conv.addAssistant("回复一");
 
-    sp.save(conv);
-    auto loaded = sp.load();
+    sp.save("s-test", conv);
+    auto loaded = sp.load("s-test");
 
     CHECK(loaded.size() == 2);
 
@@ -122,8 +123,8 @@ void test_session_fidelity() {
     conv.inject(std::move(assistant));
     conv.pin(1);  // pin user 消息（含 system 偏移，对应 messages()[0]）
 
-    sp.save(conv);
-    auto loaded = sp.load();
+    sp.save("s-test", conv);
+    auto loaded = sp.load("s-test");
 
     // system prompt 不应被持久化；两条对话消息完整恢复
     CHECK(loaded.systemPrompt().empty());
@@ -136,7 +137,7 @@ void test_session_fidelity() {
 }
 
 void test_multi_session_lifecycle() {
-    TEST("SessionPersistence — 多会话新建/切换/删除生命周期");
+    TEST("SessionPersistence — 多会话新建/删除生命周期（D3 无 active）");
 
     const std::string tmp = tmpPath("tmp_test_multi_session");
     if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
@@ -147,36 +148,30 @@ void test_multi_session_lifecycle() {
     llm::Memory conv;
     conv.addUser("第一个会话的消息");
     conv.addAssistant("回复");
-    sp.save(conv);
+    sp.save("s-first", conv);
 
-    // 首次 save 后：索引已建，active 会话自动标题来自首条 user 消息
-    const std::string first_id = sp.activeSessionId();
-    CHECK(!first_id.empty());
+    // 首次 save 后：索引已建，标题自动来自首条 user 消息
     auto sessions = sp.listSessions();
     CHECK(sessions.size() == 1);
     CHECK(!sessions[0].title.empty());
 
-    // 新建会话：成为 active，列表变为 2 个
+    // 新建会话：列表变为 2 个，按 id 隔离
     const std::string second_id = sp.createSession();
-    CHECK(second_id != first_id);
-    CHECK(sp.activeSessionId() == second_id);
+    CHECK(second_id != "s-first");
     CHECK(sp.listSessions().size() == 2);
-    CHECK(sp.load().size() == 0);
+    CHECK(sp.load(second_id).size() == 0);
 
-    // 切回第一个会话：消息完整往返
-    CHECK(sp.switchSession(first_id));
-    CHECK(sp.activeSessionId() == first_id);
-    auto loaded = sp.load();
+    // 按 id 加载第一个会话：消息完整往返
+    auto loaded = sp.load("s-first");
     CHECK(loaded.size() == 2);
     CHECK(loaded.messages()[0].content == "第一个会话的消息");
 
-    // 删除 active 会话：非空内容归档，active 自动切到剩余会话
-    CHECK(sp.deleteSession(first_id));
+    // 删除会话：非空内容归档，会话文件移除，列表剩 1 个
+    CHECK(sp.deleteSession("s-first"));
     CHECK(utils::file::exists(
-        tmp + "/.novelagent/archive/" + first_id + ".json"));
+        tmp + "/.novelagent/archive/s-first.json"));
     CHECK(!utils::file::exists(
-        tmp + "/.novelagent/sessions/" + first_id + ".json"));
-    CHECK(sp.activeSessionId() == second_id);
+        tmp + "/.novelagent/sessions/s-first.json"));
     CHECK(sp.listSessions().size() == 1);
 
     // 删除不存在的会话应返回 false
@@ -186,8 +181,97 @@ void test_multi_session_lifecycle() {
     PASS();
 }
 
+void test_history_layer() {
+    TEST("SessionPersistence — 完整历史层 append-only 追加与往返");
+
+    const std::string tmp = tmpPath("tmp_test_history_layer");
+    if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
+    ProjectIO::createProjectDir(tmp, "测试");
+    FileStorageBackend storage(tmp);
+
+    agent::SessionPersistence sp(storage);
+    llm::Memory conv;
+    conv.addUser("会话消息");
+    sp.save("s-test", conv);
+    const std::string sid = "s-test";
+
+    // 历史文件初始不存在：load 返回空
+    CHECK(sp.loadHistory(sid).empty());
+
+    // 构造一批被压缩消息（含 reasoning 等字段）
+    std::vector<llm::Message> first;
+    first.push_back(llm::Message::user("旧问题一"));
+    llm::Message asst = llm::Message::assistant("旧回答一");
+    asst.reasoning_content = "旧推理";
+    first.push_back(std::move(asst));
+    sp.appendHistory(sid, first);
+
+    // 第二次追加：验证 append-only 不覆盖既有历史
+    std::vector<llm::Message> second;
+    second.push_back(llm::Message::user("旧问题二"));
+    sp.appendHistory(sid, second);
+
+    // 空追加应被忽略，不产生空行
+    sp.appendHistory(sid, {});
+
+    auto loaded = sp.loadHistory(sid);
+    CHECK(loaded.size() == 3);
+    CHECK(loaded[0].content == "旧问题一");
+    CHECK(loaded[1].content == "旧回答一");
+    CHECK(loaded[1].reasoning_content == "旧推理");
+    CHECK(loaded[2].content == "旧问题二");
+
+    // 压缩后上下文快照被清空，但完整历史仍可追溯（核心诉求）
+    conv.clear();
+    sp.save("s-test", conv);
+    CHECK(sp.load("s-test").size() == 0);
+    CHECK(sp.loadHistory(sid).size() == 3);
+
+    // 不同会话的历史相互隔离
+    const std::string other = sp.createSession();
+    CHECK(sp.loadHistory(other).empty());
+
+    utils::file::removeDir(tmp);
+    PASS();
+}
+
+void test_delete_archives_history() {
+    TEST("SessionPersistence — 删除会话时完整历史一并归档到 archive/");
+
+    const std::string tmp = tmpPath("tmp_test_delete_archive_history");
+    if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
+    ProjectIO::createProjectDir(tmp, "测试");
+    FileStorageBackend storage(tmp);
+
+    agent::SessionPersistence sp(storage);
+    llm::Memory conv;
+    conv.addUser("会话消息");
+    sp.save("s-test", conv);
+    const std::string sid = "s-test";
+
+    // 追加一批被压缩消息到完整历史层
+    std::vector<llm::Message> batch;
+    batch.push_back(llm::Message::user("被压缩的旧问题"));
+    sp.appendHistory(sid, batch);
+    CHECK(sp.loadHistory(sid).size() == 1);
+
+    // 删除会话：快照与完整历史都应归档到 archive/，sessions/ 下原文件被删除
+    CHECK(sp.deleteSession(sid));
+    CHECK(utils::file::exists(tmp + "/.novelagent/archive/" + sid + ".json"));
+    CHECK(utils::file::exists(tmp + "/.novelagent/archive/" + sid + ".history"));
+    CHECK(!utils::file::exists(tmp + "/.novelagent/sessions/" + sid + ".history"));
+
+    // 归档历史内容可读：与删除前一致（可从 archive 手工恢复）
+    const std::string archived = utils::file::readText(
+        tmp + "/.novelagent/archive/" + sid + ".history");
+    CHECK(archived.find("被压缩的旧问题") != std::string::npos);
+
+    utils::file::removeDir(tmp);
+    PASS();
+}
+
 void test_delete_last_session() {
-    TEST("SessionPersistence — 删除唯一会话自动新建 + 删除非 active 会话");
+    TEST("SessionPersistence — 删除会话后列表正确（D3 无 active）");
 
     const std::string tmp = tmpPath("tmp_test_del_last_session");
     if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
@@ -197,27 +281,19 @@ void test_delete_last_session() {
     agent::SessionPersistence sp(storage);
     llm::Memory conv;
     conv.addUser("唯一会话的消息");
-    sp.save(conv);
-    const std::string only_id = sp.activeSessionId();
+    sp.save("s-only", conv);
 
-    // 删除唯一会话：自动新建空会话并设为 active
-    CHECK(sp.deleteSession(only_id));
+    // 删除唯一会话：列表清空
+    CHECK(sp.deleteSession("s-only"));
     auto sessions = sp.listSessions();
-    CHECK(sessions.size() == 1);
-    CHECK(sessions[0].id != only_id);
-    CHECK(sp.activeSessionId() == sessions[0].id);
-    CHECK(sp.load().size() == 0);
+    CHECK(sessions.empty());
 
-    // 删除非 active 会话：active 不变
-    const std::string active_before = sp.activeSessionId();
-    llm::Memory conv2;
-    conv2.addUser("active 会话内容");
-    sp.save(conv2);
-    const std::string other_id = sp.createSession();  // 新会话成为 active
-    CHECK(sp.switchSession(active_before));
-    CHECK(sp.deleteSession(other_id));                // 删除非 active
-    CHECK(sp.activeSessionId() == active_before);
+    // 再建两个会话，删除其中一个：另一个保留
+    sp.save("s-a", conv);
+    const std::string other_id = sp.createSession();
+    CHECK(sp.deleteSession(other_id));
     CHECK(sp.listSessions().size() == 1);
+    CHECK(sp.load("s-a").size() == 1);
 
     utils::file::removeDir(tmp);
     PASS();
@@ -237,24 +313,22 @@ void test_corrupt_index_recovery() {
         agent::SessionPersistence sp(storage);
         llm::Memory conv;
         conv.addUser("第一个会话的消息");
-        sp.save(conv);
-        first_id = sp.activeSessionId();
+        sp.save("s-first", conv);
+        first_id = "s-first";
         second_id = sp.createSession();
         llm::Memory conv2;
         conv2.addUser("第二个会话的消息");
-        sp.save(conv2);
+        sp.save(second_id, conv2);
     }
 
     const std::string index_path = tmp + "/.novelagent/sessions/index.json";
 
-    // 场景 1：active 类型错误（数字）——旧实现会抛 type_error 炸穿启动路径
-    utils::file::writeText(index_path, R"({"active": 123, "sessions": []})");
+    // 场景 1：结构损坏（缺 sessions 数组）——旧实现会抛 type_error 炸穿启动路径
+    utils::file::writeText(index_path, R"({"active": 123})");
     {
         agent::SessionPersistence sp(storage);
         auto sessions = sp.listSessions();      // 不得抛异常
         CHECK(sessions.size() == 2);            // 磁盘上的会话文件全部找回
-        std::string active = sp.activeSessionId();
-        CHECK(active == first_id || active == second_id);
         // 会话内容完好，标题从消息重新提取
         bool found_first = false;
         for (const auto& s : sessions) {
@@ -263,14 +337,12 @@ void test_corrupt_index_recovery() {
         CHECK(found_first);
     }
 
-    // 场景 2：active 悬空引用（不在 sessions 列表中）——旧实现 save 会静默跳过索引更新
+    // 场景 2：索引条目损坏（空 id）——重建从磁盘找回全部，并回收损坏索引中的元数据
     utils::file::writeText(index_path,
-        R"({"active": "s-ghost", "sessions": [{"id": ")" + first_id +
-        R"(", "title": "旧标题", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}]})");
+        R"({"sessions": [{"id": ")" + first_id +
+        R"(", "title": "旧标题", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}, {"id": ""}]})");
     {
         agent::SessionPersistence sp(storage);
-        std::string active = sp.activeSessionId();
-        CHECK(active == first_id || active == second_id);
         auto sessions = sp.listSessions();
         CHECK(sessions.size() == 2);
         // 重建时从旧索引回收了 first_id 的元数据
@@ -285,9 +357,9 @@ void test_corrupt_index_recovery() {
         agent::SessionPersistence sp(storage);
         llm::Memory conv;
         conv.addUser("重建后的新消息");
-        sp.save(conv);                          // 不得抛异常，索引正常更新
+        sp.save("s-first", conv);               // 不得抛异常，索引正常更新
         CHECK(sp.listSessions().size() == 2);
-        CHECK(sp.load().size() == 1);
+        CHECK(sp.load("s-first").size() == 1);
     }
 
     utils::file::removeDir(tmp);
@@ -596,11 +668,11 @@ void test_auto_pin_cap_on_session_load() {
         CHECK(conv.pin(i));
     }
     CHECK(countPinned(conv.messages()) == limit + 3);
-    sp.save(conv);
+    sp.save("s-test", conv);
 
     // 加载路径（parseMessages 走 inject）按启发式将 preserved Tool 消息
     // 视为自动 pin 并收敛到上限；旧文件无需格式升级即可加载
-    auto loaded = sp.load();
+    auto loaded = sp.load("s-test");
     CHECK(loaded.messages().size() == limit + 3);  // 消息完整往返，不丢内容
     CHECK(countPinned(loaded.messages()) == limit);
     CHECK(!findByCallId(loaded.messages(), "call_0")->preserved);
@@ -819,7 +891,6 @@ void test_critical_warning() {
     PASS();
 }
 
-// =========================================================================
 
 int main() {
     std::cout << "=== test_context_manager (重构版) ===\n\n";
@@ -830,7 +901,7 @@ int main() {
     test_multi_session_lifecycle();
     test_delete_last_session();
     test_corrupt_index_recovery();
-
+    test_history_layer();
     // ContextBudgetEvaluator
     test_evaluate_total_tokens();
 

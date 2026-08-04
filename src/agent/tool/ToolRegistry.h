@@ -45,7 +45,8 @@ public:
                       const nlohmann::json& parameters,
                       ToolCategory category,
                       std::function<nlohmann::json(const nlohmann::json&)> fn,
-                      std::string brief = {});
+                      std::string brief = {},
+                      bool is_readonly = false);
 
     // 注册内置工具类实例（复杂、有状态）。
     // 内部将 BuiltInTool::execute 包装为函数式回调。
@@ -120,6 +121,7 @@ public:
     bool has(const std::string& name) const override {
         return hasTool(name);
     }
+    bool isReadOnly(const std::string& name) const override;
 
 private:
     // 内部统一的工具条目（函数式和类式最终都归为此结构）
@@ -130,6 +132,7 @@ private:
         nlohmann::json parameters;
         ToolCategory category;
         std::function<nlohmann::json(const nlohmann::json&)> fn;
+        bool is_readonly = false;  // 显式只读标记（E7/P4），覆盖前缀启发式
     };
 
     std::vector<ToolEntry> tools_;

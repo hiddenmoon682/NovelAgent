@@ -5,9 +5,29 @@
 
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <array>
+#include <string_view>
 #include <nlohmann/json.hpp>
 
 namespace agent {
+
+bool IToolProvider::defaultIsReadOnly(const std::string& name) {
+    static constexpr std::array kPrefixes = {
+        std::string_view{"get_"},
+        std::string_view{"list_"},
+        std::string_view{"read_"},
+        std::string_view{"search_"},
+    };
+    for (auto prefix : kPrefixes) {
+        if (name.starts_with(prefix))
+            return true;
+    }
+    return false;
+}
+
+bool IToolProvider::isReadOnly(const std::string& name) const {
+    return defaultIsReadOnly(name);
+}
 
 RestrictedToolProvider::RestrictedToolProvider(
     IToolProvider& parent, std::vector<std::string> allowed_names)
@@ -53,6 +73,10 @@ std::vector<std::string> RestrictedToolProvider::toolNamesByCategory(ToolCategor
         if (has(n)) filtered.push_back(std::move(n));
     }
     return filtered;
+}
+
+bool RestrictedToolProvider::isReadOnly(const std::string& name) const {
+    return parent_.isReadOnly(name);
 }
 
 } // namespace agent

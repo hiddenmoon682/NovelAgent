@@ -225,6 +225,7 @@ int TokenCounter::countMessagesCalibrated(
 
 void TokenCounter::calibrate(const std::string& model, int estimated, int actual) {
     if (estimated <= 0 || actual <= 0) return;
+    std::lock_guard<std::mutex> lock(mutex_);
 
     auto& mc = models_[model];
     double ratio = static_cast<double>(actual) / estimated;
@@ -243,6 +244,7 @@ void TokenCounter::calibrate(const std::string& model, int estimated, int actual
 }
 
 double TokenCounter::getCorrection(const std::string& model) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = models_.find(model);
     if (it == models_.end()) return 1.0;
     return std::clamp(it->second.correction, kMinCorrection, kMaxCorrection);
@@ -254,14 +256,17 @@ int TokenCounter::apply(const std::string& model, int estimated) const {
 }
 
 void TokenCounter::reset(const std::string& model) {
+    std::lock_guard<std::mutex> lock(mutex_);
     models_.erase(model);
 }
 
 void TokenCounter::resetAll() {
+    std::lock_guard<std::mutex> lock(mutex_);
     models_.clear();
 }
 
 std::vector<std::string> TokenCounter::calibratedModels() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::string> result;
     result.reserve(models_.size());
     for (const auto& pair : models_) {
@@ -271,6 +276,7 @@ std::vector<std::string> TokenCounter::calibratedModels() const {
 }
 
 TokenCounter::CalibrationStats TokenCounter::stats(const std::string& model) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     CalibrationStats s;
     auto it = models_.find(model);
     if (it != models_.end()) {

@@ -9,6 +9,8 @@
 #include "agent/context/Memory.h"
 #include "llm/Message.h"
 
+#include <memory>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -39,14 +41,20 @@ public:
     //         错误以 {"error": ...} 形式写入对应结果。
     llm::MemoryDiff execute(const std::vector<llm::ToolCall>& tool_calls);
 
+    // 注入跨会话共享的项目锁（D7/P2，多会话并行下保护共享 project 数据）。
+    // 多个会话的 ToolPipeline 共享同一把锁；execute 时含写工具加独占锁、纯读加共享锁。
+    void setProjectLock(std::shared_ptr<std::shared_mutex> lock) {
+        project_lock_ = std::move(lock);
+    }
+
 private:
     IToolProvider& tools_;
     std::unique_ptr<ThreadPool> pool_;
+    std::shared_ptr<std::shared_mutex> project_lock_;
 
     std::unordered_map<std::string, nlohmann::json> schema_cache_;
 
     std::string executeOne(const llm::ToolCall& tc);
-    static bool isReadOnly(const std::string& tool_name);
 };
 
 } // namespace agent

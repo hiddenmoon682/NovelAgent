@@ -51,6 +51,8 @@ public:
     virtual nlohmann::json parameters() const = 0;
     virtual nlohmann::json execute(const nlohmann::json& args) = 0;
     virtual ToolCategory category() const = 0;
+    // 是否只读（E7/P4）：只读工具注册时标 true，供并发锁判断；默认 false（保守，写走独占锁）。
+    virtual bool isReadOnly() const { return false; }
 
     llm::ToolDefinition toDefinition() const {
         return llm::ToolDefinition{name(), description(), parameters()};

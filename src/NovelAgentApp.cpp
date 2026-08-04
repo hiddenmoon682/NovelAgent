@@ -10,7 +10,7 @@
 NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
                                std::shared_ptr<Project> project)
     : client_(provider)
-    , agent_(client_, registry_, memory_)
+    , agent_(client_, registry_)
     , project_(project ? std::move(project) : std::make_shared<Project>())
     , storage_(project_ ? project_->path : "")
     , persistence_(storage_)
@@ -27,7 +27,7 @@ agent::IIndexService* NovelAgentApp::indexService()
     return index_service_.get();
 }
 
-std::string NovelAgentApp::buildSystemPrompt() const
+std::string NovelAgentApp::buildSystemPrompt()
 {
     std::string system_prompt = agent::prompt::kMainPersonality;
 

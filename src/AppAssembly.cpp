@@ -111,6 +111,9 @@ void NovelAgentApp::setupSummarySinkAndIndexService()
             ltm_store_.append(summary, "summary");
     });
 
+    // 完整历史归档（D4）：SessionRuntime 直接持有 persistence 自调 appendHistory，
+    // 无需此处注册 sink 回调（压缩时按会话自身 id 落盘 <id>.history）。
+
     index_service_ = std::make_unique<agent::ProjectIndexService>(
         project_, vector_store_, embedding_gen_, &ltm_store_);
 }

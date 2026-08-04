@@ -150,6 +150,9 @@ CompactionResult Compactor::compact(
         return result;
     }
     result.messages_compacted = static_cast<int>(to_compact.size());
+    // 保留被压缩消息原文，供调用方归档到完整历史层（会话持久化为何能保留
+    // 完整历史：压缩只替换内存中的近期上下文，原文经此字段交给历史层追加）。
+    result.compacted = to_compact;
 
     // 统计压缩前的 token 数，供调用方做预算决策
     result.tokens_before = llm::TokenCounter::countMessages(to_compact);

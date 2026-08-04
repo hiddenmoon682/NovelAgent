@@ -122,6 +122,8 @@ struct Message {
     std::string name;                  // 可选参与者名称
     std::string reasoning_content;     // DeepSeek thinking 模式的推理过程（工具调用循环中使用）
     bool preserved = false;            // 内部标记：截断时优先保留（不参与 JSON 序列化）
+    bool is_control = false;           // 控制消息标记（P6）：系统注入的占位消息（如取消提示），
+                                       // 非真实对话；UI 据此过滤/特殊渲染。不进入 OpenAI 协议序列化。
 
     // ── 便捷工厂方法 ──
 

@@ -12,9 +12,10 @@ class ILLMClient;
 
 namespace agent {
 
-// 压缩结果——携带摘要、保留消息列表和压缩前后的 token 统计。
+// 压缩结果——携带摘要、被压缩消息原文、保留消息列表和压缩前后的 token 统计。
 struct CompactionResult {
     std::string summary;                      // LLM 生成的对话摘要文本
+    std::vector<llm::Message> compacted;      // 被压缩掉的旧消息原文（供完整历史层归档）
     std::vector<llm::Message> retained;       // 摘要对 + 保留的近期消息
     int tokens_before = 0;                    // 压缩前被压缩部分的 token 数
     int tokens_after = 0;                     // 压缩后摘要的 token 数（≈ completion_tokens）

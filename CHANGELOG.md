@@ -1,5 +1,231 @@
 # Changelog
 
+## [2026-08-04] 并发拒绝（P9）+ 构造注入（P5）
+
+### 实现 — P9 并发上限拒绝 + P5 SessionRuntime 核心依赖构造注入
+- **P9**：`SessionManager::canSubmit()` 按 in-flight（已提交未完成）数量与 `kMaxConcurrent=4`
+  对齐线程池上限；`process`/`submitProcess` 满额时返回/回调 `finish_reason="concurrency_full"`，
+  不排队；QmlBridge 完成回调显示"并发已满，请稍后再试"。
+- **P5**：新增 `SessionRuntimeDeps`（persistence/calibrator/project_lock/exec_config/config/
+  system_prompt/model_limit），`SessionRuntime` 构造函数一次性注入，**删除 7 个 setter**；
+  `makeRuntime` 改为 deps 构造。
+- **对齐 D11**：`SessionManager` 的 setXxx 仅更新共享源、删除广播循环（配置仅创建时生效；
+  会话懒创建，启动装配先于任何会话）。
+- 测试：`test_multi_session_persistence` 改为 deps 构造 runtime。
+- 全量回归 29/29 通过；GUI 启动正常。
+
+## [2026-08-04] process 异步提交（P1）
+
+### 实现 — 异步 process + 完成回调，GUI 不再用专用 worker 线程
+- `SessionManager::submitProcess(session_id, input, cb, on_complete)`：提交共享线程池立即返回，
+  池线程执行 process 后调用 `on_complete(session_id, response)` 并清理 in-flight；同步
+  `process(session_id, ...)` 保留供测试/API。
+- 修复 `deleteSessionRuntime` 潜在死锁：不再持有 `in_flight_mutex_` 时 wait（异步任务的
+  清理逻辑也需要该锁），改为拷贝 shared_future 后释放锁再 wait。
+- `Agent::submitProcess` 转发；`QmlBridge::runAgent` 改异步提交（去掉每消息专用 worker 线程），
+  完成回调经 QueuedConnection 投递 GUI 线程发射信号；`runIndexUpdate` 移到完成回调。
+- `sendMessageToSession`/`sendMessage` 改为按**目标会话自身运行态**检查（支持多会话并行提交），
+  不再被全局 busy_ 拦截。
+- 全量回归 29/29 通过；GUI 启动正常。
+
+## [2026-08-04] 持久化去 active 字段（D3）+ 修幽灵会话
+
+### 重构 — SessionPersistence 按 id 隔离，移除单一 active 字段
+- 删除 `activeSessionId()`/`switchSession()`/legacy `save(memory)`/`load()`；`index.json` 改为
+  `{sessions:[...]}`（无 active）；`indexValid`/`rebuildIndexFromDisk`/`createSession`/`deleteSession`
+  全部去除 active 处理。
+- **修幽灵会话**：`rebuildIndexFromDisk` 在磁盘无会话文件时不再自动创建空会话（此前 index 首次
+  生成会多出一个 `s-<ts>` 幽灵会话）。
+- `QmlBridge`：sessionList 持久层回退路径不再依赖 active（均不标 active）；deleteSession 改为按
+  "当前查看会话"判断重建聊天流。
+- 测试适配：7 个 SessionPersistence 测试改为 session_id API（`save("s-test", ...)`/`load("s-test")`）；
+  损坏索引测试场景改为"空 id 条目"触发重建。
+- 全量回归 29/29 通过；GUI 启动正常。
+
+## [2026-08-04] 去历史归档 sink（D4）
+
+### 重构 — SessionRuntime 直接落盘完整历史，删除三层回调链
+- 删除 `Agent::setHistorySink`/`SessionManager::setHistorySink`/`SessionRuntime::setHistorySink`
+  与 `history_sink_` 成员；`AppAssembly` 移除 sink 注册 lambda。
+- `SessionRuntime::applyCompaction` 改为直接调 `persistence_->appendHistory(session_id_, compacted)`
+  （runtime 已持有 persistence，归属天然正确）。
+- 测试 `test_history_sink_wiring` 改为直接断言 `<sid>.history` 落盘内容。
+- 全量回归 29/29 通过。
+
+## [2026-08-04] 多会话并行收敛重构（D2）+ 取消占位 is_control（P6）
+
+### 重构 — Agent 收敛为门面，SessionManager 收敛为 SessionPool（消除双路径）
+- `SessionManager` 重写为会话池容器：持有 `pool_`（map<session_id, SessionRuntime>）、共享线程池、
+  in-flight 跟踪、跨会话项目锁、共享装配配置；`createSession/newSession/switchSession/deleteSession/
+  process/pinMessage/rewindTo/saveSessionState/loadSessionState` 全部按池语义实现。
+- `Agent` 移除全部单会话成员（client_/memory_/state_/progressive_tools_/pipeline_/tracer_/usage_/
+  last_warnings_）与重复编排逻辑（processSerial/applyCompaction/refreshUsage/compactConversation），
+  变为薄门面，公有 API 全部转发 SessionManager（E6 接口不变）；构造函数改为 `Agent(factory, registry)`。
+- 消息级操作（pin/unpin/edit/rewindTo/checkpointIndices/compactConversation）移入 SessionRuntime。
+- `NovelAgentApp` 移除 `memory_` 成员（会话内存由各 SessionRuntime 持有）。
+- 测试适配：13 处 Agent 构造更新；B2/延迟创建/历史归档测试改为池语义断言；删除 2 个
+  测旧单内存 SessionManager 语义的用例。
+- 全量回归 29/29 通过；GUI 启动正常。
+
+### 实现 — 取消占位消息 is_control 标记（P6）
+- `llm::Message` 新增 `bool is_control`；`cancelledAssistant()` 置 true；SessionPersistence 序列化
+  is_control；`conversationHistory()` 跳过控制消息（UI 不显示"已取消"占位为真实回复）。
+
+## [2026-08-04] 多会话并行收尾优化（client 休眠 / index 锁 / 最近排序）
+
+### 优化 — 补齐蓝图三项遗留项
+- **client 空闲休眠释放（D6）**：`SessionRuntime::releaseClient()` 释放 HTTP 连接，`process()`
+  懒重建；`Agent::releaseIdleClients()` 释放所有非运行会话的 client（运行中保留），
+  `QmlBridge::switchPoolSession` 切走时触发。
+- **SessionPersistence index 加锁（D3）**：新增 `index_mutex_`，`save`/`save(session_id)`/
+  `createSession`/`switchSession`/`deleteSession` 的索引读-改-写串行化（会话文件按 id 隔离无需锁）。
+- **池会话最近使用排序（B2/D3）**：`QmlBridge` 维护 `recent_sessions_`，创建/切换/发消息时置顶，
+  `sessionList()` 按此前缀排序展示池会话。
+- 全量回归 29/29 通过；GUI 启动正常。
+
+## [2026-08-04] 多会话并行 GUI 层接入（阶段 4 核心）
+
+### 实现 — QmlBridge/QML 多会话桥接 + 侧栏管理
+- `QmlBridge` 新增 `Q_PROPERTY(QString currentSessionId)`（当前查看会话焦点）+ `createPoolSession()`/
+  `switchPoolSession()`/`sendMessageToSession()`：`sendMessage` 无当前会话时自动建池会话并发往池。
+- 流信号全部加 `sessionId` 参数（tokenReceived/reasoningReceived/toolCallStarted/toolCallFinished/
+  responseComplete），`runAgent` 改为 `process(session_id, input, cb)` 走多会话池路径。
+- `AgentPanel.qml` 各 onXxx 处理器按 `bridge.currentSessionId` 过滤，后台会话输出不污染当前视图。
+- `conversationHistory()` 优先读当前池会话的独立内存（否则回退单会话 active）。
+- `sessionList()` 置顶展示池会话（标题取首条 user 消息、当前查看标 active、运行态标 running）；
+  `SidebarPanel.qml`「+ 新建」接 `createPoolSession()`、列表点击接 `switchPoolSession()`、
+  删除按钮经 `deleteSession` 智能路由到 `deletePoolSession()`（删当前会话自动切剩余）。
+- 全量回归 29/29 通过；GUI 启动正常。
+
+## [2026-08-04] 多会话并行核心实现（阶段 0-3 部分）
+
+### 实现 — 每会话独立运行时 + 并行执行 + 按 id 持久化 + 并发保护 + 生命周期
+- 新建 `SessionRuntime`（src/agent/core/SessionRuntime.h/.cpp）：每会话独立运行时，持有
+  memory/client/state/progressive_tools/pipeline/tracer/usage/cancel/session_id/persisted，
+  含 process/压缩/归档逻辑（从 Agent 迁移）；构造时复用 Agent 的 process 主流程。
+- `Agent` 容器化：新增 `pool_`（map<session_id, unique_ptr<SessionRuntime>>）、`createSession()`、
+  `session(id)`、`process(session_id, input, cb)`、`deleteSessionRuntime(id)`、`sessionIds()`；
+  `ContextUsage`/`AgentExecutionConfig` 移入 SessionRuntime.h。
+- 共享线程池（`agent::ThreadPool`, 4 线程）：`process(session_id, ...)` 提交进池并行执行，
+  多会话可并发跑在池工作线程上。
+- `SessionPersistence` 新增 `save(session_id, memory)`/`load(session_id)` 重载（D3，按 id 隔离，
+  不依赖 active）；`SessionRuntime` 每轮结束按本会话 id 落盘、可恢复。
+- 并发保护：`TokenCounter` 有状态方法加内部 `std::mutex`（D8）；`ToolPipeline` 新增跨会话共享项目锁
+  （D7/P2，execute 按含写工具加独占/共享锁），Agent 持有共享锁并注入各 runtime。
+- `isReadOnly` 注册标记（E7/P4）：`IToolProvider` 新增 `isReadOnly` 接口（默认前缀启发式），
+  `ToolRegistry` 按 `ToolEntry.is_readonly` 显式标记优先、否则启发式；`BuiltInTool` 加
+  `isReadOnly()` 虚方法（默认 false）；`registerTool` 加 `is_readonly` 参数；`ToolPipeline` 改用
+  `tools_.isReadOnly(name)`。
+- 生命周期（阶段 5）：`Agent::process` 记录 in-flight 任务，`deleteSessionRuntime` 对运行中会话
+  cancel + wait 再移除，防 use-after-free。
+- 新增测试：`test_multi_session_pool`（独立运行时）、`test_parallel_sessions`（两会话并发）、
+  `test_multi_session_persistence`（按 id 落盘恢复）。
+- 全量回归 29/29 通过。
+
+### 说明
+- 本提交实现多会话并行后端全量（阶段 0-2、阶段 3、阶段 5 生命周期）。阶段 4 GUI 层为后续工作。
+
+## [2026-08-04] 多会话并行架构参考文档（整合全部决策）
+
+### 文档 — 新建整合后的实施蓝图
+- 新建 `docs/review/MULTI_SESSION_PARALLEL_REFERENCE_2026-08-04.md`，整合 D1–D12 与新增
+  E1–E10 决策，作为并行化改造的唯一实施依据，替代原评审文档：
+  - **E1** 修正阶段 3 锁方案矛盾（锁在 Project 内部，非 ToolPipeline 入口）；
+  - **E2** Agent 保留类名改造成门面+池，不新建 AgentFacade；
+  - **E3** SessionManager 解散吸收进 SessionPool，Agent 直接持有 pool_；
+  - **E4** 启动恢复 `last_viewed`（index 保留该字段，非 active 语义）；
+  - **E5** 全局取消复位时机（cancelAll 后调用方显式复位）；
+  - **E6** Agent 公有转发接口全部保留（签名不变）；
+  - **E7** `isReadOnly` 改为工具注册时带 `is_readonly` 属性；
+  - **E8** `runIndexUpdate` 内部加锁串行化；
+  - **E9** 状态栏显示当前查看会话 usage；
+  - **E10** SessionRuntime 内部 process 不带 session_id（门面定位后调 `rt.process(input,...)`）。
+- 参考文档含：目标架构、最终决策清单（决策 A/B/C/D/E 五组）、并发安全矩阵、阶段 0→5 实施计划、
+  资源账、风险边界。原评审文档保留作决策过程存档。
+
+## [2026-08-04] 多会话并行架构决策定稿（D1–D12）
+
+### 文档 — 多会话并行评审的 12 项实施决策全部确认
+- 在 `docs/review/MULTI_SESSION_PARALLEL_REVIEW_2026-08-03.md` 追加「九、实现前待澄清清单」，
+  逐项澄清文档内部矛盾、与已落地实现的冲突、以及未定义点，共 12 项（D1–D12）：
+  - **D1** 前端把 sessionId 显式传给后端（`process(session_id, ...)`），pending 走方案 C（id 提前、文件延迟）；
+  - **D2** SessionManager 收敛为 SessionPool，消息操作下放 SessionRuntime；
+  - **D3** `save/load` 显式传 session_id、删 `active` 字段、`updated_at` 排序移前端维护；
+  - **D4** 去全局 sink，SessionRuntime 直接落盘历史，删除前 cancel+wait；
+  - **D5** pending 保留，id 生成时机改到创建时；
+  - **D6** client 迁入 SessionRuntime，按需物化 + 空闲休眠释放；
+  - **D7** Project 自带 shared_mutex（项目级单锁）+ 锁外计算/锁内小改；
+  - **D8** 校准器有状态方法加内部 mutex，跨会话共享是收敛必要条件；
+  - **D9** 每会话工具线程 = 2，去掉 num_threads=0 串行分支；
+  - **D10** 删除走强制取消（B）+ wait 超时，取消占位消息加控制标记；
+  - **D11** 装配仅创建时生效（方案 B）；
+  - **D12** 确认全量并行（后台会话继续跑为硬需求）。
+- 全部 12 项已在 9.5 确认表标记 ☑ 已确认，作为后续并行化改造的实施蓝图（阶段 0→5）。
+
+## [2026-08-04] 压缩归档会话归属修正 + 历史层并发约束 + 归档链路测试
+
+### 修复 — 压缩归档不再把 pending 新会话消息误记到旧会话
+- `Agent::applyCompaction` 归档被压缩消息时，改用 `SessionManager::currentSessionId()`
+  解析当前内存所属会话，而非动态查持久层 `activeSessionId()`；
+- 新增 `SessionManager::currentSessionId()`：pending（未落盘新会话）时返回空串，压缩
+  归档据此跳过，避免把新会话的被压缩消息写入旧会话的历史层；非 pending 时即 active 会话 id；
+- 新增 `tests/test_context_manager.cpp` 的 `test_current_session_id` 覆盖 pending/非 pending 归属。
+
+### 补强 — 历史层并发约束与归档链路测试
+- `SessionPersistence::appendHistory` 补充线程约束注释：read-modify-write 依赖单线程
+  调用方（Agent 状态机串行化 process/compactConversation），writeText 原子写仅保证崩溃
+  时文件完整、不提供并发安全；
+- 新增 `tests/test_agent.cpp` 的 `test_history_sink_wiring`：验证压缩后 history sink 按
+  正确会话 id 收到被压缩消息、无可压缩内容时不触发归档。
+
+## [2026-08-04] 会话删除时完整历史一并归档（双层持久化补全）
+
+### 修复 — 删除会话不再把完整历史层孤儿化
+- `SessionPersistence::deleteSession()` 删除会话时，将完整历史 `<id>.history` 一并归档到
+  `archive/<id>.history`（原子写）再删除原文件，与快照层归档语义一致；此前 `.history` 文件
+  在 `sessions/` 下无索引、无归档地永久残留，删除后无法从 archive 恢复。
+- `makeSessionId()` 查重纳入 `<id>.history` 与 `archive/<id>.history`，避免同秒 id 复用导致
+  残留历史被误追加或归档文件被覆盖。
+- 头文件布局注释与删除日志同步更新为「快照与完整历史归档到 archive/」。
+- 新增 `tests/test_context_manager.cpp` 的 `test_delete_archives_history` 覆盖删除归档。
+
+## [2026-08-04] 会话延迟创建：新建不落盘，首条消息才落地
+
+### 重构 — 消除空会话文件堆积，会话创建改为「首条消息触发」的延迟模式
+- `SessionManager` 新增 `pending_new_` 状态与 `pendingNewSession()`：`newSession()` 不再立即
+  `createSession`，改为保存当前会话后清空内存并标记 pending，不落盘新会话；
+- `saveSessionState()` 成为延迟创建落地点：pending 且内存为空（未发消息）→ 不落盘；pending 且
+  内存非空（首条消息已注入）→ 此刻才真正 `createSession` 并保存；
+- `switchSession()` 处理 pending：有内容则先落地再切，空则直接丢弃（不产生空会话文件）；
+- `deleteSession()` 删除旧 active 会话时丢弃 pending；新增 `discardPendingNewSession()` 供前端
+  删除占位条目时放弃临时会话；
+- `Agent` 转发 `pendingNewSession()`/`discardPendingNewSession()`；
+- `QmlBridge::sessionList()` 在 pending 时置顶插入「新会话」占位条目（ID 留空、标 active），
+  `deleteSession()` 对空 ID 走丢弃分支；
+- 新增 `tests/test_context_manager.cpp` 的 `test_session_lazy_creation` 覆盖延迟创建状态机。
+
+### 审查与补强 — 注释修正 + 测试缺口补齐
+- 修正 `Agent::newSession()` 过时注释：由旧「立即创建并切换」改为「延迟创建」语义描述；
+- 补齐 `test_session_lazy_creation` 两个缺口：`discardPendingNewSession()` 直接调用、
+  pending 状态下内存非空时 `switchSession` 切走落地为新会话；
+- 新增 `tests/test_agent.cpp` 的 `test_lazy_creation_via_process`：经 Agent.process 端到端
+  验证「newSession 不落盘、首条消息才创建会话」完整链路。
+- `SessionManager::newSession()` 增加 pending 复用分支边界防御：非空 pending（首条消息已注
+  入但未落盘）时先落地再复用，避免静默丢用户输入；空 pending（最常见）仍直接复用。
+- `QmlBridge::newSession()` 状态提示由「新会话已创建」改为「新会话已就绪（首条消息后保
+  存）」，反映延迟创建语义。
+
+## [2026-08-04] SessionManager 会话生命周期重构：拆分 newSession 与 resetRuntimeState
+
+### 重构 — 解除 resetSession 的「新建」与「重置」耦合，公共清理逻辑复用
+- `SessionManager::resetSession()` 拆解为 `newSession()`（保存当前会话 + `createSession` +
+  `resetRuntimeState`）与私有 `resetRuntimeState()`（清空内存 + 重建 system prompt +
+  boundary_reset_hook_ + usage_refresh_hook_）；
+- `reloadActiveSession()` 改用 `resetRuntimeState()`，使 `switchSession`/`deleteSession`
+  复用同一套会话边界清理逻辑；
+- `Agent::resetSession()` 与 `QmlBridge::newSession()` 相应改调 `newSession()`；
+- 行为不变：空会话不新建（`!messages().empty()` 条件保留）、空会话仍触发 resetRuntimeState。
+
 ## [2026-08-03] TokenBudget 注入粒度细化：装配层只注入模型上限
 
 ### 重构 — 装配层不再依赖 TokenBudget 结构，仅注入真实模型上限值

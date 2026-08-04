@@ -32,6 +32,7 @@ public:
     nlohmann::json execute(const std::string& name, const nlohmann::json& args) override;
     bool has(const std::string& name) const override;
     std::vector<std::string> toolNamesByCategory(ToolCategory category) const override;
+    bool isReadOnly(const std::string& name) const override { return registry_.isReadOnly(name); }
 
     // ── 渐进式加载控制 ──
 

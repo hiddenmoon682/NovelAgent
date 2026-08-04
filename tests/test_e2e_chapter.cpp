@@ -122,7 +122,7 @@ int main() {
     // 4. 创建 Agent
     std::cout << "\n[4/5] 创建 Agent...\n";
     llm::Memory memory;
-    agent::Agent agent(factory, registry, memory);
+    agent::Agent agent(factory, registry);
     agent.setSystemPrompt(
         "你是一个小说写作助手。你可以使用工具来管理小说项目。\n"
         "当用户要求列出章节、读取内容、写入章节时，请使用对应的工具。\n"

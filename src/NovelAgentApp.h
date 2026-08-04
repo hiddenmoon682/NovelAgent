@@ -42,8 +42,7 @@ public:
 private:
     llm::LLMClientFactory client_;                  // LLM 客户端工厂，持有 Provider 配置
     agent::ToolRegistry registry_;                  // 工具注册表（内置工具登记处）
-    llm::Memory memory_;                            // 对话短期记忆
-    agent::Agent agent_;                            // 核心对话代理
+    agent::Agent agent_;                            // 多会话并行门面（会话内存由各 SessionRuntime 持有）
     std::shared_ptr<Project> project_;              // 当前项目（未打开时为空项目）
     llm::TokenCounter calibrator_;                  // Token 计量/校准器
     FileStorageBackend storage_;                    // 文件存储后端（绑定项目路径）
@@ -83,7 +82,7 @@ private:
     // 将会话压缩摘要沉淀到长期记忆日志，并创建项目索引服务。
     void setupSummarySinkAndIndexService();
     // 组装 system prompt（人格 + 工具指引 + 技能上下文 + 延迟工具存根）。
-    std::string buildSystemPrompt() const;
+    std::string buildSystemPrompt();
     // 技能禁用列表持久化（<项目>/.novelagent/skills.json）。
     std::string skillSettingsPath() const;
     // 从 skills.json 读取禁用技能名列表；文件缺失或损坏时返回空列表。
