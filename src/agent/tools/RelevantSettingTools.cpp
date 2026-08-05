@@ -3,6 +3,7 @@
 #include "agent/tools/RelevantSettingTools.h"
 #include "agent/prompt/PromptSelector.h"
 #include "project/Models.h"
+#include "project/ProjectAccess.h"
 #include "utils/SchemaUtils.h"
 
 #include <spdlog/spdlog.h>
@@ -25,36 +26,39 @@ json GetRelevantSettingsTool::execute(const json& args) {
         return {{"error", "chapter_id 不能为空"}};
     }
 
-    const auto* chapter = prompt::selector::findById(
-        project_->outline.chapters, chapter_id);
-    if (!chapter) {
-        return {{"error", "章节 '" + chapter_id + "' 不存在"}};
-    }
-
     int max_count = args.value("max_count", 8);
     if (max_count < 1) max_count = 1;
     if (max_count > 20) max_count = 20;
 
-    auto plotThreads = prompt::selector::selectPlotThreads(
-        *project_, *chapter, 10);
+    // selector 返回指向 project 内部对象的指针，必须在锁内完成查询与构造
+    return project_->withReadLock([&](const Project& p) -> json {
+        const auto* chapter = prompt::selector::findById(
+            p.outline.chapters, chapter_id);
+        if (!chapter) {
+            return {{"error", "章节 '" + chapter_id + "' 不存在"}};
+        }
 
-    auto settings = prompt::selector::selectSettings(
-        *project_, *chapter, plotThreads,
-        static_cast<std::size_t>(max_count));
+        auto plotThreads = prompt::selector::selectPlotThreads(
+            p, *chapter, 10);
 
-    json settingArray = json::array();
-    for (const auto* s : settings) {
-        settingArray.push_back(prompt::selector::filterObject(
-            *s, false, {"id", "name", "category"}));
-    }
+        auto settings = prompt::selector::selectSettings(
+            p, *chapter, plotThreads,
+            static_cast<std::size_t>(max_count));
 
-    spdlog::info("[get_relevant_settings] chapter={}, count={}",
-                 chapter_id, settings.size());
-    return {
-        {"chapter_id", chapter_id},
-        {"total_count", settings.size()},
-        {"settings", settingArray}
-    };
+        json settingArray = json::array();
+        for (const auto* s : settings) {
+            settingArray.push_back(prompt::selector::filterObject(
+                *s, false, {"id", "name", "category"}));
+        }
+
+        spdlog::info("[get_relevant_settings] chapter={}, count={}",
+                     chapter_id, settings.size());
+        return {
+            {"chapter_id", chapter_id},
+            {"total_count", settings.size()},
+            {"settings", settingArray}
+        };
+    });
 }
 
 } // namespace agent

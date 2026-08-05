@@ -1,6 +1,6 @@
 #include "agent/tools/OutlineTools.h"
 #include "project/Models.h"
-#include "project/ProjectIO.h"
+#include "project/ProjectAccess.h"
 #include "utils/IdUtils.h"
 #include "utils/SchemaUtils.h"
 #include <algorithm>
@@ -10,12 +10,6 @@ namespace agent {
 using json = nlohmann::json;
 
 namespace {
-Volume* findVolume(std::vector<Volume>& vols, const std::string& id) {
-    return utils::id::findById(vols, id);
-}
-PlotThread* findPlotThread(std::vector<PlotThread>& pts, const std::string& id) {
-    return utils::id::findById(pts, id);
-}
 
 // A6: 软校验——warn 不阻断
 template<typename T>
@@ -38,7 +32,7 @@ json GetOutlineTool::parameters() const {
     return utils::schema::object({});
 }
 json GetOutlineTool::execute(const json&) {
-    const auto& o = project_->outline;
+    const Outline o = project_->getOutline();  // 读快照（共享锁，锁外计算）
     json vol_arr = json::array();
     for (const auto& v : o.volumes)
         vol_arr.push_back({{"id", v.id}, {"title", v.title}, {"order", v.order}});
@@ -62,37 +56,39 @@ json GetProjectStatusTool::parameters() const {
     return utils::schema::object({});
 }
 json GetProjectStatusTool::execute(const json&) {
-    spdlog::info("[get_project_status] {}", project_->title);
-    return {
-        // ── 基本信息 ──
-        {"title", project_->title},
-        {"logline", project_->logline},
-        {"theme", project_->theme},
-        {"description", project_->description},
-        {"genre", project_->genre},
-        {"comps", project_->comps},
-        {"central_question", project_->central_question},
-        // ── 目标与约束 ──
-        {"target_audience", project_->target_audience},
-        {"content_rating", project_->content_rating},
-        {"ending_type", project_->ending_type},
-        {"must_have_elements", project_->must_have_elements},
-        {"must_avoid_elements", project_->must_avoid_elements},
-        {"narrative_promises", project_->narrative_promises},
-        {"world_rules_summary", project_->world_rules_summary},
-        // ── 进度 ──
-        {"target_word_count", project_->target_word_count},
-        {"current_word_count", project_->current_word_count},
-        {"status", project_->status},
-        // ── 统计 ──
-        {"characters_count", static_cast<int>(project_->characters.size())},
-        {"chapters_count", static_cast<int>(project_->outline.chapters.size())},
-        {"settings_count", static_cast<int>(project_->settings.size())},
-        {"world_rules_count", static_cast<int>(project_->world_rules.size())},
-        // ── 元数据 ──
-        {"created", project_->created},
-        {"modified", project_->modified}
-    };
+    return project_->withReadLock([&](const Project& p) -> json {
+        spdlog::info("[get_project_status] {}", p.title);
+        return {
+            // ── 基本信息 ──
+            {"title", p.title},
+            {"logline", p.logline},
+            {"theme", p.theme},
+            {"description", p.description},
+            {"genre", p.genre},
+            {"comps", p.comps},
+            {"central_question", p.central_question},
+            // ── 目标与约束 ──
+            {"target_audience", p.target_audience},
+            {"content_rating", p.content_rating},
+            {"ending_type", p.ending_type},
+            {"must_have_elements", p.must_have_elements},
+            {"must_avoid_elements", p.must_avoid_elements},
+            {"narrative_promises", p.narrative_promises},
+            {"world_rules_summary", p.world_rules_summary},
+            // ── 进度 ──
+            {"target_word_count", p.target_word_count},
+            {"current_word_count", p.current_word_count},
+            {"status", p.status},
+            // ── 统计 ──
+            {"characters_count", static_cast<int>(p.characters.size())},
+            {"chapters_count", static_cast<int>(p.outline.chapters.size())},
+            {"settings_count", static_cast<int>(p.settings.size())},
+            {"world_rules_count", static_cast<int>(p.world_rules.size())},
+            // ── 元数据 ──
+            {"created", p.created},
+            {"modified", p.modified}
+        };
+    });
 }
 
 // ===========================================================================
@@ -117,8 +113,12 @@ json CreateVolumeTool::execute(const json& args) {
     std::string title = args.value("title", "");
     if (title.empty()) return {{"error", "卷标题不能为空"}};
 
+    // 锁外计算：读快照（共享锁）→ 编号/构造/软校验（不持锁）
+    const Outline outline = project_->getOutline();
+    const auto characters = project_->getCharacters();
+
     int max_num = 0;
-    for (const auto& v : project_->outline.volumes) {
+    for (const auto& v : outline.volumes) {
         // D2: 非标准 ID 解析失败时安全跳过，不参与编号统计
         if (auto num = utils::id::tryParseIdNumber(v.id, "vol-")) {
             max_num = std::max(max_num, *num);
@@ -127,30 +127,31 @@ json CreateVolumeTool::execute(const json& args) {
 
     Volume vol;
     vol.id = utils::id::formatSequentialId("vol-", max_num + 1);
-    vol.order = static_cast<int>(project_->outline.volumes.size()) + 1;
+    vol.order = static_cast<int>(outline.volumes.size()) + 1;
 
     vol.title             = title;
     vol.summary           = args.value("summary", "");
     vol.theme             = args.value("theme", "");
     vol.goal              = args.value("goal", "");
     vol.start_chapter_id  = args.value("start_chapter_id", "");
-    validateChapterId(project_->outline.chapters, vol.start_chapter_id, "start_chapter_id", "create_volume");
+    validateChapterId(outline.chapters, vol.start_chapter_id, "start_chapter_id", "create_volume");
     vol.end_chapter_id    = args.value("end_chapter_id", "");
-    validateChapterId(project_->outline.chapters, vol.end_chapter_id, "end_chapter_id", "create_volume");
+    validateChapterId(outline.chapters, vol.end_chapter_id, "end_chapter_id", "create_volume");
     if (args.contains("key_events") && args["key_events"].is_array())
         for (const auto& v : args["key_events"]) vol.key_events.push_back(v.get<std::string>());
     if (args.contains("focus_characters") && args["focus_characters"].is_array()) {
         for (const auto& v : args["focus_characters"]) vol.focus_characters.push_back(v.get<std::string>());
-        validateIdArray(project_->characters, vol.focus_characters, "focus_characters", "create_volume");
+        validateIdArray(characters, vol.focus_characters, "focus_characters", "create_volume");
     }
     if (args.contains("active_plot_threads") && args["active_plot_threads"].is_array()) {
         for (const auto& v : args["active_plot_threads"]) vol.active_plot_threads.push_back(v.get<std::string>());
-        validateIdArray(project_->outline.plot_threads, vol.active_plot_threads, "active_plot_threads", "create_volume");
+        validateIdArray(outline.plot_threads, vol.active_plot_threads, "active_plot_threads", "create_volume");
     }
 
-    project_->outline.volumes.push_back(vol);
-    project_->markDirty(Project::DIRTY_OUTLINE);
-    ProjectIO::save(*project_);
+    // 锁内小改：push_back + markDirty（addVolume 内部完成）
+    project_->addVolume(vol);
+    // 锁外落盘（save 内部锁内快照 + 锁外文件 IO）
+    project_->save();
     spdlog::info("[create_volume] {} '{}'", vol.id, title);
     return {{"success", true}, {"volume", {{"id", vol.id}, {"title", title}, {"order", vol.order}}}};
 }
@@ -180,10 +181,13 @@ json UpdateVolumeTool::parameters() const {
 
 json UpdateVolumeTool::execute(const json& args) {
     const std::string vid = args.value("volume_id", "");
-    auto* vol = findVolume(project_->outline.volumes, vid);
-    if (!vol) return {{"error", "卷不存在: " + vid}};
     const json& f = args["fields"];
     if (!f.is_object() || f.empty()) return {{"error", "fields 必须是非空对象"}};
+
+    // 锁外取校验快照（软校验用，不持锁）
+    const auto chapters = project_->getOutline().chapters;
+    const auto characters = project_->getCharacters();
+    const auto plot_threads = project_->getOutline().plot_threads;
 
     using StrField = std::string Volume::*;
     static const std::map<std::string, StrField> kStringMap = {
@@ -199,31 +203,34 @@ json UpdateVolumeTool::execute(const json& args) {
         {"active_plot_threads", &Volume::active_plot_threads},
     };
 
+    // 锁内小改：逐字段赋值 + 软校验（updateVolume 自动 markDirty）
     int n = 0;
-    for (auto it = f.begin(); it != f.end(); ++it) {
-        const std::string& key = it.key();
-        if (auto si = kStringMap.find(key); si != kStringMap.end() && it.value().is_string()) {
-            vol->*si->second = it.value().get<std::string>(); n++;
-            // A6: 校验单值章节 ID 引用（start_chapter_id / end_chapter_id）
-            if (key == "start_chapter_id" || key == "end_chapter_id")
-                validateChapterId(project_->outline.chapters, it.value().get<std::string>(), key, "update_volume");
-        } else if (key == "order" && it.value().is_number_integer()) {
-            vol->order = it.value().get<int>(); n++;
-        } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && it.value().is_array()) {
-            auto& arr = vol->*ai->second;
-            arr.clear();
-            for (const auto& v : it.value()) arr.push_back(v.get<std::string>());
-            // A6: 校验数组引用（focus_characters / active_plot_threads）
-            if (key == "focus_characters")
-                validateIdArray(project_->characters, arr, key, "update_volume");
-            if (key == "active_plot_threads")
-                validateIdArray(project_->outline.plot_threads, arr, key, "update_volume");
-            n++;
+    const bool ok = project_->updateVolume(vid, [&](Volume& vol) {
+        for (auto it = f.begin(); it != f.end(); ++it) {
+            const std::string& key = it.key();
+            if (auto si = kStringMap.find(key); si != kStringMap.end() && it.value().is_string()) {
+                vol.*si->second = it.value().get<std::string>(); n++;
+                // A6: 校验单值章节 ID 引用（start_chapter_id / end_chapter_id）
+                if (key == "start_chapter_id" || key == "end_chapter_id")
+                    validateChapterId(chapters, it.value().get<std::string>(), key, "update_volume");
+            } else if (key == "order" && it.value().is_number_integer()) {
+                vol.order = it.value().get<int>(); n++;
+            } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && it.value().is_array()) {
+                auto& arr = vol.*ai->second;
+                arr.clear();
+                for (const auto& v : it.value()) arr.push_back(v.get<std::string>());
+                // A6: 校验数组引用（focus_characters / active_plot_threads）
+                if (key == "focus_characters")
+                    validateIdArray(characters, arr, key, "update_volume");
+                if (key == "active_plot_threads")
+                    validateIdArray(plot_threads, arr, key, "update_volume");
+                n++;
+            }
         }
-    }
+    });
+    if (!ok) return {{"error", "卷不存在: " + vid}};
     if (n == 0) return {{"error", "没有可更新的字段"}};
-    project_->markDirty(Project::DIRTY_OUTLINE);
-    ProjectIO::save(*project_);
+    project_->save();
     spdlog::info("[update_volume] {} 更新 {} 个字段", vid, n);
     return {{"success", true}, {"volume_id", vid}, {"updated_fields", n}};
 }
@@ -253,8 +260,13 @@ json CreatePlotThreadTool::execute(const json& args) {
     std::string name = args.value("name", "");
     if (name.empty()) return {{"error", "剧情线名称不能为空"}};
 
+    // 锁外计算：读快照 → 编号/构造/软校验
+    const Outline outline = project_->getOutline();
+    const auto characters = project_->getCharacters();
+    const auto settings = project_->getSettings();
+
     int max_num = 0;
-    for (const auto& pt : project_->outline.plot_threads) {
+    for (const auto& pt : outline.plot_threads) {
         // D2: 非标准 ID 解析失败时安全跳过，不参与编号统计
         if (auto num = utils::id::tryParseIdNumber(pt.id, "pt-")) {
             max_num = std::max(max_num, *num);
@@ -273,21 +285,20 @@ json CreatePlotThreadTool::execute(const json& args) {
     pt.central_question = args.value("central_question", "");
     pt.resolution       = args.value("resolution", "");
     pt.start_chapter_id = args.value("start_chapter_id", "");
-    validateChapterId(project_->outline.chapters, pt.start_chapter_id, "start_chapter_id", "create_plot_thread");
+    validateChapterId(outline.chapters, pt.start_chapter_id, "start_chapter_id", "create_plot_thread");
     pt.end_chapter_id   = args.value("end_chapter_id", "");
-    validateChapterId(project_->outline.chapters, pt.end_chapter_id, "end_chapter_id", "create_plot_thread");
+    validateChapterId(outline.chapters, pt.end_chapter_id, "end_chapter_id", "create_plot_thread");
     if (args.contains("related_characters") && args["related_characters"].is_array()) {
         for (const auto& v : args["related_characters"]) pt.related_characters.push_back(v.get<std::string>());
-        validateIdArray(project_->characters, pt.related_characters, "related_characters", "create_plot_thread");
+        validateIdArray(characters, pt.related_characters, "related_characters", "create_plot_thread");
     }
     if (args.contains("related_settings") && args["related_settings"].is_array()) {
         for (const auto& v : args["related_settings"]) pt.related_settings.push_back(v.get<std::string>());
-        validateIdArray(project_->settings, pt.related_settings, "related_settings", "create_plot_thread");
+        validateIdArray(settings, pt.related_settings, "related_settings", "create_plot_thread");
     }
 
-    project_->outline.plot_threads.push_back(pt);
-    project_->markDirty(Project::DIRTY_OUTLINE);
-    ProjectIO::save(*project_);
+    project_->addPlotThread(pt);
+    project_->save();
     spdlog::info("[create_plot_thread] {} '{}'", pt.id, name);
     return {{"success", true}, {"plot_thread", {{"id", pt.id}, {"name", name}, {"type", pt.type}}}};
 }
@@ -319,10 +330,13 @@ json UpdatePlotThreadTool::parameters() const {
 
 json UpdatePlotThreadTool::execute(const json& args) {
     const std::string pid = args.value("plot_thread_id", "");
-    auto* pt = findPlotThread(project_->outline.plot_threads, pid);
-    if (!pt) return {{"error", "剧情线不存在: " + pid}};
     const json& f = args["fields"];
     if (!f.is_object() || f.empty()) return {{"error", "fields 必须是非空对象"}};
+
+    // 锁外取校验快照（软校验用，不持锁）
+    const auto chapters = project_->getOutline().chapters;
+    const auto characters = project_->getCharacters();
+    const auto settings = project_->getSettings();
 
     using StrField = std::string PlotThread::*;
     static const std::map<std::string, StrField> kStringMap = {
@@ -339,28 +353,31 @@ json UpdatePlotThreadTool::execute(const json& args) {
         {"related_settings", &PlotThread::related_settings},
     };
 
+    // 锁内小改：逐字段赋值 + 软校验（updatePlotThread 自动 markDirty）
     int n = 0;
-    for (auto it = f.begin(); it != f.end(); ++it) {
-        const std::string& key = it.key();
-        if (auto si = kStringMap.find(key); si != kStringMap.end() && it.value().is_string()) {
-            pt->*si->second = it.value().get<std::string>();
-            if (key == "start_chapter_id") validateChapterId(project_->outline.chapters, it.value().get<std::string>(), key, "update_plot_thread");
-            if (key == "end_chapter_id") validateChapterId(project_->outline.chapters, it.value().get<std::string>(), key, "update_plot_thread");
-            n++;
-        } else if (key == "priority" && it.value().is_number_integer()) {
-            pt->priority = it.value().get<int>(); n++;
-        } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && it.value().is_array()) {
-            auto& arr = pt->*ai->second;
-            arr.clear();
-            for (const auto& v : it.value()) arr.push_back(v.get<std::string>());
-            if (key == "related_characters") validateIdArray(project_->characters, arr, "related_characters", "update_plot_thread");
-            if (key == "related_settings") validateIdArray(project_->settings, arr, "related_settings", "update_plot_thread");
-            n++;
+    const bool ok = project_->updatePlotThread(pid, [&](PlotThread& pt) {
+        for (auto it = f.begin(); it != f.end(); ++it) {
+            const std::string& key = it.key();
+            if (auto si = kStringMap.find(key); si != kStringMap.end() && it.value().is_string()) {
+                pt.*si->second = it.value().get<std::string>();
+                if (key == "start_chapter_id") validateChapterId(chapters, it.value().get<std::string>(), key, "update_plot_thread");
+                if (key == "end_chapter_id") validateChapterId(chapters, it.value().get<std::string>(), key, "update_plot_thread");
+                n++;
+            } else if (key == "priority" && it.value().is_number_integer()) {
+                pt.priority = it.value().get<int>(); n++;
+            } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && it.value().is_array()) {
+                auto& arr = pt.*ai->second;
+                arr.clear();
+                for (const auto& v : it.value()) arr.push_back(v.get<std::string>());
+                if (key == "related_characters") validateIdArray(characters, arr, "related_characters", "update_plot_thread");
+                if (key == "related_settings") validateIdArray(settings, arr, "related_settings", "update_plot_thread");
+                n++;
+            }
         }
-    }
+    });
+    if (!ok) return {{"error", "剧情线不存在: " + pid}};
     if (n == 0) return {{"error", "没有可更新的字段"}};
-    project_->markDirty(Project::DIRTY_OUTLINE);
-    ProjectIO::save(*project_);
+    project_->save();
     spdlog::info("[update_plot_thread] {} 更新 {} 个字段", pid, n);
     return {{"success", true}, {"plot_thread_id", pid}, {"updated_fields", n}};
 }

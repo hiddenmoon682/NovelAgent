@@ -7,9 +7,9 @@ namespace agent {
 
 /// 获取编写本章节所需的核心上下文（元数据 + 卷 + 关联剧情线）。
 class GetChapterContextTool : public BuiltInTool {
-    std::shared_ptr<Project> project_;
+    std::shared_ptr<ProjectAccess> project_;
 public:
-    explicit GetChapterContextTool(std::shared_ptr<Project> p) : project_(p) {}
+    explicit GetChapterContextTool(std::shared_ptr<ProjectAccess> p) : project_(p) {}
     std::string name() const override { return "get_chapter_context"; }
     std::string description() const override {
         return "获取指定章节的创作上下文快照，包括章节元数据、归属卷的信息、"
@@ -19,6 +19,7 @@ public:
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Outline; }
+    bool isReadOnly() const override { return true; }
 };
 
 } // namespace agent

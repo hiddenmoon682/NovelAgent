@@ -46,6 +46,12 @@ Project load(const std::string& path);
 // 因此参数为非 const 引用（D4：取代此前的 const_cast 写法）。
 void save(Project& project);
 
+// 序列化给定 Project 快照并按 flags 指定的脏位写盘（P3 并发落盘）。
+// 与 save() 的区别：不读取/修改调用方共享状态的 dirty_flags、
+// 不做 markClean——调用方（ProjectAccess::save）已在锁内完成
+// 快照拷贝与脏标记 test-and-clear，本函数只做纯序列化 + 文件 IO。
+void saveSnapshot(Project& data, uint32_t flags);
+
 // ── 单文件 JSON 读写 ──
 
 // 加载并解析单个 JSON 文件。

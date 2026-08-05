@@ -1,4 +1,5 @@
 #include "agent/tools/WorldRuleTools.h"
+#include "project/ProjectAccess.h"
 #include "agent/tool/ToolRegistry.h"
 #include "project/ProjectIO.h"
 
@@ -38,7 +39,7 @@ struct TestProject {
 void test_create_world_rule() {
     TEST("create_world_rule — 创建新世界规则");
     TestProject tp;
-    agent::CreateWorldRuleTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateWorldRuleTool tool(std::make_shared<ProjectAccess>(tp.project));
 
     auto result = tool.execute({{"name", "宵禁法"}, {"summary", "夜晚禁止外出"}});
     CHECK(result["success"] == true);
@@ -59,7 +60,7 @@ void test_create_world_rule() {
 void test_get_world_rule() {
     TEST("get_world_rule — 查询规则详情");
     TestProject tp;
-    auto pp = std::shared_ptr<Project>(&tp.project, [](Project*){});
+    auto pp = std::make_shared<ProjectAccess>(tp.project);
     agent::CreateWorldRuleTool create(pp);
     create.execute({{"name", "魔法守恒"}, {"limitations", "施法需消耗生命力"}});
 
@@ -78,7 +79,7 @@ void test_get_world_rule() {
 void test_update_world_rule() {
     TEST("update_world_rule — 更新字段");
     TestProject tp;
-    auto pp = std::shared_ptr<Project>(&tp.project, [](Project*){});
+    auto pp = std::make_shared<ProjectAccess>(tp.project);
     agent::CreateWorldRuleTool create(pp);
     create.execute({{"name", "旧规则"}});
 
@@ -102,7 +103,7 @@ void test_update_world_rule() {
 void test_delete_world_rule() {
     TEST("delete_world_rule — 删除规则并级联清理引用");
     TestProject tp;
-    auto pp = std::shared_ptr<Project>(&tp.project, [](Project*){});
+    auto pp = std::make_shared<ProjectAccess>(tp.project);
     agent::CreateWorldRuleTool create(pp);
     create.execute({{"name", "待删除规则"}});
     std::string rid = tp.project.world_rules[0].id;
@@ -130,7 +131,7 @@ void test_delete_world_rule() {
 void test_error_handling() {
     TEST("create/delete — 空名称/不存在");
     TestProject tp;
-    auto pp = std::shared_ptr<Project>(&tp.project, [](Project*){});
+    auto pp = std::make_shared<ProjectAccess>(tp.project);
 
     agent::CreateWorldRuleTool create(pp);
     auto r = create.execute({{"name", ""}});

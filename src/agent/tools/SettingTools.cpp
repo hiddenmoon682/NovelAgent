@@ -1,5 +1,5 @@
 #include "agent/tools/SettingTools.h"
-#include "project/ProjectIO.h"
+#include "project/ProjectAccess.h"
 #include "utils/IdUtils.h"
 #include "utils/SchemaUtils.h"
 #include <algorithm>
@@ -30,7 +30,8 @@ json GetSettingTool::parameters() const {
     }, {"setting_id"});
 }
 json GetSettingTool::execute(const json& args) {
-    auto* s = findSetting(project_->settings, args.value("setting_id", ""));
+    auto settings = project_->getSettings();  // 读快照（共享锁，锁外计算）
+    auto* s = findSetting(settings, args.value("setting_id", ""));
     if (!s) return {{"error", "设定不存在"}};
     spdlog::info("[get_setting] {}", s->id);
     return json(*s);
@@ -41,7 +42,7 @@ json ListSettingsTool::parameters() const {
 }
 json ListSettingsTool::execute(const json&) {
     json arr = json::array();
-    for (const auto& s : project_->settings)
+    for (const auto& s : project_->getSettings())
         arr.push_back({{"id", s.id}, {"name", s.name}, {"category", s.category}, {"description", s.description}});
     spdlog::info("[get_settings] 共 {} 个设定", arr.size());
     return {{"settings", std::move(arr)}};
@@ -65,10 +66,14 @@ json UpdateSettingTool::parameters() const {
     }, {"setting_id", "fields"});
 }
 json UpdateSettingTool::execute(const json& args) {
-    auto* s = findSetting(project_->settings, args.value("setting_id", ""));
-    if (!s) return {{"error", "设定不存在"}};
+    const std::string sid = args.value("setting_id", "");
     const json& f = args["fields"];
     if (!f.is_object() || f.empty()) return {{"error", "fields 必须是非空对象"}};
+
+    // 锁外取校验快照（软校验用，不持锁）
+    const auto characters = project_->getCharacters();
+    const auto plot_threads = project_->getOutline().plot_threads;
+    const auto world_rules = project_->getWorldRules();
 
     // 字符串字段白名单
     using StrField = std::string Setting::*;
@@ -89,27 +94,30 @@ json UpdateSettingTool::execute(const json& args) {
         {"related_rule_ids", &Setting::related_rule_ids},
     };
 
+    // 锁内小改：逐字段赋值 + 软校验（updateSetting 自动 markDirty）
     int n = 0;
-    for (auto it = f.begin(); it != f.end(); ++it) {
-        const std::string& key = it.key();
-        if (auto si = kStringMap.find(key); si != kStringMap.end() && it.value().is_string()) {
-            s->*si->second = it.value().get<std::string>();
-            n++;
-        } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && it.value().is_array()) {
-            auto& arr = s->*ai->second;
-            arr.clear();
-            for (const auto& v : it.value()) arr.push_back(v.get<std::string>());
-            if (key == "related_characters") validateIdArray(project_->characters, arr, "related_characters", "update_setting");
-            if (key == "related_plot_threads") validateIdArray(project_->outline.plot_threads, arr, "related_plot_threads", "update_setting");
-            if (key == "related_rule_ids") validateIdArray(project_->world_rules, arr, "related_rule_ids", "update_setting");
-            n++;
+    const bool ok = project_->updateSetting(sid, [&](Setting& s) {
+        for (auto it = f.begin(); it != f.end(); ++it) {
+            const std::string& key = it.key();
+            if (auto si = kStringMap.find(key); si != kStringMap.end() && it.value().is_string()) {
+                s.*si->second = it.value().get<std::string>();
+                n++;
+            } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && it.value().is_array()) {
+                auto& arr = s.*ai->second;
+                arr.clear();
+                for (const auto& v : it.value()) arr.push_back(v.get<std::string>());
+                if (key == "related_characters") validateIdArray(characters, arr, "related_characters", "update_setting");
+                if (key == "related_plot_threads") validateIdArray(plot_threads, arr, "related_plot_threads", "update_setting");
+                if (key == "related_rule_ids") validateIdArray(world_rules, arr, "related_rule_ids", "update_setting");
+                n++;
+            }
         }
-    }
+    });
+    if (!ok) return {{"error", "设定不存在"}};
     if (n == 0) return {{"error", "没有可更新的字段"}};
-    project_->markDirty(Project::DIRTY_SETTINGS);
-    ProjectIO::save(*project_);
-    spdlog::info("[update_setting] {} 更新 {} 个字段", s->id, n);
-    return {{"success", true}, {"setting_id", s->id}, {"updated_fields", n}};
+    project_->save();
+    spdlog::info("[update_setting] {} 更新 {} 个字段", sid, n);
+    return {{"success", true}, {"setting_id", sid}, {"updated_fields", n}};
 }
 
 // ===========================================================================
@@ -131,9 +139,10 @@ json CreateSettingTool::execute(const json& args) {
     std::string name = args.value("name", "");
     if (name.empty()) return {{"error", "设定名称不能为空"}};
 
-    // 生成 ID: setting-001 格式
+    // 锁外计算：读快照 → 编号/构造
+    const auto settings = project_->getSettings();
     int max_num = 0;
-    for (const auto& s : project_->settings) {
+    for (const auto& s : settings) {
         // D2: 非标准 ID 解析失败时安全跳过，不参与编号统计
         if (auto num = utils::id::tryParseIdNumber(s.id, "setting-")) {
             max_num = std::max(max_num, *num);
@@ -150,9 +159,8 @@ json CreateSettingTool::execute(const json& args) {
     new_s.sensory_profile = args.value("sensory_profile", "");
     new_s.notes           = args.value("notes", "");
 
-    project_->settings.push_back(new_s);
-    project_->markDirty(Project::DIRTY_SETTINGS);
-    ProjectIO::save(*project_);
+    project_->addSetting(new_s);
+    project_->save();
 
     spdlog::info("[create_setting] {} '{}' (category={})", new_s.id, name, new_s.category);
 
@@ -180,51 +188,54 @@ json DeleteSettingTool::execute(const json& args) {
     const std::string sid = args.value("setting_id", "");
     if (sid.empty()) return {{"error", "setting_id 不能为空"}};
 
-    // 1) 从 settings 中移除
-    auto it = std::find_if(project_->settings.begin(), project_->settings.end(),
-        [&](const Setting& s) { return s.id == sid; });
-    if (it == project_->settings.end()) return {{"error", "设定不存在: " + sid}};
-    project_->settings.erase(it);
-
-    // 2) 级联清理：各实体中引用该 setting ID 的位置
+    // 锁内级联清理（跨聚合：settings + outline + world_rules，一次独占锁完成）
     int cascade_chapters = 0, cascade_scenes = 0, cascade_plots = 0;
     int cascade_rules = 0, cascade_other_settings = 0;
+    const bool ok = project_->withWriteLock([&](Project& p) {
+        auto it = std::find_if(p.settings.begin(), p.settings.end(),
+                               [&](const Setting& s) { return s.id == sid; });
+        if (it == p.settings.end()) return false;
+        p.settings.erase(it);
 
-    // Chapter: location_id（单值） / focus_settings（数组）
-    for (auto& ch : project_->outline.chapters) {
-        if (ch.location_id == sid) { ch.location_id.clear(); ++cascade_chapters; }
-        auto& fs = ch.focus_settings;
-        auto before = fs.size();
-        fs.erase(std::remove(fs.begin(), fs.end(), sid), fs.end());
-        if (fs.size() < before) cascade_chapters += static_cast<int>(before - fs.size());
-        for (auto& sc : ch.scenes) {
-            if (sc.location_id == sid) { sc.location_id.clear(); ++cascade_scenes; }
+        // Chapter: location_id（单值） / focus_settings（数组）
+        for (auto& ch : p.outline.chapters) {
+            if (ch.location_id == sid) { ch.location_id.clear(); ++cascade_chapters; }
+            auto& fs = ch.focus_settings;
+            auto before = fs.size();
+            fs.erase(std::remove(fs.begin(), fs.end(), sid), fs.end());
+            if (fs.size() < before) cascade_chapters += static_cast<int>(before - fs.size());
+            for (auto& sc : ch.scenes) {
+                if (sc.location_id == sid) { sc.location_id.clear(); ++cascade_scenes; }
+            }
         }
-    }
-    // PlotThread: related_settings（数组）
-    for (auto& pt : project_->outline.plot_threads) {
-        auto& rs = pt.related_settings;
-        auto before = rs.size();
-        rs.erase(std::remove(rs.begin(), rs.end(), sid), rs.end());
-        if (rs.size() < before) cascade_plots += static_cast<int>(before - rs.size());
-    }
-    // WorldRule: related_settings（数组）
-    for (auto& wr : project_->world_rules) {
-        auto& rs = wr.related_settings;
-        auto before = rs.size();
-        rs.erase(std::remove(rs.begin(), rs.end(), sid), rs.end());
-        if (rs.size() < before) cascade_rules += static_cast<int>(before - rs.size());
-    }
-    // 其他 Setting 的 related_rule_ids（虽不常见但保持完整性）
-    for (auto& s : project_->settings) {
-        auto& rr = s.related_rule_ids;
-        auto before = rr.size();
-        rr.erase(std::remove(rr.begin(), rr.end(), sid), rr.end());
-        if (rr.size() < before) cascade_other_settings += static_cast<int>(before - rr.size());
-    }
+        // PlotThread: related_settings（数组）
+        for (auto& pt : p.outline.plot_threads) {
+            auto& rs = pt.related_settings;
+            auto before = rs.size();
+            rs.erase(std::remove(rs.begin(), rs.end(), sid), rs.end());
+            if (rs.size() < before) cascade_plots += static_cast<int>(before - rs.size());
+        }
+        // WorldRule: related_settings（数组）
+        for (auto& wr : p.world_rules) {
+            auto& rs = wr.related_settings;
+            auto before = rs.size();
+            rs.erase(std::remove(rs.begin(), rs.end(), sid), rs.end());
+            if (rs.size() < before) cascade_rules += static_cast<int>(before - rs.size());
+        }
+        // 其他 Setting 的 related_rule_ids（虽不常见但保持完整性）
+        for (auto& s : p.settings) {
+            auto& rr = s.related_rule_ids;
+            auto before = rr.size();
+            rr.erase(std::remove(rr.begin(), rr.end(), sid), rr.end());
+            if (rr.size() < before) cascade_other_settings += static_cast<int>(before - rr.size());
+        }
+        p.markDirty(Project::DIRTY_SETTINGS | Project::DIRTY_OUTLINE
+                    | Project::DIRTY_WORLD_RULES);
+        return true;
+    });
+    if (!ok) return {{"error", "设定不存在: " + sid}};
 
-    project_->markDirty(Project::DIRTY_SETTINGS);
-    ProjectIO::save(*project_);
+    project_->save();
     spdlog::info("[delete_setting] {} 已删除 (cascade: ch={} sc={} pt={} wr={} s={})",
                  sid, cascade_chapters, cascade_scenes, cascade_plots, cascade_rules, cascade_other_settings);
     return {

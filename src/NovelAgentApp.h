@@ -8,6 +8,7 @@
 #include "llm/LLMClientFactory.h"
 #include "llm/TokenCounter.h"
 #include "project/FileStorageBackend.h"
+#include "project/ProjectAccess.h"
 #include "retrieval/VectorStore.h"
 #include "retrieval/EmbeddingGenerator.h"
 #include "agent/memory/LongTermMemoryStore.h"
@@ -33,6 +34,10 @@ public:
     agent::ToolRegistry& registry() { return registry_; }              // 工具注册表
     skill::SkillRegistry& skillRegistry() { return skill_registry_; }  // 技能注册表
     std::shared_ptr<Project> project() { return project_; }            // 当前项目（可能为空项目）
+    std::shared_ptr<ProjectAccess> projectAccess() { return project_access_; }  // 项目受控访问层
+    // 当前 provider 的模型名/标识（从 provider 配置读，不触发会话物化——P8 懒物化）。
+    std::string modelName() const { return client_.config().model; }
+    std::string providerName() const { return client_.config().name; }
     agent::IIndexService* indexService();                              // 项目索引服务；项目未打开时仍返回有效指针
 
     // 启用/禁用技能：更新注册表 + 持久化 + 重建 system prompt。
@@ -44,6 +49,7 @@ private:
     agent::ToolRegistry registry_;                  // 工具注册表（内置工具登记处）
     agent::Agent agent_;                            // 多会话并行门面（会话内存由各 SessionRuntime 持有）
     std::shared_ptr<Project> project_;              // 当前项目（未打开时为空项目）
+    std::shared_ptr<ProjectAccess> project_access_; // 项目受控访问层（P2/P3：工具/索引/GUI 唯一入口）
     llm::TokenCounter calibrator_;                  // Token 计量/校准器
     FileStorageBackend storage_;                    // 文件存储后端（绑定项目路径）
     agent::SessionPersistence persistence_;         // 会话持久化（基于 storage_）

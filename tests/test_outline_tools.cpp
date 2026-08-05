@@ -1,4 +1,5 @@
 #include "agent/tools/OutlineTools.h"
+#include "project/ProjectAccess.h"
 #include "agent/tools/ChapterTools.h"
 #include "project/ProjectIO.h"
 
@@ -38,7 +39,7 @@ struct TestProject {
 void test_get_outline_empty() {
     TEST("get_outline — 空项目返回空数组");
     TestProject tp;
-    agent::GetOutlineTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::GetOutlineTool tool(std::make_shared<ProjectAccess>(tp.project));
     auto r = tool.execute({});
     CHECK(r["premise"].is_string());
     CHECK(r["volumes"].size() == 0);
@@ -54,7 +55,7 @@ void test_get_outline_empty() {
 void test_create_volume() {
     TEST("create_volume — 创建新卷");
     TestProject tp;
-    agent::CreateVolumeTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateVolumeTool tool(std::make_shared<ProjectAccess>(tp.project));
     auto r = tool.execute({{"title", "第一卷：启程"}});
     CHECK(r["success"] == true);
     CHECK(r["volume"]["id"] == "vol-001");
@@ -71,7 +72,7 @@ void test_create_volume() {
 void test_update_volume() {
     TEST("update_volume — 更新卷字段");
     TestProject tp;
-    auto pp = std::shared_ptr<Project>(&tp.project, [](Project*){});
+    auto pp = std::make_shared<ProjectAccess>(tp.project);
     agent::CreateVolumeTool create(pp);
     create.execute({{"title", "旧标题"}});
 
@@ -93,7 +94,7 @@ void test_update_volume() {
 void test_create_plot_thread() {
     TEST("create_plot_thread — 创建新剧情线");
     TestProject tp;
-    agent::CreatePlotThreadTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreatePlotThreadTool tool(std::make_shared<ProjectAccess>(tp.project));
     auto r = tool.execute({
         {"name", "主角复仇线"},
         {"type", "main"}
@@ -112,7 +113,7 @@ void test_create_plot_thread() {
 void test_update_plot_thread() {
     TEST("update_plot_thread — 更新剧情线字段");
     TestProject tp;
-    auto pp = std::shared_ptr<Project>(&tp.project, [](Project*){});
+    auto pp = std::make_shared<ProjectAccess>(tp.project);
     agent::CreatePlotThreadTool create(pp);
     create.execute({{"name", "复仇线"}, {"description", "旧描述"}});
 
@@ -134,7 +135,7 @@ void test_update_plot_thread() {
 void test_get_project_status() {
     TEST("get_project_status — 返回项目概况");
     TestProject tp;
-    agent::GetProjectStatusTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::GetProjectStatusTool tool(std::make_shared<ProjectAccess>(tp.project));
     auto r = tool.execute({});
     CHECK(r["title"] == "大纲测试");
     CHECK(r["characters_count"] == 0);
@@ -150,7 +151,7 @@ void test_get_project_status() {
 void test_error_handling() {
     TEST("create_volume/plot_thread — 空名称错误");
     TestProject tp;
-    auto pp = std::shared_ptr<Project>(&tp.project, [](Project*){});
+    auto pp = std::make_shared<ProjectAccess>(tp.project);
 
     agent::CreateVolumeTool cv(pp);
     auto r = cv.execute({{"title", ""}});

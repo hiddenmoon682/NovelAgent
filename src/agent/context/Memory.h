@@ -241,7 +241,7 @@ public:
         // 消息列表整体替换后旧队列随之失效，按"preserved 的 Tool 消息即
         // 自动 pin"（与 inject 同一启发式）依消息顺序重建，并立即执行上限
         // 检查——旧会话文件可能累积了超限的自动 pin（本机制上线前的存量），
-        // 会话加载走 restore（见 SessionManager::loadSessionState），借此
+        // 会话加载走 restore（见 SessionPool::loadSessionState），借此
         // 一次性收敛到上限内，天然兼容旧格式。
         auto_pin_ids_.clear();
         for (const auto& m : messages_) {

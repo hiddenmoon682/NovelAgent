@@ -28,7 +28,7 @@ set(NOVELAGENT_PROJECT
     src/project/Models/Style.h
     src/project/Models/Outline.h
     src/project/Models/Project.h
-    src/project/IProjectAccess.h src/project/ProjectAccess.h
+    src/project/ProjectAccess.h src/project/ProjectAccess.cpp
     src/project/FileStorageBackend.h src/project/FileStorageBackend.cpp
     src/project/ProjectIO.h src/project/ProjectIO.cpp
     src/project/ProjectManager.h src/project/ProjectManager.cpp
@@ -59,7 +59,7 @@ set(NOVELAGENT_AGENT
     src/agent/core/AgentState.h src/agent/core/AgentState.cpp
     src/agent/core/CoreLoop.h src/agent/core/CoreLoop.cpp
     src/agent/core/ExecutionTracer.h src/agent/core/ExecutionTracer.cpp
-    src/agent/core/SessionManager.h src/agent/core/SessionManager.cpp
+    src/agent/core/SessionPool.h src/agent/core/SessionPool.cpp
     src/agent/core/SessionRuntime.h src/agent/core/SessionRuntime.cpp
     # tool/
     src/agent/tool/IToolProvider.h src/agent/tool/IToolProvider.cpp

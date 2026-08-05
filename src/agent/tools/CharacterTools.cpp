@@ -1,6 +1,6 @@
 #include "agent/tools/CharacterTools.h"
 
-#include "project/ProjectIO.h"
+#include "project/ProjectAccess.h"
 #include "utils/IdUtils.h"
 #include "utils/SchemaUtils.h"
 
@@ -46,7 +46,8 @@ json GetCharacterTool::parameters() const {
 
 json GetCharacterTool::execute(const json& args) {
     std::string id = args.value("character_id", "");
-    const auto* ch = findCharacter(project_->characters, id);
+    auto characters = project_->getCharacters();  // 读快照（共享锁，锁外计算）
+    const auto* ch = findCharacter(characters, id);
     if (!ch) {
         return {{"error", "角色 '" + id + "' 不存在"}};
     }
@@ -65,7 +66,7 @@ json ListCharactersTool::parameters() const {
 
 json ListCharactersTool::execute(const json& /*args*/) {
     json chars = json::array();
-    for (const auto& ch : project_->characters) {
+    for (const auto& ch : project_->getCharacters()) {
         chars.push_back({
             {"id", ch.id},
             {"name", ch.name},
@@ -106,8 +107,11 @@ json CreateCharacterTool::execute(const json& args) {
         return {{"error", "角色姓名不能为空"}};
     }
 
+    // 锁外计算：读快照 → 重名检查/编号/构造
+    const auto characters = project_->getCharacters();
+
     // 检查重名
-    for (const auto& ch : project_->characters) {
+    for (const auto& ch : characters) {
         if (ch.name == name) {
             return {{"error", "角色 '" + name + "' 已存在（ID: " + ch.id + "）"}};
         }
@@ -115,7 +119,7 @@ json CreateCharacterTool::execute(const json& args) {
 
     // 生成 ID
     int max_num = 0;
-    for (const auto& ch : project_->characters) {
+    for (const auto& ch : characters) {
         // D2: 非标准 ID 解析失败时安全跳过，不参与编号统计
         if (auto num = utils::id::tryParseIdNumber(ch.id, "char-")) {
             max_num = std::max(max_num, *num);
@@ -139,9 +143,8 @@ json CreateCharacterTool::execute(const json& args) {
     new_ch.internal_conflict = args.value("internal_conflict", "");
     new_ch.external_conflict = args.value("external_conflict", "");
 
-    project_->characters.push_back(new_ch);
-    project_->markDirty(Project::DIRTY_CHARACTERS);
-    ProjectIO::save(*project_);
+    project_->addCharacter(new_ch);
+    project_->save();
 
     spdlog::info("[create_character] {} '{}' (role={})", new_ch.id, name, new_ch.role);
 
@@ -202,15 +205,13 @@ static const std::set<std::string> kUpdatableArrayFields = {
 
 json UpdateCharacterTool::execute(const json& args) {
     std::string id = args.value("character_id", "");
-    auto* ch = findCharacter(project_->characters, id);
-    if (!ch) {
-        return {{"error", "角色 '" + id + "' 不存在"}};
-    }
-
     const json& fields = args["fields"];
     if (!fields.is_object() || fields.empty()) {
         return {{"error", "fields 必须是非空的对象"}};
     }
+
+    // 锁外取校验快照（软校验用，不持锁）
+    const auto chapters = project_->getOutline().chapters;
 
     // 逐字段更新 — 用指针到成员的 map 避免冗长的 if-else 链
     using StrField = std::string Character::*;
@@ -241,32 +242,39 @@ json UpdateCharacterTool::execute(const json& args) {
         {"chapter_appearances", &Character::chapter_appearances},
     };
 
+    // 锁内小改：逐字段赋值 + 软校验（updateCharacter 自动 markDirty）
     std::vector<std::string> updated;
-    for (auto it = fields.begin(); it != fields.end(); ++it) {
-        const std::string& key = it.key();
-        const json& value = it.value();
+    std::string result_name;
+    const bool ok = project_->updateCharacter(id, [&](Character& ch) {
+        result_name = ch.name;  // 锁内读最终 name（可能本次更新）
+        for (auto it = fields.begin(); it != fields.end(); ++it) {
+            const std::string& key = it.key();
+            const json& value = it.value();
 
-        if (auto si = kStringMap.find(key); si != kStringMap.end() && value.is_string()) {
-            ch->*si->second = value.get<std::string>();
-            updated.push_back(key);
-        } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && value.is_array()) {
-            auto& arr = ch->*ai->second;
-            arr.clear();
-            for (const auto& v : value) arr.push_back(v.get<std::string>());
-            // A6: 校验 chapter_appearances 中的章节 ID
-            if (key == "chapter_appearances")
-                validateIdArray(project_->outline.chapters, arr, "chapter_appearances", "update_character");
-            updated.push_back(key);
+            if (auto si = kStringMap.find(key); si != kStringMap.end() && value.is_string()) {
+                ch.*si->second = value.get<std::string>();
+                updated.push_back(key);
+            } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && value.is_array()) {
+                auto& arr = ch.*ai->second;
+                arr.clear();
+                for (const auto& v : value) arr.push_back(v.get<std::string>());
+                // A6: 校验 chapter_appearances 中的章节 ID
+                if (key == "chapter_appearances")
+                    validateIdArray(chapters, arr, "chapter_appearances", "update_character");
+                updated.push_back(key);
+            }
+            // 不在白名单中的字段 → 静默忽略
         }
-        // 不在白名单中的字段 → 静默忽略
+    });
+    if (!ok) {
+        return {{"error", "角色 '" + id + "' 不存在"}};
     }
 
     if (updated.empty()) {
         return {{"error", "没有可以更新的字段"}};
     }
 
-    project_->markDirty(Project::DIRTY_CHARACTERS);
-    ProjectIO::save(*project_);
+    project_->save();
     // 拼接更新字段名用于日志
     std::string fields_str;
     for (size_t i = 0; i < updated.size(); ++i) {
@@ -278,8 +286,8 @@ json UpdateCharacterTool::execute(const json& args) {
     return {
         {"success", true},
         {"character", {
-            {"id", ch->id},
-            {"name", ch->name},
+            {"id", id},
+            {"name", result_name},
             {"updated_fields", updated}
         }}
     };
@@ -299,67 +307,67 @@ json DeleteCharacterTool::execute(const json& args) {
     const std::string cid = args.value("character_id", "");
     if (cid.empty()) return {{"error", "character_id 不能为空"}};
 
-    auto* ch = findCharacter(project_->characters, cid);
-    if (!ch) return {{"error", "角色不存在: " + cid}};
-
-    project_->characters.erase(
-        std::remove_if(project_->characters.begin(), project_->characters.end(),
-            [&](const Character& c) { return c.id == cid; }),
-        project_->characters.end());
-
-    // 级联清理
+    // 锁内级联清理（跨聚合：characters + settings + outline，一次独占锁完成）
     int cascade_rel = 0, cascade_setting = 0, cascade_pt = 0, cascade_vol = 0;
     int cascade_ch = 0, cascade_scene = 0;
+    const bool ok = project_->withWriteLock([&](Project& p) {
+        auto it = std::find_if(p.characters.begin(), p.characters.end(),
+                               [&](const Character& c) { return c.id == cid; });
+        if (it == p.characters.end()) return false;
+        p.characters.erase(it);
 
-    // 其他角色的 Relationships
-    for (auto& cr : project_->characters) {
-        auto before = cr.relationships.size();
-        cr.relationships.erase(
-            std::remove_if(cr.relationships.begin(), cr.relationships.end(),
-                [&](const Relationship& r) { return r.target_character_id == cid; }),
-            cr.relationships.end());
-        if (cr.relationships.size() < before) cascade_rel += static_cast<int>(before - cr.relationships.size());
-    }
-    // Setting.related_characters
-    for (auto& s : project_->settings) {
-        auto before = s.related_characters.size();
-        s.related_characters.erase(std::remove(s.related_characters.begin(), s.related_characters.end(), cid), s.related_characters.end());
-        if (s.related_characters.size() < before) cascade_setting += static_cast<int>(before - s.related_characters.size());
-    }
-    // PlotThread.related_characters
-    for (auto& pt : project_->outline.plot_threads) {
-        auto before = pt.related_characters.size();
-        pt.related_characters.erase(std::remove(pt.related_characters.begin(), pt.related_characters.end(), cid), pt.related_characters.end());
-        if (pt.related_characters.size() < before) cascade_pt += static_cast<int>(before - pt.related_characters.size());
-    }
-    // Volume.focus_characters
-    for (auto& v : project_->outline.volumes) {
-        auto before = v.focus_characters.size();
-        v.focus_characters.erase(std::remove(v.focus_characters.begin(), v.focus_characters.end(), cid), v.focus_characters.end());
-        if (v.focus_characters.size() < before) cascade_vol += static_cast<int>(before - v.focus_characters.size());
-    }
-    // Chapter: pov_characters / focus_characters（数组）+ Scene: pov_character_id（单值）/ participants（数组）
-    for (auto& chapter : project_->outline.chapters) {
-        auto& pv = chapter.pov_characters;
-        auto b1 = pv.size();
-        pv.erase(std::remove(pv.begin(), pv.end(), cid), pv.end());
-        if (pv.size() < b1) cascade_ch += static_cast<int>(b1 - pv.size());
-        auto& fc = chapter.focus_characters;
-        auto b2 = fc.size();
-        fc.erase(std::remove(fc.begin(), fc.end(), cid), fc.end());
-        if (fc.size() < b2) cascade_ch += static_cast<int>(b2 - fc.size());
-        for (auto& sc : chapter.scenes) {
-            if (sc.pov_character_id == cid) { sc.pov_character_id.clear(); ++cascade_scene; }
-            auto& sp = sc.participants;
-            auto b3 = sp.size();
-            sp.erase(std::remove(sp.begin(), sp.end(), cid), sp.end());
-            if (sp.size() < b3) cascade_scene += static_cast<int>(b3 - sp.size());
+        // 其他角色的 Relationships
+        for (auto& cr : p.characters) {
+            auto before = cr.relationships.size();
+            cr.relationships.erase(
+                std::remove_if(cr.relationships.begin(), cr.relationships.end(),
+                    [&](const Relationship& r) { return r.target_character_id == cid; }),
+                cr.relationships.end());
+            if (cr.relationships.size() < before) cascade_rel += static_cast<int>(before - cr.relationships.size());
         }
-    }
+        // Setting.related_characters
+        for (auto& s : p.settings) {
+            auto before = s.related_characters.size();
+            s.related_characters.erase(std::remove(s.related_characters.begin(), s.related_characters.end(), cid), s.related_characters.end());
+            if (s.related_characters.size() < before) cascade_setting += static_cast<int>(before - s.related_characters.size());
+        }
+        // PlotThread.related_characters
+        for (auto& pt : p.outline.plot_threads) {
+            auto before = pt.related_characters.size();
+            pt.related_characters.erase(std::remove(pt.related_characters.begin(), pt.related_characters.end(), cid), pt.related_characters.end());
+            if (pt.related_characters.size() < before) cascade_pt += static_cast<int>(before - pt.related_characters.size());
+        }
+        // Volume.focus_characters
+        for (auto& v : p.outline.volumes) {
+            auto before = v.focus_characters.size();
+            v.focus_characters.erase(std::remove(v.focus_characters.begin(), v.focus_characters.end(), cid), v.focus_characters.end());
+            if (v.focus_characters.size() < before) cascade_vol += static_cast<int>(before - v.focus_characters.size());
+        }
+        // Chapter: pov_characters / focus_characters（数组）+ Scene: pov_character_id（单值）/ participants（数组）
+        for (auto& chapter : p.outline.chapters) {
+            auto& pv = chapter.pov_characters;
+            auto b1 = pv.size();
+            pv.erase(std::remove(pv.begin(), pv.end(), cid), pv.end());
+            if (pv.size() < b1) cascade_ch += static_cast<int>(b1 - pv.size());
+            auto& fc = chapter.focus_characters;
+            auto b2 = fc.size();
+            fc.erase(std::remove(fc.begin(), fc.end(), cid), fc.end());
+            if (fc.size() < b2) cascade_ch += static_cast<int>(b2 - fc.size());
+            for (auto& sc : chapter.scenes) {
+                if (sc.pov_character_id == cid) { sc.pov_character_id.clear(); ++cascade_scene; }
+                auto& sp = sc.participants;
+                auto b3 = sp.size();
+                sp.erase(std::remove(sp.begin(), sp.end(), cid), sp.end());
+                if (sp.size() < b3) cascade_scene += static_cast<int>(b3 - sp.size());
+            }
+        }
+        p.markDirty(Project::DIRTY_CHARACTERS | Project::DIRTY_OUTLINE
+                    | Project::DIRTY_SETTINGS);
+        return true;
+    });
+    if (!ok) return {{"error", "角色不存在: " + cid}};
 
-    project_->markDirty(Project::DIRTY_CHARACTERS);
-    project_->markDirty(Project::DIRTY_OUTLINE);
-    ProjectIO::save(*project_);
+    project_->save();
     spdlog::info("[delete_character] {} 已删除 (cascade: rel={} st={} pt={} vol={} ch={} sc={})",
                  cid, cascade_rel, cascade_setting, cascade_pt, cascade_vol, cascade_ch, cascade_scene);
     return {
@@ -387,11 +395,12 @@ json UpdateCharacterRelationshipsTool::parameters() const {
 }
 
 json UpdateCharacterRelationshipsTool::execute(const json& args) {
-    auto* ch = findCharacter(project_->characters, args.value("character_id", ""));
-    if (!ch) return {{"error", "角色不存在"}};
-
+    const std::string cid = args.value("character_id", "");
     const auto& rels = args["relationships"];
     if (!rels.is_array()) return {{"error", "relationships 必须是数组"}};
+
+    // 锁外取校验快照（软校验用，不持锁）
+    const auto characters = project_->getCharacters();
 
     std::vector<Relationship> parsed;
     for (const auto& r : rels) {
@@ -402,7 +411,7 @@ json UpdateCharacterRelationshipsTool::execute(const json& args) {
         // A6: 校验 target_character_id 存在性（评审 A6 点名字段）。
         // 软校验——warn 不阻断（允许 LLM 先建角色再补关系，与其它工具统一）。
         if (!rel.target_character_id.empty()) {
-            validateIdArray(project_->characters,
+            validateIdArray(characters,
                 std::vector<std::string>{rel.target_character_id},
                 "target_character_id", "update_character_relationships");
         }
@@ -414,11 +423,18 @@ json UpdateCharacterRelationshipsTool::execute(const json& args) {
         rel.tension            = r.value("tension", 0);
     }
 
-    ch->relationships = std::move(parsed);
-    project_->markDirty(Project::DIRTY_CHARACTERS);
-    ProjectIO::save(*project_);
-    spdlog::info("[update_character_relationships] {} 更新 {} 条关系", ch->id, ch->relationships.size());
-    return {{"success", true}, {"character_id", ch->id}, {"relationship_count", ch->relationships.size()}};
+    // 锁内小改：整体替换关系列表（updateCharacter 自动 markDirty）
+    std::string result_id;
+    size_t count = 0;
+    const bool ok = project_->updateCharacter(cid, [&](Character& ch) {
+        result_id = ch.id;
+        ch.relationships = std::move(parsed);
+        count = ch.relationships.size();
+    });
+    if (!ok) return {{"error", "角色不存在"}};
+    project_->save();
+    spdlog::info("[update_character_relationships] {} 更新 {} 条关系", result_id, count);
+    return {{"success", true}, {"character_id", result_id}, {"relationship_count", count}};
 }
 
 // ===========================================================================
@@ -445,43 +461,45 @@ json AddCharacterDevelopmentTool::execute(const json& args) {
     if (chapter_id.empty()) return {{"error", "chapter_id 不能为空"}};
     if (summary.empty())    return {{"error", "summary 不能为空"}};
 
-    auto* ch = findCharacter(project_->characters, char_id);
-    if (!ch) return {{"error", "角色不存在: " + char_id}};
-
-    // 软校验章节存在性
-    auto cit = std::find_if(project_->outline.chapters.begin(),
-        project_->outline.chapters.end(),
+    // 锁外取校验快照（软校验章节存在性，不持锁）
+    const auto chapters = project_->getOutline().chapters;
+    auto cit = std::find_if(chapters.begin(), chapters.end(),
         [&](const Chapter& c) { return c.id == chapter_id; });
-    if (cit == project_->outline.chapters.end()) {
+    if (cit == chapters.end()) {
         spdlog::warn("[add_character_development] 章节 {} 不存在，但允许记录", chapter_id);
     }
 
-    int max_dev = 0;
-    std::string prefix = "dev-" + char_id + "-";
-    for (const auto& dev : ch->development) {
-        // D2: 非标准 ID 解析失败时安全跳过，不参与编号统计
-        if (auto num = utils::id::tryParseIdNumber(dev.id, prefix)) {
-            max_dev = std::max(max_dev, *num);
+    // 锁内小改：按角色追加发展记录（编号在锁内基于实际 development 计算）
+    std::string dev_id;
+    const bool ok = project_->updateCharacter(char_id, [&](Character& ch) {
+        int max_dev = 0;
+        std::string prefix = "dev-" + char_id + "-";
+        for (const auto& dev : ch.development) {
+            // D2: 非标准 ID 解析失败时安全跳过，不参与编号统计
+            if (auto num = utils::id::tryParseIdNumber(dev.id, prefix)) {
+                max_dev = std::max(max_dev, *num);
+            }
         }
-    }
 
-    CharacterDevelopment dev;
-    // 注意：dev ID 历史格式不补零（dev-char-001-1），保持不变以兼容磁盘存量数据
-    dev.id         = prefix + std::to_string(max_dev + 1);
-    dev.chapter_id = chapter_id;
-    dev.summary    = summary;
-    dev.category   = args.value("category", "other");
-    if (args.contains("affected_fields") && args["affected_fields"].is_array()) {
-        for (const auto& f : args["affected_fields"])
-            dev.affected_fields.push_back(f.get<std::string>());
-    }
+        CharacterDevelopment dev;
+        // 注意：dev ID 历史格式不补零（dev-char-001-1），保持不变以兼容磁盘存量数据
+        dev.id         = prefix + std::to_string(max_dev + 1);
+        dev.chapter_id = chapter_id;
+        dev.summary    = summary;
+        dev.category   = args.value("category", "other");
+        if (args.contains("affected_fields") && args["affected_fields"].is_array()) {
+            for (const auto& f : args["affected_fields"])
+                dev.affected_fields.push_back(f.get<std::string>());
+        }
+        dev_id = dev.id;
+        ch.development.push_back(std::move(dev));
+    });
+    if (!ok) return {{"error", "角色不存在: " + char_id}};
 
-    ch->development.push_back(std::move(dev));
-    project_->markDirty(Project::DIRTY_CHARACTERS);
-    ProjectIO::save(*project_);
+    project_->save();
     spdlog::info("[add_character_development] {}: {} → {} (category={})",
-                 ch->development.back().id, char_id, chapter_id, ch->development.back().category);
-    return {{"success", true}, {"development_id", ch->development.back().id}};
+                 dev_id, char_id, chapter_id, args.value("category", "other"));
+    return {{"success", true}, {"development_id", dev_id}};
 }
 
 } // namespace agent

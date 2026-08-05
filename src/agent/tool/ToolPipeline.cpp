@@ -16,18 +16,8 @@ llm::MemoryDiff ToolPipeline::execute(const std::vector<llm::ToolCall>& tool_cal
 {
     llm::MemoryDiff diff;
 
-    // 跨会话共享的项目锁（D7/P2）：含写工具 → 独占锁，纯读 → 共享锁。
-    // 多会话并行下多个 ToolPipeline 共享同一把锁，防止并发写 project 数据竞争。
-    bool has_write = false;
-    for (const auto& tc : tool_calls) {
-        if (!tools_.isReadOnly(tc.function_name)) { has_write = true; break; }
-    }
-    std::unique_lock<std::shared_mutex> uq;
-    std::shared_lock<std::shared_mutex> sh;
-    if (project_lock_) {
-        if (has_write) uq = std::unique_lock<std::shared_mutex>(*project_lock_);
-        else           sh = std::shared_lock<std::shared_mutex>(*project_lock_);
-    }
+    // 并发安全由 Project 内部方法级锁保证（P2/C1 定版：不引入批次锁，
+    // 工具各自经 ProjectAccess 事务方法/withLock 访问；此处只管调度）。
 
     // 每轮重建 schema 缓存（工具集可能因 tool_search 增长）
     schema_cache_.clear();
@@ -43,8 +33,8 @@ llm::MemoryDiff ToolPipeline::execute(const std::vector<llm::ToolCall>& tool_cal
 
     const size_t n = tool_calls.size();
 
-    // 无 ThreadPool 或只有一个工具调用时走串行路径
-    if (!pool_ || n <= 1) {
+    // 单工具调用时直接串行（无需线程池调度开销）
+    if (n <= 1) {
         for (const auto& tc : tool_calls) {
             spdlog::info("[ToolPipeline] 执行: {} (id={})", tc.function_name, tc.id);
             std::string result = executeOne(tc);

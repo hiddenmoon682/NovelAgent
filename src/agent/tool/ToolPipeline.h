@@ -10,7 +10,6 @@
 #include "llm/Message.h"
 
 #include <memory>
-#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -28,10 +27,10 @@ public:
     // 构造工具执行管线。
     // @param tools 工具提供者（ToolRegistry 或 RestrictedToolProvider）；
     //              非拥有引用，调用方保证其存活期覆盖本对象。
-    // @param num_threads 并发线程数（0 = 全部串行执行）
+    // @param num_threads 并发线程数（每会话 2；D9 不再支持 0=全串行）。
     explicit ToolPipeline(IToolProvider& tools, size_t num_threads = 4)
         : tools_(tools)
-        , pool_(num_threads > 0 ? std::make_unique<ThreadPool>(num_threads) : nullptr) {}
+        , pool_(std::make_unique<ThreadPool>(num_threads)) {}
 
     // 执行一批工具调用：只读工具经线程池并发，写工具串行，
     // 结果严格按 tool_calls 原序返回。
@@ -41,16 +40,9 @@ public:
     //         错误以 {"error": ...} 形式写入对应结果。
     llm::MemoryDiff execute(const std::vector<llm::ToolCall>& tool_calls);
 
-    // 注入跨会话共享的项目锁（D7/P2，多会话并行下保护共享 project 数据）。
-    // 多个会话的 ToolPipeline 共享同一把锁；execute 时含写工具加独占锁、纯读加共享锁。
-    void setProjectLock(std::shared_ptr<std::shared_mutex> lock) {
-        project_lock_ = std::move(lock);
-    }
-
 private:
     IToolProvider& tools_;
     std::unique_ptr<ThreadPool> pool_;
-    std::shared_ptr<std::shared_mutex> project_lock_;
 
     std::unordered_map<std::string, nlohmann::json> schema_cache_;
 

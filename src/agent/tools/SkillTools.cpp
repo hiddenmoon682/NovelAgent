@@ -4,6 +4,7 @@
 
 #include "agent/skill/SkillRegistry.h"
 #include "project/Models/Project.h"
+#include "project/ProjectAccess.h"
 #include "utils/SchemaUtils.h"
 
 #include <spdlog/spdlog.h>
@@ -94,7 +95,7 @@ json SaveSkillTool::parameters() const {
 json SaveSkillTool::execute(const json& args) {
     if (!registry_)
         return {{"error", "技能系统未初始化"}};
-    if (!project_ || project_->path.empty())
+    if (!project_ || project_->path().empty())
         return {{"error", "未打开项目，无法保存技能"}};
 
     const std::string name = args.value("name", "");
@@ -108,7 +109,7 @@ json SaveSkillTool::execute(const json& args) {
         return {{"error", "description 和 content 不能为空"}};
 
     std::filesystem::path dir =
-        std::filesystem::path(project_->path) / "skills" / name;
+        std::filesystem::path(project_->path()) / "skills" / name;
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     if (ec)

@@ -3,6 +3,7 @@
 // 测试在临时目录中构造 SKILL.md 后走真实文件发现路径，黑盒验证行为。
 
 #include "agent/skill/SkillRegistry.h"
+#include "project/ProjectAccess.h"
 #include "agent/tools/SkillTools.h"
 #include "project/Models/Project.h"
 
@@ -197,7 +198,7 @@ void test_save_skill_tool() {
     project->path = fx.root.string();
 
     agent::ToolDependencies deps;
-    deps.project = project;
+    deps.project_access = std::make_shared<ProjectAccess>(project);
     deps.skill_registry = &reg;
     agent::SaveSkillTool tool(deps);
 
@@ -271,7 +272,7 @@ void test_save_skill_injection() {
     project->path = fx.root.string();
 
     agent::ToolDependencies deps;
-    deps.project = project;
+    deps.project_access = std::make_shared<ProjectAccess>(project);
     deps.skill_registry = &reg;
     agent::SaveSkillTool tool(deps);
 
@@ -326,7 +327,7 @@ void test_yaml_edge_cases() {
     project->title = "测试项目";
     project->path = fx.root.string();
     agent::ToolDependencies deps;
-    deps.project = project;
+    deps.project_access = std::make_shared<ProjectAccess>(project);
     deps.skill_registry = &reg;
     agent::SaveSkillTool tool(deps);
     auto r = tool.execute({{std::string("name"), std::string("path-skill")},

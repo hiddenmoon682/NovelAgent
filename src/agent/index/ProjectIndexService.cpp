@@ -4,6 +4,7 @@
 
 #include "agent/memory/LongTermMemoryStore.h"
 #include "project/Models/Project.h"
+#include "project/ProjectAccess.h"
 #include "project/ProjectIO.h"
 #include "retrieval/IEmbeddingGenerator.h"
 #include "retrieval/IVectorStore.h"
@@ -34,11 +35,11 @@ int64_t nowEpochSeconds() {
 } // namespace
 
 ProjectIndexService::ProjectIndexService(
-    std::shared_ptr<Project> project,
+    std::shared_ptr<ProjectAccess> access,
     retrieval::IVectorStore& vs,
     retrieval::IEmbeddingGenerator& eg,
     LongTermMemoryStore* memory_store)
-    : project_(std::move(project))
+    : project_access_(std::move(access))
     , vector_store_(vs)
     , embedding_gen_(eg)
     , memory_store_(memory_store)
@@ -46,16 +47,18 @@ ProjectIndexService::ProjectIndexService(
 
 std::string ProjectIndexService::manifestPath() const
 {
-    return project_->path + "/.novelagent/index_manifest.json";
+    return project_access_->path() + "/.novelagent/index_manifest.json";
 }
 
 IndexResult ProjectIndexService::indexAll(
     std::function<void(const std::string&)> progress,
     bool force)
 {
+    // E8：内部互斥串行化——多会话完成回调可并发调用 indexAll
+    std::lock_guard<std::mutex> lock(index_mutex_);
     IndexResult result;
 
-    if (!project_ || project_->path.empty()) {
+    if (!project_access_ || project_access_->path().empty()) {
         result.error = "未打开项目";
         return result;
     }
@@ -88,10 +91,23 @@ IndexResult ProjectIndexService::indexAll(
     std::map<std::string, PendingSource> desired;   // source_key → 待处理源
     std::vector<std::string> unchanged_keys;        // 哈希未变的源
 
+    // 锁内拷贝快照（共享锁）；文件读取/切分/哈希等耗时计算全部在锁外
+    std::vector<Chapter> chapters;
+    std::vector<Character> chars;
+    std::vector<Setting> settings;
+    std::vector<WorldRule> world_rules;
+    const std::string project_path = project_access_->path();
+    project_access_->withReadLock([&](const Project& p) {
+        chapters = p.outline.chapters;
+        chars = p.characters;
+        settings = p.settings;
+        world_rules = p.world_rules;
+    });
+
     // 章节：内容 = Markdown 正文
-    for (const auto& ch : project_->outline.chapters) {
+    for (const auto& ch : chapters) {
         if (ch.file_path.empty()) continue;
-        std::string md = ProjectIO::readChapter(project_->path, ch.file_path);
+        std::string md = ProjectIO::readChapter(project_path, ch.file_path);
         if (md.empty()) continue;
         ++result.chapters;
 
@@ -123,7 +139,7 @@ IndexResult ProjectIndexService::indexAll(
         desired[key] = std::move(ps);
     };
 
-    for (const auto& c : project_->characters) {
+    for (const auto& c : chars) {
         std::string text = retrieval::NovelChunker::chunkCharacter(c);
         if (text.empty()) continue;
         ++result.characters;
@@ -131,7 +147,7 @@ IndexResult ProjectIndexService::indexAll(
                       retrieval::TextChunk::characterChunk(c.id, text));
     }
 
-    for (const auto& s : project_->settings) {
+    for (const auto& s : settings) {
         std::string text = retrieval::NovelChunker::chunkSetting(s);
         if (text.empty()) continue;
         ++result.settings;
@@ -139,7 +155,7 @@ IndexResult ProjectIndexService::indexAll(
                       retrieval::TextChunk::settingChunk(s.id, text));
     }
 
-    for (const auto& r : project_->world_rules) {
+    for (const auto& r : world_rules) {
         std::string text = retrieval::NovelChunker::chunkWorldRule(r);
         if (text.empty()) continue;
         ++result.world_rules;
@@ -285,7 +301,7 @@ IndexResult ProjectIndexService::indexAll(
 
     report("向量索引已更新: " + std::to_string(result.total_chunks) + " 个片段 ("
          + std::to_string(result.updated_sources) + " 个源) → "
-         + project_->path + "/.novelagent/vectors.json");
+         + project_path + "/.novelagent/vectors.json");
     return result;
 }
 

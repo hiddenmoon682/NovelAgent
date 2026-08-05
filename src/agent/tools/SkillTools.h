@@ -26,6 +26,7 @@ public:
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::System; }
+    bool isReadOnly() const override { return true; }
 };
 
 // 创建或更新技能（供 create-skill 元技能引导用户创建新技能时落盘）。
@@ -33,11 +34,11 @@ public:
 // 参数: name / description / content 必填，always 可选
 // 返回: { ok, path } 或 { error }
 class SaveSkillTool : public BuiltInTool {
-    std::shared_ptr<Project> project_;
+    std::shared_ptr<ProjectAccess> project_;
     skill::SkillRegistry* registry_;
 public:
     explicit SaveSkillTool(const ToolDependencies& deps)
-        : project_(deps.project), registry_(deps.skill_registry) {}
+        : project_(deps.project_access), registry_(deps.skill_registry) {}
     std::string name() const override { return "save_skill"; }
     std::string description() const override {
         return "创建或更新一个技能：将 SKILL.md 写入项目 skills/ 目录并立即生效。"

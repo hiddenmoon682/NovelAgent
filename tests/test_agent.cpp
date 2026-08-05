@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cassert>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <set>
@@ -806,6 +807,153 @@ void test_parallel_sessions() {
 }
 
 // =========================================================================
+// 测试: 历史会话懒物化（P8）— 启动不物化，点开历史会话才物化并恢复历史
+// =========================================================================
+
+void test_materialize_history_session() {
+    TEST("历史会话懒物化 — 启动不物化，materializeSession 恢复历史，不存在 id 拒绝");
+
+    const std::string tmp = (std::filesystem::temp_directory_path() /
+                             "tmp_test_materialize").string();
+    if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
+    ProjectIO::createProjectDir(tmp, "物化测试");
+
+    MockServer server;
+    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        if (isStreamRequest(req)) {
+            std::string body = llm::test::sseContentChunk("回复") +
+                               llm::test::sseFinishChunk("stop") +
+                               llm::test::sseDone;
+            res.set_content(body, "text/event-stream");
+        } else {
+            res.set_content(nonStreamJson("【摘要】旧历史已压缩"), "application/json");
+        }
+    });
+    server.start();
+
+    FileStorageBackend storage(tmp);
+    agent::SessionPersistence persistence(storage);
+
+    llm::LLMClientFactory factory(makeConfig(server.port));
+    agent::ToolRegistry registry;
+
+    // 第一轮：建会话 + process 落盘一条历史
+    {
+        agent::Agent agent(factory, registry);
+        agent.setPersistence(&persistence);
+        const std::string sid = agent.createSession();
+        agent.process(sid, "历史消息");
+        CHECK(agent.session(sid)->persisted());
+    }  // Agent A 销毁（模拟应用退出）
+
+    // 第二轮：新 Agent（模拟重启）。启动不物化任何会话（P8 懒物化）。
+    agent::Agent agent(factory, registry);
+    agent.setPersistence(&persistence);
+    CHECK(agent.sessionIds().empty());  // 启动未物化（未建 runtime/client）
+
+    // 物化历史会话：持久层存在 → 建 runtime + 恢复历史消息
+    const std::string sid = persistence.listSessions().front().id;
+    CHECK(agent.materializeSession(sid));
+    CHECK(agent.session(sid) != nullptr);
+    CHECK(agent.session(sid)->memory().messages().size() == 2);
+    CHECK(agent.session(sid)->memory().messages()[0].content == "历史消息");
+
+    // 不存在的历史 id → 物化拒绝（返回 false，不建幽灵 runtime）
+    CHECK(!agent.materializeSession("s-never-existed"));
+    CHECK(agent.session(sid) != nullptr);  // 既有物化会话不受影响
+
+    server.stop();
+    utils::file::removeDir(tmp);
+    PASS();
+}
+
+// =========================================================================
+// 测试: E1 — 会话创建时经 system_prompt_provider 重建 prompt
+// =========================================================================
+
+void test_system_prompt_provider_rebuild() {
+    TEST("E1 — 会话创建经 provider 重建 prompt，provider 为空回退注入值");
+
+    MockServer server;
+    server.start();
+    llm::LLMClientFactory factory(makeConfig(server.port));
+    agent::ToolRegistry registry;
+
+    // provider 非空：prompt = provider 结果（读到最新技能目录）
+    {
+        agent::SessionRuntimeDeps deps;
+        deps.config.system_prompt_provider = [] { return "动态prompt"; };
+        deps.system_prompt = "静态prompt";
+        agent::SessionRuntime rt("s-provider", factory, registry, std::move(deps));
+        CHECK(rt.memory().systemPrompt() == "动态prompt");
+    }
+    // provider 为空：回退构造时注入的 system_prompt 兜底
+    {
+        agent::SessionRuntimeDeps deps;
+        deps.system_prompt = "静态prompt";
+        agent::SessionRuntime rt("s-fallback", factory, registry, std::move(deps));
+        CHECK(rt.memory().systemPrompt() == "静态prompt");
+    }
+    // provider 抛异常：回退注入值，不崩溃
+    {
+        agent::SessionRuntimeDeps deps;
+        deps.config.system_prompt_provider = []() -> std::string { throw std::runtime_error("boom"); };
+        deps.system_prompt = "兜底prompt";
+        agent::SessionRuntime rt("s-throw", factory, registry, std::move(deps));
+        CHECK(rt.memory().systemPrompt() == "兜底prompt");
+    }
+
+    server.stop();
+    PASS();
+}
+
+// =========================================================================
+// 测试: P9 — 并发上限满时第 5 个会话 process 返回 concurrency_full（不排队）
+// =========================================================================
+
+void test_concurrency_full() {
+    TEST("P9 — 并发满时第 5 个 process 返回 concurrency_full");
+
+    MockServer server;
+    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        // 慢响应：挂起以保持 in-flight 满（4 个并发会话都占着池线程）
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        if (isStreamRequest(req)) {
+            std::string body = llm::test::sseContentChunk("回复") +
+                               llm::test::sseFinishChunk("stop") +
+                               llm::test::sseDone;
+            res.set_content(body, "text/event-stream");
+        } else {
+            res.set_content(nonStreamJson("【摘要】旧历史已压缩"), "application/json");
+        }
+    });
+    server.start();
+
+    llm::LLMClientFactory factory(makeConfig(server.port));
+    agent::ToolRegistry registry;
+    agent::Agent agent(factory, registry);
+
+    // 提交 4 个并发慢会话（异步，占满共享线程池 4 线程）
+    std::vector<std::string> sids;
+    for (int i = 0; i < 4; ++i) sids.push_back(agent.createSession());
+    for (auto& s : sids) {
+        agent.submitProcess(s, "并行消息", {},
+                            [](const std::string&, llm::LLMResponse) {});
+    }
+
+    // 第 5 个同步 process：canSubmit() 检测 in-flight 满 → concurrency_full，不排队
+    auto r = agent.process(agent.createSession(), "第五个");
+    CHECK(r.finish_reason == "concurrency_full");
+
+    // 等 4 个慢任务（2s）自然完成后再 stop，避免 stop 后连接失败重试拖慢 agent 析构 join
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    server.stop();
+    PASS();
+}
+
+// =========================================================================
 
 int main() {
     std::cout << "=== test_agent ===\n\n";
@@ -822,6 +970,9 @@ int main() {
     test_multi_session_pool();
     test_multi_session_persistence();
     test_parallel_sessions();
+    test_materialize_history_session();
+    test_system_prompt_provider_rebuild();
+    test_concurrency_full();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;

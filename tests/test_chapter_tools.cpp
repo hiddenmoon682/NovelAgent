@@ -1,4 +1,5 @@
 #include "agent/tools/ChapterTools.h"
+#include "project/ProjectAccess.h"
 #include "agent/tool/ToolRegistry.h"
 #include "project/ProjectIO.h"
 
@@ -69,7 +70,7 @@ void test_list_chapters() {
     TEST("list_chapters — 列出所有章节");
 
     TestProject tp;
-    agent::ListChaptersTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::ListChaptersTool tool(std::make_shared<ProjectAccess>(tp.project));
 
     auto result = tool.execute({});
     CHECK(result.contains("chapters"));
@@ -89,7 +90,7 @@ void test_read_chapter() {
     TEST("read_chapter — 读取章节全文");
 
     TestProject tp;
-    agent::ReadChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::ReadChapterTool tool(std::make_shared<ProjectAccess>(tp.project));
 
     auto result = tool.execute({{"chapter_id", "ch-001"}});
     CHECK(result.contains("content"));
@@ -108,7 +109,7 @@ void test_write_chapter() {
 
     TestProject tp;
     tp.project.allow_auto_overwrite = true;  // D1.2: 测试需跳过覆写确认
-    agent::WriteChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::WriteChapterTool tool(std::make_shared<ProjectAccess>(tp.project));
 
     auto result = tool.execute({
         {"chapter_id", "ch-001"},
@@ -117,7 +118,7 @@ void test_write_chapter() {
     CHECK(result["success"] == true);
 
     // 验证写入
-    agent::ReadChapterTool reader(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::ReadChapterTool reader(std::make_shared<ProjectAccess>(tp.project));
     auto readback = reader.execute({{"chapter_id", "ch-001"}});
     CHECK(readback["content"].get<std::string>().find("改写后") != std::string::npos);
 
@@ -132,7 +133,7 @@ void test_append_to_chapter() {
     TEST("append_to_chapter — 追加内容");
 
     TestProject tp;
-    agent::AppendChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::AppendChapterTool tool(std::make_shared<ProjectAccess>(tp.project));
 
     auto result = tool.execute({
         {"chapter_id", "ch-001"},
@@ -141,7 +142,7 @@ void test_append_to_chapter() {
     CHECK(result["success"] == true);
 
     // 验证原始内容仍在 + 新内容已追加
-    agent::ReadChapterTool reader(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::ReadChapterTool reader(std::make_shared<ProjectAccess>(tp.project));
     auto readback = reader.execute({{"chapter_id", "ch-001"}});
     std::string content = readback["content"];
     CHECK(content.find("第一章的内容") != std::string::npos); // 原有内容
@@ -158,7 +159,7 @@ void test_create_chapter() {
     TEST("create_chapter — 创建新章节");
 
     TestProject tp;
-    agent::CreateChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateChapterTool tool(std::make_shared<ProjectAccess>(tp.project));
 
     auto result = tool.execute({{"title", "第二章"}, {"synopsis", "第二章节"}});
     CHECK(result["success"] == true);
@@ -185,7 +186,7 @@ void test_read_nonexistent() {
     TEST("read_chapter — 不存在的章节返回错误");
 
     TestProject tp;
-    agent::ReadChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::ReadChapterTool tool(std::make_shared<ProjectAccess>(tp.project));
 
     auto result = tool.execute({{"chapter_id", "ch-999"}});
     CHECK(result.contains("error"));
@@ -205,9 +206,9 @@ void test_via_registry() {
     agent::ToolRegistry registry;
 
     registry.registerBuiltInTool(
-        std::make_unique<agent::ListChaptersTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
+        std::make_unique<agent::ListChaptersTool>(std::make_shared<ProjectAccess>(tp.project)));
     registry.registerBuiltInTool(
-        std::make_unique<agent::ReadChapterTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
+        std::make_unique<agent::ReadChapterTool>(std::make_shared<ProjectAccess>(tp.project)));
 
     CHECK(registry.hasTool("list_chapters"));
     CHECK(registry.hasTool("read_chapter"));
@@ -230,7 +231,7 @@ void test_via_registry() {
 void test_delete_chapter() {
     TEST("delete_chapter — 删除章节并验证级联清理");
     TestProject tp;
-    agent::CreateChapterTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateChapterTool create(std::make_shared<ProjectAccess>(tp.project));
     create.execute(json{
         {"title", "待删除章"}, {"order", 2},
         {"goal", "测试"}, {"conflict", "测试"}
@@ -241,7 +242,7 @@ void test_delete_chapter() {
     PlotThread pt;
     pt.id = "pt-test"; pt.name = "测试线"; pt.start_chapter_id = ch_id;
     tp.project.outline.plot_threads.push_back(pt);
-    agent::DeleteChapterTool del(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::DeleteChapterTool del(std::make_shared<ProjectAccess>(tp.project));
     auto r = del.execute(json{{"chapter_id", ch_id}});
     CHECK(r.value("success", false) == true);
     CHECK(tp.project.outline.chapters.size() == 1);  // 回到只有 ch-001
@@ -252,10 +253,10 @@ void test_delete_chapter() {
 void test_update_chapter_scenes() {
     TEST("update_chapter_scenes — 完整替换场景列表");
     TestProject tp;
-    agent::CreateChapterTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateChapterTool create(std::make_shared<ProjectAccess>(tp.project));
     create.execute(json{{"title", "场景章"}, {"order", 1}});
     std::string ch_id = tp.project.outline.chapters[0].id;
-    agent::UpdateChapterScenesTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::UpdateChapterScenesTool tool(std::make_shared<ProjectAccess>(tp.project));
     json scenes = json::array();
     scenes.push_back(json{
         {"id", "sc-001"}, {"title", "开场"}, {"goal", "引入主角"},
@@ -273,10 +274,10 @@ void test_update_chapter_scenes_dangling_softcheck() {
     TEST("update_chapter_scenes — 悬空引用软校验不阻断写入");
     TestProject tp;
     // 项目无任何角色/设定/剧情线，pov_character_id/participants 等必为悬空
-    agent::CreateChapterTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateChapterTool create(std::make_shared<ProjectAccess>(tp.project));
     create.execute(json{{"title", "悬空场景章"}});
     std::string ch_id = tp.project.outline.chapters[0].id;
-    agent::UpdateChapterScenesTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::UpdateChapterScenesTool tool(std::make_shared<ProjectAccess>(tp.project));
     json scenes = json::array();
     scenes.push_back(json{
         {"id", "sc-001"}, {"title", "场景"},
@@ -318,7 +319,7 @@ void should_avoid_id_collision_when_manual_id_overlaps_sequence() {
         tp.project.outline.chapters.push_back(ch);
     }
 
-    agent::CreateChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateChapterTool tool(std::make_shared<ProjectAccess>(tp.project));
 
     // 连续创建 3 章，应从 max(1,3,5)+1=6 开始递增
     for (int i = 0; i < 3; ++i) {
@@ -353,7 +354,7 @@ void should_log_and_skip_when_id_suffix_not_numeric() {
     odd.order = 2;
     tp.project.outline.chapters.push_back(odd);
 
-    agent::CreateChapterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateChapterTool tool(std::make_shared<ProjectAccess>(tp.project));
 
     // 不抛异常：异常已在 tryParseIdNumber 内部捕获并 debug 记录
     json r;

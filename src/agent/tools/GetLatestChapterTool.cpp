@@ -2,6 +2,7 @@
 
 #include "agent/tools/GetLatestChapterTool.h"
 #include "project/Models.h"
+#include "project/ProjectAccess.h"
 #include "utils/SchemaUtils.h"
 
 #include <spdlog/spdlog.h>
@@ -16,7 +17,7 @@ json GetLatestChapterTool::parameters() const {
 }
 
 json GetLatestChapterTool::execute(const json& /*args*/) {
-    const auto& chapters = project_->outline.chapters;
+    auto chapters = project_->getOutline().chapters;  // 读快照（共享锁，锁外计算）
     if (chapters.empty()) {
         return {{"info", "暂无章节，请先调用 create_chapter 创建第一章"}};
     }

@@ -30,6 +30,7 @@ public:
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::System; }
+    bool isReadOnly() const override { return true; }
 
 private:
     retrieval::IVectorStore* vector_store_;

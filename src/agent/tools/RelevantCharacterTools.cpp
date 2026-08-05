@@ -3,6 +3,7 @@
 #include "agent/tools/RelevantCharacterTools.h"
 #include "agent/prompt/PromptSelector.h"
 #include "project/Models.h"
+#include "project/ProjectAccess.h"
 #include "utils/SchemaUtils.h"
 
 #include <spdlog/spdlog.h>
@@ -25,37 +26,40 @@ json GetRelevantCharactersTool::execute(const json& args) {
         return {{"error", "chapter_id 不能为空"}};
     }
 
-    const auto* chapter = prompt::selector::findById(
-        project_->outline.chapters, chapter_id);
-    if (!chapter) {
-        return {{"error", "章节 '" + chapter_id + "' 不存在"}};
-    }
-
     int max_count = args.value("max_count", 8);
     if (max_count < 1) max_count = 1;
     if (max_count > 20) max_count = 20;
 
-    // 先获取关联剧情线（selectCharacters 需要它们）
-    auto plotThreads = prompt::selector::selectPlotThreads(
-        *project_, *chapter, 10);
+    // selector 返回指向 project 内部对象的指针，必须在锁内完成查询与构造
+    return project_->withReadLock([&](const Project& p) -> json {
+        const auto* chapter = prompt::selector::findById(
+            p.outline.chapters, chapter_id);
+        if (!chapter) {
+            return {{"error", "章节 '" + chapter_id + "' 不存在"}};
+        }
 
-    auto characters = prompt::selector::selectCharacters(
-        *project_, *chapter, plotThreads,
-        static_cast<std::size_t>(max_count));
+        // 先获取关联剧情线（selectCharacters 需要它们）
+        auto plotThreads = prompt::selector::selectPlotThreads(
+            p, *chapter, 10);
 
-    json charArray = json::array();
-    for (const auto* ch : characters) {
-        charArray.push_back(prompt::selector::filterObject(
-            *ch, false, {"id", "name"}));
-    }
+        auto characters = prompt::selector::selectCharacters(
+            p, *chapter, plotThreads,
+            static_cast<std::size_t>(max_count));
 
-    spdlog::info("[get_relevant_characters] chapter={}, count={}",
-                 chapter_id, characters.size());
-    return {
-        {"chapter_id", chapter_id},
-        {"total_count", characters.size()},
-        {"characters", charArray}
-    };
+        json charArray = json::array();
+        for (const auto* ch : characters) {
+            charArray.push_back(prompt::selector::filterObject(
+                *ch, false, {"id", "name"}));
+        }
+
+        spdlog::info("[get_relevant_characters] chapter={}, count={}",
+                     chapter_id, characters.size());
+        return {
+            {"chapter_id", chapter_id},
+            {"total_count", characters.size()},
+            {"characters", charArray}
+        };
+    });
 }
 
 } // namespace agent

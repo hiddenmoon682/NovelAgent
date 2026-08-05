@@ -1,4 +1,5 @@
 #include "agent/tools/CharacterTools.h"
+#include "project/ProjectAccess.h"
 #include "agent/tool/ToolRegistry.h"
 #include "project/ProjectIO.h"
 
@@ -38,7 +39,7 @@ struct TestProject {
 void test_create_character() {
     TEST("create_character — 创建新角色");
     TestProject tp;
-    agent::CreateCharacterTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateCharacterTool tool(std::make_shared<ProjectAccess>(tp.project));
 
     auto result = tool.execute({{"name", "叶凡"}, {"role", "protagonist"}});
     CHECK(result["success"] == true);
@@ -62,11 +63,11 @@ void test_get_character() {
     TestProject tp;
 
     // 先创建
-    agent::CreateCharacterTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateCharacterTool create(std::make_shared<ProjectAccess>(tp.project));
     create.execute({{"name", "苏婉"}, {"role", "protagonist"}});
 
     // 再查询
-    agent::GetCharacterTool get(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::GetCharacterTool get(std::make_shared<ProjectAccess>(tp.project));
     auto result = get.execute({{"character_id", "char-001"}});
     CHECK(result["name"] == "苏婉");
     CHECK(result["role"] == "protagonist");
@@ -83,11 +84,11 @@ void test_get_characters() {
     TEST("get_characters — 列出所有角色摘要");
     TestProject tp;
 
-    agent::CreateCharacterTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateCharacterTool create(std::make_shared<ProjectAccess>(tp.project));
     create.execute({{"name", "角色A"}});
     create.execute({{"name", "角色B"}, {"role", "antagonist"}});
 
-    agent::ListCharactersTool list(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::ListCharactersTool list(std::make_shared<ProjectAccess>(tp.project));
     auto result = list.execute({});
     CHECK(result["characters"].size() == 2);
     CHECK(result["characters"][0]["id"] == "char-001");
@@ -106,10 +107,10 @@ void test_update_character() {
     TEST("update_character — 更新指定字段");
     TestProject tp;
 
-    agent::CreateCharacterTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateCharacterTool create(std::make_shared<ProjectAccess>(tp.project));
     create.execute({{"name", "张三"}});
 
-    agent::UpdateCharacterTool update(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::UpdateCharacterTool update(std::make_shared<ProjectAccess>(tp.project));
     auto result = update.execute({
         {"character_id", "char-001"},
         {"fields", {
@@ -142,17 +143,17 @@ void test_error_handling() {
     TestProject tp;
 
     // 查询不存在的角色
-    agent::GetCharacterTool get(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::GetCharacterTool get(std::make_shared<ProjectAccess>(tp.project));
     auto result = get.execute({{"character_id", "char-999"}});
     CHECK(result.contains("error"));
 
     // 创建空姓名角色
-    agent::CreateCharacterTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateCharacterTool create(std::make_shared<ProjectAccess>(tp.project));
     result = create.execute({{"name", ""}});
     CHECK(result.contains("error"));
 
     // 更新不存在角色
-    agent::UpdateCharacterTool update(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::UpdateCharacterTool update(std::make_shared<ProjectAccess>(tp.project));
     result = update.execute({
         {"character_id", "char-999"},
         {"fields", {{"goal", "test"}}}
@@ -172,11 +173,11 @@ void test_via_registry() {
 
     agent::ToolRegistry registry;
     registry.registerBuiltInTool(
-        std::make_unique<agent::GetCharacterTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
+        std::make_unique<agent::GetCharacterTool>(std::make_shared<ProjectAccess>(tp.project)));
     registry.registerBuiltInTool(
-        std::make_unique<agent::ListCharactersTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
+        std::make_unique<agent::ListCharactersTool>(std::make_shared<ProjectAccess>(tp.project)));
     registry.registerBuiltInTool(
-        std::make_unique<agent::CreateCharacterTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
+        std::make_unique<agent::CreateCharacterTool>(std::make_shared<ProjectAccess>(tp.project)));
 
     CHECK(registry.hasTool("get_character"));
     CHECK(registry.hasTool("get_characters"));
@@ -204,7 +205,7 @@ void test_via_registry() {
 void test_update_character_relationships() {
     TEST("update_character_relationships — 替换关系列表");
     TestProject tp;
-    auto pp = std::shared_ptr<Project>(&tp.project, [](Project*){});
+    auto pp = std::make_shared<ProjectAccess>(tp.project);
 
     // 创建两个角色，建立关系
     agent::CreateCharacterTool create(pp);
@@ -233,7 +234,7 @@ void test_update_character_relationships() {
 void test_update_relationships_dangling_softcheck() {
     TEST("update_character_relationships — 悬空 target 软校验不阻断");
     TestProject tp;
-    auto pp = std::shared_ptr<Project>(&tp.project, [](Project*){});
+    auto pp = std::make_shared<ProjectAccess>(tp.project);
     agent::CreateCharacterTool create(pp);
     create.execute({{"name", "主角"}});
 

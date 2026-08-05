@@ -11,6 +11,11 @@
 // - 子对象（outline / characters / settings / world_rules / style）
 //   分别存储在独立的 JSON 文件中，由 ProjectIO 管理
 // - path 为运行期字段，不参与 to_json / from_json
+//
+// 并发访问说明：Project 是纯数据模型（POJO），不持有锁。
+// 多会话并行的并发保护由受控访问层 ProjectAccess 承担（P2/P3 定版）：
+// 工具/GUI/索引一律经 ProjectAccess 的事务方法或 withLock 访问，
+// 禁止绕过访问层直接碰字段（并发下不安全）。
 
 #include "project/Models/ModelDetail.h"
 #include "project/Models/Outline.h"

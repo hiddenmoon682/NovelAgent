@@ -1,6 +1,7 @@
 #include "agent/tools/ChapterTools.h"
 
 #include "llm/TokenCounter.h"
+#include "project/ProjectAccess.h"
 #include "project/ProjectIO.h"
 #include "utils/FileUtils.h"
 #include "utils/IdUtils.h"
@@ -57,11 +58,15 @@ static void validateIdArray(const T& container, const std::vector<std::string>& 
 // A6: 校验单个 Scene 内的跨实体引用（pov_character_id / location_id / participants / plot_thread_ids）。
 // 软校验——warn 不阻断，与其它 update_* 工具统一。
 // 此前 UpdateChapterScenesTool 完整替换场景列表时未校验引用，可致 ID 悬空。
-static void validateSceneRefs(const Project& proj, const Scene& sc, const std::string& caller) {
-    validateCharId(proj.characters, sc.pov_character_id, "scene.pov_character_id", caller);
-    validateSettingId(proj.settings, sc.location_id, "scene.location_id", caller);
-    validateIdArray(proj.characters, sc.participants, "scene.participants", caller);
-    validateIdArray(proj.outline.plot_threads, sc.plot_thread_ids, "scene.plot_thread_ids", caller);
+// 并发下在锁外基于快照集合校验（不持锁）。
+static void validateSceneRefs(const std::vector<Character>& chars,
+                              const std::vector<Setting>& settings,
+                              const std::vector<PlotThread>& plot_threads,
+                              const Scene& sc, const std::string& caller) {
+    validateCharId(chars, sc.pov_character_id, "scene.pov_character_id", caller);
+    validateSettingId(settings, sc.location_id, "scene.location_id", caller);
+    validateIdArray(chars, sc.participants, "scene.participants", caller);
+    validateIdArray(plot_threads, sc.plot_thread_ids, "scene.plot_thread_ids", caller);
 }
 
 } // namespace
@@ -78,17 +83,28 @@ json ReadChapterTool::parameters() const {
 
 json ReadChapterTool::execute(const json& args) {
     std::string chapter_id = args.value("chapter_id", "");
-    const auto* ch = findChapter(project_->outline.chapters, chapter_id);
-    if (!ch) {
+
+    // 锁内读元数据（微秒级；文件 IO 在锁外）
+    std::string ch_id, title, file_path;
+    const bool found = project_->withReadLock([&](const Project& p) {
+        auto it = std::find_if(p.outline.chapters.begin(), p.outline.chapters.end(),
+                               [&](const Chapter& c) { return c.id == chapter_id; });
+        if (it == p.outline.chapters.end()) return false;
+        ch_id = it->id;
+        title = it->title;
+        file_path = it->file_path;
+        return true;
+    });
+    if (!found) {
         return {{"error", "章节 '" + chapter_id + "' 不存在"}};
     }
 
-    std::string content = ProjectIO::readChapter(project_->path, ch->file_path);
+    std::string content = ProjectIO::readChapter(project_->path(), file_path);
     spdlog::info("[read_chapter] {} → {} 字", chapter_id, content.size());
 
     return {
-        {"chapter_id", ch->id},
-        {"title", ch->title},
+        {"chapter_id", ch_id},
+        {"title", title},
         {"content", content}
     };
 }
@@ -108,14 +124,26 @@ json WriteChapterTool::execute(const json& args) {
     std::string chapter_id = args.value("chapter_id", "");
     std::string content = args.value("content", "");
 
-    auto* ch = findChapter(project_->outline.chapters, chapter_id);
-    if (!ch) {
+    // 锁内读元数据（微秒级；文件 IO 在锁外）
+    std::string file_path;
+    bool allow_overwrite = false;
+    const bool found = project_->withReadLock([&](const Project& p) {
+        auto it = std::find_if(p.outline.chapters.begin(), p.outline.chapters.end(),
+                               [&](const Chapter& c) { return c.id == chapter_id; });
+        if (it == p.outline.chapters.end()) return false;
+        file_path = it->file_path;
+        allow_overwrite = p.allow_auto_overwrite;
+        return true;
+    });
+    if (!found) {
         return {{"error", "章节 '" + chapter_id + "' 不存在"}};
     }
 
+    // ── 锁外：文件 IO（读/备份/写）与字数计算（不持锁）──
+
     // D1.2: 覆写前检查
-    std::string existing = ProjectIO::readChapter(project_->path, ch->file_path);
-    if (!existing.empty() && !project_->allow_auto_overwrite) {
+    std::string existing = ProjectIO::readChapter(project_->path(), file_path);
+    if (!existing.empty() && !allow_overwrite) {
         spdlog::warn("[write_chapter] {} 已有内容 ({} 字)，需确认覆写", chapter_id, existing.size());
         return {
             {"action", "confirm_overwrite"},
@@ -129,26 +157,33 @@ json WriteChapterTool::execute(const json& args) {
     // B4: 覆写前自动备份旧内容，防止 LLM 一次错误 write_chapter 永久毁一章正文。
     // 备份写入 .novelagent/chapters_backup/<chapter_id>.<timestamp>.md
     if (!existing.empty()) {
-        std::string backup_dir = ProjectIO::agentDir(project_->path) + "/chapters_backup";
+        std::string backup_dir = ProjectIO::agentDir(project_->path()) + "/chapters_backup";
         utils::file::createDirs(backup_dir);
         std::string ts = ProjectIO::nowTimestamp();
         for (auto& c : ts) if (c == ':') c = '-';  // 替换 Windows 文件名非法字符
-        std::string backup_file = backup_dir + "/" + ch->id + "." + ts + ".md";
+        std::string backup_file = backup_dir + "/" + chapter_id + "." + ts + ".md";
         utils::file::writeText(backup_file, existing);
         spdlog::info("[write_chapter] 旧内容已备份到 {} ({} 字)", backup_file, existing.size());
     }
 
-    ProjectIO::writeChapter(project_->path, ch->file_path, content);
+    ProjectIO::writeChapter(project_->path(), file_path, content);
 
-    // A13: 更新字数统计
-    int old_count = ch->word_count;
-    ch->word_count = llm::TokenCounter::estimateChineseChars(content)
-                   + llm::TokenCounter::estimateEnglishWords(content);
-    project_->current_word_count += (ch->word_count - old_count);
-    project_->markDirty(Project::DIRTY_NOVEL | Project::DIRTY_OUTLINE);
-    ProjectIO::save(*project_);
+    // A13: 更新字数统计（锁内小改）
+    const int new_count = llm::TokenCounter::estimateChineseChars(content)
+                        + llm::TokenCounter::estimateEnglishWords(content);
+    int old_count = 0;
+    project_->withWriteLock([&](Project& p) {
+        auto it = std::find_if(p.outline.chapters.begin(), p.outline.chapters.end(),
+                               [&](const Chapter& c) { return c.id == chapter_id; });
+        if (it == p.outline.chapters.end()) return;
+        old_count = it->word_count;
+        it->word_count = new_count;
+        p.current_word_count += (new_count - old_count);
+        p.markDirty(Project::DIRTY_NOVEL | Project::DIRTY_OUTLINE);
+    });
+    project_->save();
     spdlog::info("[write_chapter] {} ← {} 字节, 字数 {} → {}", chapter_id, content.size(),
-                 old_count, ch->word_count);
+                 old_count, new_count);
 
     return {{"success", true}, {"chapter_id", chapter_id}};
 }
@@ -168,13 +203,21 @@ json AppendChapterTool::execute(const json& args) {
     std::string chapter_id = args.value("chapter_id", "");
     std::string append_content = args.value("content", "");
 
-    auto* ch = findChapter(project_->outline.chapters, chapter_id);
-    if (!ch) {
+    // 锁内读元数据（微秒级；文件 IO 在锁外）
+    std::string file_path;
+    const bool found = project_->withReadLock([&](const Project& p) {
+        auto it = std::find_if(p.outline.chapters.begin(), p.outline.chapters.end(),
+                               [&](const Chapter& c) { return c.id == chapter_id; });
+        if (it == p.outline.chapters.end()) return false;
+        file_path = it->file_path;
+        return true;
+    });
+    if (!found) {
         return {{"error", "章节 '" + chapter_id + "' 不存在"}};
     }
 
-    // 读取现有内容 → 追加 → 写回
-    std::string existing = ProjectIO::readChapter(project_->path, ch->file_path);
+    // ── 锁外：文件 IO（读现有内容 → 追加 → 写回）与字数计算（不持锁）──
+    std::string existing = ProjectIO::readChapter(project_->path(), file_path);
     if (!existing.empty() && existing.back() != '\n') {
         existing += '\n';
     }
@@ -183,17 +226,24 @@ json AppendChapterTool::execute(const json& args) {
         combined += '\n';
     }
 
-    ProjectIO::writeChapter(project_->path, ch->file_path, combined);
+    ProjectIO::writeChapter(project_->path(), file_path, combined);
 
-    // A13: 更新字数统计
-    int old_count = ch->word_count;
-    ch->word_count = llm::TokenCounter::estimateChineseChars(combined)
-                   + llm::TokenCounter::estimateEnglishWords(combined);
-    project_->current_word_count += (ch->word_count - old_count);
-    project_->markDirty(Project::DIRTY_NOVEL | Project::DIRTY_OUTLINE);
-    ProjectIO::save(*project_);
+    // A13: 更新字数统计（锁内小改）
+    const int new_count = llm::TokenCounter::estimateChineseChars(combined)
+                        + llm::TokenCounter::estimateEnglishWords(combined);
+    int old_count = 0;
+    project_->withWriteLock([&](Project& p) {
+        auto it = std::find_if(p.outline.chapters.begin(), p.outline.chapters.end(),
+                               [&](const Chapter& c) { return c.id == chapter_id; });
+        if (it == p.outline.chapters.end()) return;
+        old_count = it->word_count;
+        it->word_count = new_count;
+        p.current_word_count += (new_count - old_count);
+        p.markDirty(Project::DIRTY_NOVEL | Project::DIRTY_OUTLINE);
+    });
+    project_->save();
     spdlog::info("[append_to_chapter] {} += {} 字节, 字数 {} → {}",
-                 chapter_id, append_content.size(), old_count, ch->word_count);
+                 chapter_id, append_content.size(), old_count, new_count);
 
     return {{"success", true}, {"chapter_id", chapter_id}};
 }
@@ -209,9 +259,10 @@ json ListChaptersTool::parameters() const {
 json ListChaptersTool::execute(const json& /*args*/) {
     json chapters = json::array();
     // A17: 按 order 排序后输出，确保 LLM 看到有序的章节列表
+    auto snapshot = project_->getOutline().chapters;  // 读快照（共享锁，锁外计算）
     std::vector<Chapter*> sorted;
-    sorted.reserve(project_->outline.chapters.size());
-    for (auto& ch : project_->outline.chapters) sorted.push_back(&ch);
+    sorted.reserve(snapshot.size());
+    for (auto& ch : snapshot) sorted.push_back(&ch);
     std::sort(sorted.begin(), sorted.end(),
         [](const Chapter* a, const Chapter* b) { return a->order < b->order; });
     for (const auto* ch : sorted) {
@@ -259,10 +310,14 @@ json CreateChapterTool::execute(const json& args) {
         return {{"error", "章节标题不能为空"}};
     }
 
+    // 锁外计算：读快照 → 编号/查重/构造/软校验（不持锁）
+    const Outline outline = project_->getOutline();
+    const auto settings = project_->getSettings();
+
     // 计算新章节编号
     int max_order = 0;
     int max_ch_num = 0;
-    for (const auto& ch : project_->outline.chapters) {
+    for (const auto& ch : outline.chapters) {
         max_order = std::max(max_order, ch.order);
         // D2: 非标准 ID（如 ch-abc）解析失败时安全跳过，不参与编号统计
         if (auto num = utils::id::tryParseIdNumber(ch.id, "ch-")) {
@@ -274,7 +329,12 @@ json CreateChapterTool::execute(const json& args) {
     // C6: 生成 ID 后校验唯一性（防御非标准 ID 格式导致的编号冲突）
     int candidate_num = max_ch_num + 1;
     std::string candidate_id = utils::id::formatSequentialId("ch-", candidate_num);
-    if (findChapter(project_->outline.chapters, candidate_id)) {
+    auto find_in = [&](const std::string& id) {
+        return std::find_if(outline.chapters.begin(), outline.chapters.end(),
+                            [&](const Chapter& c) { return c.id == id; })
+               != outline.chapters.end();
+    };
+    if (find_in(candidate_id)) {
         // 编号冲突（手动创建的 ID 与自增编号重叠），递增到下一个可用编号
         // WHY: 查重必须用补零格式（ch-005）——存量 ID 均为补零格式，
         // 此前用未补零的 "ch-" + std::to_string() 查重永远匹配不到，冲突检测形同虚设（D1）
@@ -283,7 +343,7 @@ json CreateChapterTool::execute(const json& args) {
         // 保留以防未来 ID 格式规则变化
         do {
             candidate_id = utils::id::formatSequentialId("ch-", ++candidate_num);
-        } while (findChapter(project_->outline.chapters, candidate_id));
+        } while (find_in(candidate_id));
         spdlog::warn("[create_chapter] ID 冲突，改为 {}", candidate_id);
     }
     new_ch.id = candidate_id;
@@ -306,22 +366,21 @@ json CreateChapterTool::execute(const json& args) {
 
     // ── 时空定位 ──
     new_ch.location_id     = args.value("location_id", "");
-    validateSettingId(project_->settings, new_ch.location_id, "location_id", "create_chapter");
+    validateSettingId(settings, new_ch.location_id, "location_id", "create_chapter");
     new_ch.time_marker     = args.value("time_marker", "");
     new_ch.volume_id       = args.value("volume_id", "");
-    validateVolumeId(project_->outline.volumes, new_ch.volume_id, "volume_id", "create_chapter");
+    validateVolumeId(outline.volumes, new_ch.volume_id, "volume_id", "create_chapter");
 
     // ── 项目管理 ──
     new_ch.status          = args.value("status", "outlined");
 
     new_ch.file_path = "chapters/" + new_ch.id + ".md";
 
-    project_->outline.chapters.push_back(new_ch);
-    project_->markDirty(Project::DIRTY_OUTLINE);
-    ProjectIO::save(*project_);
+    project_->addChapter(new_ch);
+    project_->save();
 
     std::string init_content = "# " + title + "\n\n";
-    ProjectIO::writeChapter(project_->path, new_ch.file_path, init_content);
+    ProjectIO::writeChapter(project_->path(), new_ch.file_path, init_content);
 
     spdlog::info("[create_chapter] {} '{}' → {}", new_ch.id, title, new_ch.file_path);
 
@@ -378,15 +437,16 @@ json UpdateChapterTool::parameters() const {
 
 json UpdateChapterTool::execute(const json& args) {
     std::string id = args.value("chapter_id", "");
-    auto* ch = findChapter(project_->outline.chapters, id);
-    if (!ch) {
-        return {{"error", "章节 '" + id + "' 不存在"}};
-    }
-
     const json& fields = args["fields"];
     if (!fields.is_object() || fields.empty()) {
         return {{"error", "fields 必须是非空的对象"}};
     }
+
+    // 锁外取校验快照（软校验用，不持锁）
+    const auto settings = project_->getSettings();
+    const auto volumes = project_->getOutline().volumes;
+    const auto characters = project_->getCharacters();
+    const auto plot_threads = project_->getOutline().plot_threads;
 
     // 字符串字段白名单
     using StrField = std::string Chapter::*;
@@ -419,37 +479,46 @@ json UpdateChapterTool::execute(const json& args) {
         {"focus_settings",      &Chapter::focus_settings},
     };
 
+    // 锁内小改：逐字段赋值 + 软校验（updateChapter 自动 markDirty）
     std::vector<std::string> updated;
-    for (auto it = fields.begin(); it != fields.end(); ++it) {
-        const std::string& key = it.key();
-        const json& value = it.value();
+    std::string result_id, result_title;
+    const bool ok = project_->updateChapter(id, [&](Chapter& ch) {
+        result_id = ch.id;
+        result_title = ch.title;
+        for (auto it = fields.begin(); it != fields.end(); ++it) {
+            const std::string& key = it.key();
+            const json& value = it.value();
 
-        if (auto si = kStringMap.find(key); si != kStringMap.end() && value.is_string()) {
-            ch->*si->second = value.get<std::string>();
-            // A6: 校验单值 string ID 引用
-            if (key == "location_id") validateSettingId(project_->settings, value.get<std::string>(), key, "update_chapter");
-            if (key == "volume_id") validateVolumeId(project_->outline.volumes, value.get<std::string>(), key, "update_chapter");
-            updated.push_back(key);
-        } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && value.is_array()) {
-            auto& arr = ch->*ai->second;
-            arr.clear();
-            for (const auto& v : value) arr.push_back(v.get<std::string>());
-            // A6: 校验数组 string ID 引用
-            if (key == "pov_characters") validateIdArray(project_->characters, arr, key, "update_chapter");
-            if (key == "focus_characters") validateIdArray(project_->characters, arr, key, "update_chapter");
-            if (key == "focus_settings") validateIdArray(project_->settings, arr, key, "update_chapter");
-            if (key == "active_plot_threads") validateIdArray(project_->outline.plot_threads, arr, key, "update_chapter");
-            updated.push_back(key);
+            if (auto si = kStringMap.find(key); si != kStringMap.end() && value.is_string()) {
+                ch.*si->second = value.get<std::string>();
+                if (key == "title") result_title = value.get<std::string>();
+                // A6: 校验单值 string ID 引用
+                if (key == "location_id") validateSettingId(settings, value.get<std::string>(), key, "update_chapter");
+                if (key == "volume_id") validateVolumeId(volumes, value.get<std::string>(), key, "update_chapter");
+                updated.push_back(key);
+            } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && value.is_array()) {
+                auto& arr = ch.*ai->second;
+                arr.clear();
+                for (const auto& v : value) arr.push_back(v.get<std::string>());
+                // A6: 校验数组 string ID 引用
+                if (key == "pov_characters") validateIdArray(characters, arr, key, "update_chapter");
+                if (key == "focus_characters") validateIdArray(characters, arr, key, "update_chapter");
+                if (key == "focus_settings") validateIdArray(settings, arr, key, "update_chapter");
+                if (key == "active_plot_threads") validateIdArray(plot_threads, arr, key, "update_chapter");
+                updated.push_back(key);
+            }
+            // 不在白名单中的字段 → 静默忽略（包括 id/order/scenes/metadata）
         }
-        // 不在白名单中的字段 → 静默忽略（包括 id/order/scenes/metadata）
+    });
+    if (!ok) {
+        return {{"error", "章节 '" + id + "' 不存在"}};
     }
 
     if (updated.empty()) {
         return {{"error", "没有可以更新的字段。请检查字段名是否在白名单中，以及值的类型是否匹配。"}};
     }
 
-    project_->markDirty(Project::DIRTY_OUTLINE);
-    ProjectIO::save(*project_);
+    project_->save();
     // 拼接字段名用于日志
     std::string fields_str;
     for (size_t i = 0; i < updated.size(); ++i) {
@@ -461,8 +530,8 @@ json UpdateChapterTool::execute(const json& args) {
     return {
         {"success", true},
         {"chapter", {
-            {"id", ch->id},
-            {"title", ch->title},
+            {"id", result_id},
+            {"title", result_title},
             {"updated_fields", updated}
         }}
     };
@@ -482,51 +551,51 @@ json DeleteChapterTool::execute(const json& args) {
     const std::string cid = args.value("chapter_id", "");
     if (cid.empty()) return {{"error", "chapter_id 不能为空"}};
 
-    auto* ch = findChapter(project_->outline.chapters, cid);
-    if (!ch) return {{"error", "章节不存在: " + cid}};
-
-    // 1) 删除 Markdown 文件
-    const std::string fullPath = ProjectIO::chapterPath(project_->path, ch->file_path);
-    utils::file::removeFile(fullPath);
-
-    // 2) 从 outline.chapters 中移除
-    project_->outline.chapters.erase(
-        std::remove_if(project_->outline.chapters.begin(), project_->outline.chapters.end(),
-            [&](const Chapter& c) { return c.id == cid; }),
-        project_->outline.chapters.end());
-
-    // 3) 级联清理
+    // 锁内级联删除（跨聚合：outline + characters，一次独占锁完成；文件路径锁内取出）
+    std::string file_path;
     int cascade_pt = 0, cascade_vol = 0, cascade_char = 0, cascade_dev = 0;
+    const bool ok = project_->withWriteLock([&](Project& p) {
+        auto it = std::find_if(p.outline.chapters.begin(), p.outline.chapters.end(),
+                               [&](const Chapter& c) { return c.id == cid; });
+        if (it == p.outline.chapters.end()) return false;
+        file_path = it->file_path;
+        p.outline.chapters.erase(it);
 
-    // PlotThread: start_chapter_id / end_chapter_id（单值）
-    for (auto& pt : project_->outline.plot_threads) {
-        if (pt.start_chapter_id == cid) { pt.start_chapter_id.clear(); ++cascade_pt; }
-        if (pt.end_chapter_id == cid)   { pt.end_chapter_id.clear();   ++cascade_pt; }
-    }
-    // Volume: start_chapter_id / end_chapter_id
-    for (auto& v : project_->outline.volumes) {
-        if (v.start_chapter_id == cid) { v.start_chapter_id.clear(); ++cascade_vol; }
-        if (v.end_chapter_id == cid)   { v.end_chapter_id.clear();   ++cascade_vol; }
-    }
-    // Character: chapter_appearances（数组）
-    for (auto& cr : project_->characters) {
-        auto& ca = cr.chapter_appearances;
-        auto before = ca.size();
-        ca.erase(std::remove(ca.begin(), ca.end(), cid), ca.end());
-        if (ca.size() < before) cascade_char += static_cast<int>(before - ca.size());
-    }
-    // CharacterDevelopment: chapter_id（单值）→ 删除该记录
-    for (auto& cr : project_->characters) {
-        auto before = cr.development.size();
-        cr.development.erase(
-            std::remove_if(cr.development.begin(), cr.development.end(),
-                [&](const CharacterDevelopment& d) { return d.chapter_id == cid; }),
-            cr.development.end());
-        if (cr.development.size() < before) cascade_dev += static_cast<int>(before - cr.development.size());
-    }
+        // PlotThread: start_chapter_id / end_chapter_id（单值）
+        for (auto& pt : p.outline.plot_threads) {
+            if (pt.start_chapter_id == cid) { pt.start_chapter_id.clear(); ++cascade_pt; }
+            if (pt.end_chapter_id == cid)   { pt.end_chapter_id.clear();   ++cascade_pt; }
+        }
+        // Volume: start_chapter_id / end_chapter_id
+        for (auto& v : p.outline.volumes) {
+            if (v.start_chapter_id == cid) { v.start_chapter_id.clear(); ++cascade_vol; }
+            if (v.end_chapter_id == cid)   { v.end_chapter_id.clear();   ++cascade_vol; }
+        }
+        // Character: chapter_appearances（数组）
+        for (auto& cr : p.characters) {
+            auto& ca = cr.chapter_appearances;
+            auto before = ca.size();
+            ca.erase(std::remove(ca.begin(), ca.end(), cid), ca.end());
+            if (ca.size() < before) cascade_char += static_cast<int>(before - ca.size());
+        }
+        // CharacterDevelopment: chapter_id（单值）→ 删除该记录
+        for (auto& cr : p.characters) {
+            auto before = cr.development.size();
+            cr.development.erase(
+                std::remove_if(cr.development.begin(), cr.development.end(),
+                    [&](const CharacterDevelopment& d) { return d.chapter_id == cid; }),
+                cr.development.end());
+            if (cr.development.size() < before) cascade_dev += static_cast<int>(before - cr.development.size());
+        }
+        p.markDirty(Project::DIRTY_OUTLINE | Project::DIRTY_CHARACTERS);
+        return true;
+    });
+    if (!ok) return {{"error", "章节不存在: " + cid}};
 
-    project_->markDirty(Project::DIRTY_OUTLINE | Project::DIRTY_CHARACTERS);
-    ProjectIO::save(*project_);
+    // 锁外：删除 Markdown 文件
+    utils::file::removeFile(ProjectIO::chapterPath(project_->path(), file_path));
+
+    project_->save();
     spdlog::info("[delete_chapter] {} 已删除 (cascade: pt={} vol={} char={} dev={})",
                  cid, cascade_pt, cascade_vol, cascade_char, cascade_dev);
     return {
@@ -553,11 +622,14 @@ json UpdateChapterScenesTool::parameters() const {
 }
 
 json UpdateChapterScenesTool::execute(const json& args) {
-    auto* ch = findChapter(project_->outline.chapters, args.value("chapter_id", ""));
-    if (!ch) return {{"error", "章节不存在"}};
-
+    const std::string chapter_id = args.value("chapter_id", "");
     const auto& scenes_arr = args["scenes"];
     if (!scenes_arr.is_array()) return {{"error", "scenes 必须是数组"}};
+
+    // 锁外取校验快照（软校验用，不持锁）
+    const auto characters = project_->getCharacters();
+    const auto settings = project_->getSettings();
+    const auto plot_threads = project_->getOutline().plot_threads;
 
     std::vector<Scene> parsed;
     for (const auto& s : scenes_arr) {
@@ -583,13 +655,21 @@ json UpdateChapterScenesTool::execute(const json& args) {
         if (s.contains("plot_thread_ids") && s["plot_thread_ids"].is_array())
             for (const auto& v : s["plot_thread_ids"]) sc.plot_thread_ids.push_back(v.get<std::string>());
         // A6: 校验场景内的跨实体引用（pov_character_id / location_id / participants / plot_thread_ids）
-        validateSceneRefs(*project_, sc, "update_chapter_scenes");
+        validateSceneRefs(characters, settings, plot_threads, sc, "update_chapter_scenes");
     }
-    ch->scenes = std::move(parsed);
-    project_->markDirty(Project::DIRTY_OUTLINE);
-    ProjectIO::save(*project_);
-    spdlog::info("[update_chapter_scenes] {} 更新 {} 个场景", ch->id, ch->scenes.size());
-    return {{"success", true}, {"chapter_id", ch->id}, {"scene_count", ch->scenes.size()}};
+
+    // 锁内小改：整体替换场景列表（updateChapter 自动 markDirty）
+    std::string result_id;
+    size_t scene_count = 0;
+    const bool ok = project_->updateChapter(chapter_id, [&](Chapter& ch) {
+        result_id = ch.id;
+        ch.scenes = std::move(parsed);
+        scene_count = ch.scenes.size();
+    });
+    if (!ok) return {{"error", "章节不存在"}};
+    project_->save();
+    spdlog::info("[update_chapter_scenes] {} 更新 {} 个场景", result_id, scene_count);
+    return {{"success", true}, {"chapter_id", result_id}, {"scene_count", scene_count}};
 }
 
 } // namespace agent

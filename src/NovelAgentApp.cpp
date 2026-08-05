@@ -12,7 +12,8 @@ NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
     : client_(provider)
     , agent_(client_, registry_)
     , project_(project ? std::move(project) : std::make_shared<Project>())
-    , storage_(project_ ? project_->path : "")
+    , project_access_(std::make_shared<ProjectAccess>(project_))
+    , storage_(project_access_ ? project_access_->path() : "")
     , persistence_(storage_)
     , embedding_gen_(provider)
     , rules_provider_(utils::file::configDir())
@@ -31,12 +32,12 @@ std::string NovelAgentApp::buildSystemPrompt()
 {
     std::string system_prompt = agent::prompt::kMainPersonality;
 
-    if (project_ && !project_->path.empty()) {
+    if (project_access_ && !project_access_->path().empty()) {
         system_prompt += "\n\n";
         system_prompt += agent::prompt::kToolUseInstructions;
 
         // 规则层：全局 + 项目规则叠加（会话边界重读盘，改文件下个会话即生效）
-        std::string rules = rules_provider_.combined(project_->path);
+        std::string rules = rules_provider_.combined(project_access_->path());
         if (!rules.empty())
             system_prompt += "\n\n" + rules;
 
@@ -62,7 +63,7 @@ bool NovelAgentApp::setSkillEnabled(const std::string& name, bool enabled)
 
 std::string NovelAgentApp::skillSettingsPath() const
 {
-    return project_->path + "/.novelagent/skills.json";
+    return project_access_->path() + "/.novelagent/skills.json";
 }
 
 // 从 <项目>/.novelagent/skills.json 读取被禁用的技能名列表。
@@ -70,7 +71,7 @@ std::string NovelAgentApp::skillSettingsPath() const
 std::vector<std::string> NovelAgentApp::loadDisabledSkills() const
 {
     std::vector<std::string> disabled;
-    if (!project_ || project_->path.empty())
+    if (!project_access_ || project_access_->path().empty())
         return disabled;  // 项目未打开：无持久化路径，直接返回空
 
     const std::string text = utils::file::readText(skillSettingsPath());
@@ -90,7 +91,7 @@ std::vector<std::string> NovelAgentApp::loadDisabledSkills() const
 
 void NovelAgentApp::saveDisabledSkills() const
 {
-    if (!project_ || project_->path.empty())
+    if (!project_access_ || project_access_->path().empty())
         return;
     nlohmann::json j;
     j["disabled_skills"] = skill_registry_.disabledSkills();

@@ -1,4 +1,5 @@
 #include "agent/tools/StyleTools.h"
+#include "project/ProjectAccess.h"
 #include "project/ProjectIO.h"
 
 #include <cassert>
@@ -37,7 +38,7 @@ struct TestProject {
 void test_read_style_default() {
     TEST("read_style — 默认风格配置");
     TestProject tp;
-    agent::ReadStyleTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::ReadStyleTool tool(std::make_shared<ProjectAccess>(tp.project));
     auto r = tool.execute({});
     CHECK(r.contains("tone"));
     CHECK(r.contains("pov"));
@@ -54,7 +55,7 @@ void test_read_style_default() {
 void test_update_style_string() {
     TEST("update_style — 更新字符串字段");
     TestProject tp;
-    agent::UpdateStyleTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::UpdateStyleTool tool(std::make_shared<ProjectAccess>(tp.project));
     auto r = tool.execute({
         {"fields", {
             {"tone", "黑暗史诗"},
@@ -74,7 +75,7 @@ void test_update_style_string() {
 void test_update_style_int() {
     TEST("update_style — 更新整数字段");
     TestProject tp;
-    agent::UpdateStyleTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::UpdateStyleTool tool(std::make_shared<ProjectAccess>(tp.project));
     auto r = tool.execute({
         {"fields", {{"chapter_length_target", 5000}}}
     });
@@ -90,7 +91,7 @@ void test_update_style_int() {
 void test_update_style_array() {
     TEST("update_style — 更新数组字段");
     TestProject tp;
-    agent::UpdateStyleTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::UpdateStyleTool tool(std::make_shared<ProjectAccess>(tp.project));
     auto r = tool.execute({
         {"fields", {
             {"forbidden_phrases", {"突然", "毫无征兆地"}},
@@ -111,7 +112,7 @@ void test_update_style_array() {
 void test_update_style_empty_fields() {
     TEST("update_style — 空 fields 返回错误");
     TestProject tp;
-    agent::UpdateStyleTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::UpdateStyleTool tool(std::make_shared<ProjectAccess>(tp.project));
     auto r = tool.execute({{"fields", {}}});
     CHECK(r.contains("error"));
     PASS();

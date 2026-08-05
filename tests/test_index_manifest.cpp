@@ -6,6 +6,7 @@
 //   3. 模型指纹（嵌入模型变化时整库失效重建）
 
 #include "agent/index/IndexManifest.h"
+#include "project/ProjectAccess.h"
 #include "agent/index/ProjectIndexService.h"
 #include "agent/memory/LongTermMemoryStore.h"
 #include "project/Models.h"
@@ -279,7 +280,8 @@ void test_index_incremental_skip() {
     vs.init(dir + "/.novelagent/vectors.json");
     FakeEmbeddingGen eg;
 
-    agent::ProjectIndexService svc(project, vs, eg);
+    auto access = std::make_shared<ProjectAccess>(project);
+    agent::ProjectIndexService svc(access, vs, eg);
 
     // 首次：两个源全部嵌入
     auto r1 = svc.indexAll();
@@ -325,7 +327,8 @@ void test_index_orphan_cleanup() {
     retrieval::VectorStore vs;
     vs.init(dir + "/.novelagent/vectors.json");
     FakeEmbeddingGen eg;
-    agent::ProjectIndexService svc(project, vs, eg);
+    auto access = std::make_shared<ProjectAccess>(project);
+    agent::ProjectIndexService svc(access, vs, eg);
 
     CHECK(svc.indexAll().ok());
     CHECK(vs.count() == 2);
@@ -356,7 +359,8 @@ void test_index_model_fingerprint_rebuild() {
     retrieval::VectorStore vs;
     vs.init(dir + "/.novelagent/vectors.json");
     FakeEmbeddingGen eg;
-    agent::ProjectIndexService svc(project, vs, eg);
+    auto access = std::make_shared<ProjectAccess>(project);
+    agent::ProjectIndexService svc(access, vs, eg);
 
     CHECK(svc.indexAll().ok());
     const int calls_v1 = eg.calls;
@@ -391,7 +395,8 @@ void test_index_force_rebuild() {
     retrieval::VectorStore vs;
     vs.init(dir + "/.novelagent/vectors.json");
     FakeEmbeddingGen eg;
-    agent::ProjectIndexService svc(project, vs, eg);
+    auto access = std::make_shared<ProjectAccess>(project);
+    agent::ProjectIndexService svc(access, vs, eg);
 
     CHECK(svc.indexAll().ok());
     const int calls_first = eg.calls;
@@ -422,7 +427,8 @@ void test_index_memory_entries() {
     retrieval::VectorStore vs;
     vs.init(dir + "/.novelagent/vectors.json");
     FakeEmbeddingGen eg;
-    agent::ProjectIndexService svc(project, vs, eg, &ltm);
+    auto access = std::make_shared<ProjectAccess>(project);
+    agent::ProjectIndexService svc(access, vs, eg, &ltm);
 
     auto r = svc.indexAll();
     CHECK(r.ok());
@@ -455,7 +461,8 @@ void test_index_no_project() {
     retrieval::VectorStore vs;
     FakeEmbeddingGen eg;
     auto project = std::make_shared<Project>();   // path 为空
-    agent::ProjectIndexService svc(project, vs, eg);
+    auto access = std::make_shared<ProjectAccess>(project);
+    agent::ProjectIndexService svc(access, vs, eg);
 
     auto r = svc.indexAll();
     CHECK(!r.ok());
@@ -478,7 +485,8 @@ void test_fingerprint_survives_restart_without_changes() {
         retrieval::VectorStore vs;
         vs.init(dir + "/.novelagent/vectors.json");
         LazyDimEmbeddingGen eg;
-        agent::ProjectIndexService svc(project, vs, eg);
+        auto access = std::make_shared<ProjectAccess>(project);
+    agent::ProjectIndexService svc(access, vs, eg);
         CHECK(svc.indexAll().ok());   // 嵌入后维度已知（4），写入清单
         vs.close();
     }
@@ -493,7 +501,8 @@ void test_fingerprint_survives_restart_without_changes() {
         retrieval::VectorStore vs;
         vs.init(dir + "/.novelagent/vectors.json");
         LazyDimEmbeddingGen eg;
-        agent::ProjectIndexService svc(project, vs, eg);
+        auto access = std::make_shared<ProjectAccess>(project);
+    agent::ProjectIndexService svc(access, vs, eg);
         auto r = svc.indexAll();
         CHECK(r.ok());
         CHECK(r.skipped_sources == 1);
@@ -524,7 +533,8 @@ void test_index_embed_failure_retry() {
     retrieval::VectorStore vs;
     vs.init(dir + "/.novelagent/vectors.json");
     FakeEmbeddingGen eg;
-    agent::ProjectIndexService svc(project, vs, eg);
+    auto access = std::make_shared<ProjectAccess>(project);
+    agent::ProjectIndexService svc(access, vs, eg);
 
     CHECK(svc.indexAll().ok());
     CHECK(vs.contains("char-c1"));

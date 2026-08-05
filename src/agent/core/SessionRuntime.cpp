@@ -51,16 +51,30 @@ SessionRuntime::SessionRuntime(const std::string& session_id,
     // P5：核心依赖构造注入（一次性），后续不再 setter 修改。
     persistence_ = deps.persistence;
     calibrator_ = deps.calibrator;
-    pipeline_.setProjectLock(std::move(deps.project_lock));
     exec_config_ = deps.exec_config;
     config_ = std::move(deps.config);
     budget_.model_limit = deps.model_limit;
-    memory_.setSystemPrompt(std::move(deps.system_prompt));
+
+    // E1：会话创建/物化时经 provider 重建 prompt（读到最新技能目录，save_skill 下个会话可见）。
+    // provider 为空或抛异常时回退构造时注入的 system_prompt 兜底；会话中途不重建（保 KV cache）。
+    std::string prompt;
+    if (config_.system_prompt_provider) {
+        try {
+            prompt = config_.system_prompt_provider();
+        } catch (const std::exception& e) {
+            spdlog::warn("[SessionRuntime] 会话 {} 重建 prompt 失败，使用兜底: {}", session_id_, e.what());
+            prompt = std::move(deps.system_prompt);
+        }
+    } else {
+        prompt = std::move(deps.system_prompt);
+    }
+    memory_.setSystemPrompt(std::move(prompt));
 }
 
 void SessionRuntime::refreshUsage() {
     auto eval = budget_evaluator_.evaluate(memory_, budget_, memory_.systemPrompt(),
                                            client_->config().model, calibrator_);
+    std::lock_guard<std::mutex> lk(usage_mutex_);
     usage_ = ContextUsage{eval.total_tokens, budget_.usagePercent(eval.total_tokens)};
 }
 
@@ -276,6 +290,13 @@ llm::LLMResponse SessionRuntime::process(const std::string& input,
     }
 
     resetCancel();
+
+    // 删除请求独立于取消标志：删除运行中会话时可能任务仍在队列排队，启动后此处立即退出，
+    // 不被刚才的 resetCancel() 清零覆盖（否则删除者会白等一整轮 LLM）。
+    if (delete_requested_.load()) {
+        spdlog::info("[SessionRuntime] 会话 {} 已标记删除，跳过本轮执行", session_id_);
+        return llm::LLMResponse{.finish_reason = "cancelled"};
+    }
 
     if (input.empty()) {
         spdlog::warn("[SessionRuntime] 收到空输入，已忽略");

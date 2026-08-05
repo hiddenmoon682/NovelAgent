@@ -56,7 +56,7 @@ Rectangle {
 
     function sendCurrentMessage() {
         var text = inputField.text.trim()
-        if (text.length === 0 || bridge.busy) return
+        if (text.length === 0 || bridge.sessionBusy) return
 
         chatModel.append({ type: "message", role: "user", content: text,
                            reasoning: "", streaming: false, toolName: "", toolStatus: "" })
@@ -347,10 +347,10 @@ Rectangle {
 
                 Button {
                     id: sendBtn
-                    text: bridge.busy ? "取消" : "发送"
-                    enabled: bridge.agentReady && (bridge.busy || inputField.text.trim().length > 0)
+                    text: bridge.sessionBusy ? "取消" : "发送"
+                    enabled: bridge.agentReady && (bridge.sessionBusy || inputField.text.trim().length > 0)
                     onClicked: {
-                        if (bridge.busy) {
+                        if (bridge.sessionBusy) {
                             bridge.cancelRequest()
                         } else {
                             root.sendCurrentMessage()
@@ -369,7 +369,7 @@ Rectangle {
                         implicitWidth: 64
                         implicitHeight: 32
                         radius: Theme.radiusSm
-                        color: bridge.busy ? Theme.danger
+                        color: bridge.sessionBusy ? Theme.danger
                              : sendBtn.enabled ? Theme.accent
                              : Theme.bgHover
                         Behavior on color { ColorAnimation { duration: Theme.animFast } }

@@ -27,9 +27,9 @@ Rectangle {
             spacing: Theme.gapXs
             Rectangle {
                 width: 7; height: 7; radius: 3.5
-                color: bridge.busy ? Theme.warning : Theme.agentTint
+                color: bridge.sessionBusy ? Theme.warning : Theme.agentTint
                 SequentialAnimation on opacity {
-                    running: bridge.busy
+                    running: bridge.sessionBusy
                     loops: Animation.Infinite
                     NumberAnimation { to: 0.3; duration: 500 }
                     NumberAnimation { to: 1.0; duration: 500 }

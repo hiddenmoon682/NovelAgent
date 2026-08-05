@@ -22,6 +22,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -60,7 +61,6 @@ struct SessionConfig {
 struct SessionRuntimeDeps {
     SessionPersistence* persistence = nullptr;      // 持久化（按 id 落盘）
     llm::TokenCounter* calibrator = nullptr;        // 共享校准器
-    std::shared_ptr<std::shared_mutex> project_lock; // 跨会话共享项目锁
     AgentExecutionConfig exec_config;               // 工具循环执行配置
     SessionConfig config;                           // 共享装配配置（summary_sink 等）
     std::string system_prompt;                      // 创建时注入的 system prompt（D11）
@@ -77,8 +77,11 @@ public:
 
     // 会话 id。
     const std::string& sessionId() const { return session_id_; }
-    // 上下文用量快照（供 UI 展示，refreshUsage() 刷新）。
-    ContextUsage contextUsage() const { return usage_; }
+    // 上下文用量快照（供 UI 展示，refreshUsage() 刷新）。跨线程：池线程写、GUI 线程读 → 加锁。
+    ContextUsage contextUsage() const {
+        std::lock_guard<std::mutex> lk(usage_mutex_);
+        return usage_;
+    }
 
     // 处理一轮用户输入（作用于本会话）。
     llm::LLMResponse process(const std::string& input, llm::StreamCallbacks callbacks = {});
@@ -107,6 +110,12 @@ public:
     void resetCancel() { cancel_requested_.store(false); }
     bool cancelled() const { return cancel_requested_.load(); }
 
+    // 请求删除本会话（独立于 cancel_requested_）：删除运行中会话时置位，process 开头检查
+    // 立即退出，且不被 process 开头的 resetCancel() 清零——解决排队任务启动时取消被吞的竞态。
+    void setDeleteRequested() { delete_requested_.store(true); }
+    void clearDeleteRequested() { delete_requested_.store(false); }
+    bool deleteRequested() const { return delete_requested_.load(); }
+
     // 共享记忆只读访问（当前会话的对话上下文）。
     llm::Memory& memory() { return memory_; }
     const llm::Memory& memory() const { return memory_; }
@@ -125,10 +134,10 @@ public:
     llm::ILLMClient& client();
     ProgressiveToolProvider& progressiveTools() { return progressive_tools_; }
     // 会话是否已落盘（方案 C：id 提前生成、文件延迟落盘）。
-    bool persisted() const { return persisted_; }
-    void setPersisted(bool v) { persisted_ = v; }
-    // 运行状态（供调用方判断是否空闲可休眠）。
-    bool running() const { return running_; }
+    bool persisted() const { return persisted_.load(); }
+    void setPersisted(bool v) { persisted_.store(v); }
+    // 运行状态（供调用方判断是否空闲可休眠）。跨线程：池线程写、GUI 线程读。
+    bool running() const { return running_.load(); }
     // 释放 client 连接（D6 空闲休眠）：切走/空闲时释放 HTTP 连接，下次 process 懒重建。
     void releaseClient() { client_.reset(); }
     // client 是否已释放（休眠中）。
@@ -153,8 +162,10 @@ private:
     void refreshUsage();
 
     std::string session_id_;
-    bool persisted_ = false;
-    bool running_ = false;
+    // 会话是否已落盘（方案 C：延迟落盘）。池线程写、GUI 线程读 → 原子。
+    std::atomic<bool> persisted_{false};
+    // 运行状态（池线程写、GUI 线程读）→ 原子。
+    std::atomic<bool> running_{false};
 
     // 每会话独有运行时状态
     llm::Memory memory_;
@@ -164,7 +175,10 @@ private:
     ProgressiveToolProvider progressive_tools_;
     ToolPipeline pipeline_;
     ContextUsage usage_;
+    mutable std::mutex usage_mutex_;  // 保护 usage_（refreshUsage 写 / contextUsage 读）
     std::atomic<bool> cancel_requested_{false};
+    // 删除请求标志（独立于取消标志；删除运行中会话时置位，process 开头检查）
+    std::atomic<bool> delete_requested_{false};
     AgentExecutionConfig exec_config_;
 
     // 共享引用（非拥有）

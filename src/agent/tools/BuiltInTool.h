@@ -9,6 +9,7 @@
 #include <vector>
 
 struct Project;
+class ProjectAccess;
 namespace retrieval {
 class IVectorStore;
 class IEmbeddingGenerator;
@@ -27,8 +28,9 @@ class LongTermMemoryStore;
 // ============================================================================
 
 struct ToolDependencies {
-    std::shared_ptr<Project> project;              // 当前小说项目（工具读写项目数据）。
-                                                   // 共享所有权：工具与 App 共享同一项目实例
+    // 当前小说项目的受控访问层（工具读写项目数据的唯一入口，P2/P3）。
+    // 工具经事务方法/withLock 访问，禁止直接碰 Project 裸字段。
+    std::shared_ptr<ProjectAccess> project_access;
     retrieval::IVectorStore* vector_store = nullptr;          // 语义检索向量库（RAG 查询）
     retrieval::IEmbeddingGenerator* embedding_gen = nullptr;  // 文本嵌入生成器（写入向量库前向量化）
     LongTermMemoryStore* memory_store = nullptr;              // 长期记忆日志（save_memory 等记忆工具，可选）
@@ -82,14 +84,14 @@ private:
 // 注册宏
 // ============================================================================
 
-// 需要 Project 的工具。构造函数签名: T(std::shared_ptr<Project>)
+// 需要 Project 的工具。构造函数签名: T(std::shared_ptr<ProjectAccess>)
 #define REGISTER_TOOL(ToolClass, toolName, varSuffix) \
     namespace { \
         static const bool _reg_##varSuffix = []() { \
             agent::BuiltInTool::registerFactory( \
                 toolName, \
                 [](const agent::ToolDependencies& deps) -> std::unique_ptr<agent::BuiltInTool> { \
-                    return std::make_unique<ToolClass>(deps.project); \
+                    return std::make_unique<ToolClass>(deps.project_access); \
                 }); \
             return true; \
         }(); \

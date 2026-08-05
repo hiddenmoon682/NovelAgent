@@ -1,6 +1,6 @@
 #pragma once
 
-// SessionManager — 会话池容器（D2 收敛：SessionManager 收敛为 SessionPool）。
+// SessionPool — 会话池容器（D2 收敛：SessionPool 收敛为 SessionPool）。
 //
 // 多会话并行架构下，本类持有全部 SessionRuntime（map<session_id, unique_ptr<SessionRuntime>>）
 // 与共享线程池，负责会话生命周期与消息级操作的路由。不再持有单一共享 memory——
@@ -36,12 +36,12 @@ class SessionPersistence;
 class ThreadPool;
 
 // 会话池容器。持有所有 SessionRuntime 与共享线程池。
-class SessionManager {
+class SessionPool {
 public:
     // @param factory LLM 客户端工厂（非拥有引用）。
     // @param registry 工具注册中心（非拥有引用）。
-    SessionManager(llm::LLMClientFactory& factory, ToolRegistry& registry);
-    ~SessionManager();
+    SessionPool(llm::LLMClientFactory& factory, ToolRegistry& registry);
+    ~SessionPool();
 
     // ── 会话生命周期 ──
 
@@ -64,6 +64,9 @@ public:
 
     // 定位指定会话 runtime（不存在返回 nullptr）。
     SessionRuntime* session(const std::string& id);
+    // 物化指定会话（P8 懒物化）：已在池则仅设当前焦点；不在池且持久层存在该 id 时
+    // 建 runtime + loadSessionState 恢复历史并设为当前焦点。持久层不存在或失败返回 false。
+    bool materializeSession(const std::string& id);
     // 当前会话 runtime（无则自动创建）。
     SessionRuntime* currentSession();
     // 当前会话 id（无则自动创建后返回）。
@@ -161,7 +164,6 @@ private:
     std::string current_session_id_;
     std::atomic<int> session_seq_{0};
     std::unique_ptr<ThreadPool> pool_exec_;
-    std::shared_ptr<std::shared_mutex> project_lock_;
 
     // 进行中的 process 任务（阶段 5：删除运行中会话时 cancel+wait）
     std::map<std::string, std::shared_future<llm::LLMResponse>> in_flight_;

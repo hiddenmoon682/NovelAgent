@@ -3,6 +3,7 @@
 #include "agent/tools/RelevantWorldRuleTools.h"
 #include "agent/prompt/PromptSelector.h"
 #include "project/Models.h"
+#include "project/ProjectAccess.h"
 #include "utils/SchemaUtils.h"
 
 #include <spdlog/spdlog.h>
@@ -25,39 +26,42 @@ json GetRelevantWorldRulesTool::execute(const json& args) {
         return {{"error", "chapter_id 不能为空"}};
     }
 
-    const auto* chapter = prompt::selector::findById(
-        project_->outline.chapters, chapter_id);
-    if (!chapter) {
-        return {{"error", "章节 '" + chapter_id + "' 不存在"}};
-    }
-
     int max_count = args.value("max_count", 6);
     if (max_count < 1) max_count = 1;
     if (max_count > 20) max_count = 20;
 
-    // 先获取关联设定（selectWorldRules 需要它们）
-    auto plotThreads = prompt::selector::selectPlotThreads(
-        *project_, *chapter, 10);
-    auto settings = prompt::selector::selectSettings(
-        *project_, *chapter, plotThreads, 8);
+    // selector 返回指向 project 内部对象的指针，必须在锁内完成查询与构造
+    return project_->withReadLock([&](const Project& p) -> json {
+        const auto* chapter = prompt::selector::findById(
+            p.outline.chapters, chapter_id);
+        if (!chapter) {
+            return {{"error", "章节 '" + chapter_id + "' 不存在"}};
+        }
 
-    auto rules = prompt::selector::selectWorldRules(
-        *project_, settings,
-        static_cast<std::size_t>(max_count));
+        // 先获取关联设定（selectWorldRules 需要它们）
+        auto plotThreads = prompt::selector::selectPlotThreads(
+            p, *chapter, 10);
+        auto settings = prompt::selector::selectSettings(
+            p, *chapter, plotThreads, 8);
 
-    json ruleArray = json::array();
-    for (const auto* rule : rules) {
-        ruleArray.push_back(prompt::selector::filterObject(
-            *rule, false, {"id", "name"}));
-    }
+        auto rules = prompt::selector::selectWorldRules(
+            p, settings,
+            static_cast<std::size_t>(max_count));
 
-    spdlog::info("[get_relevant_world_rules] chapter={}, count={}",
-                 chapter_id, rules.size());
-    return {
-        {"chapter_id", chapter_id},
-        {"total_count", rules.size()},
-        {"world_rules", ruleArray}
-    };
+        json ruleArray = json::array();
+        for (const auto* rule : rules) {
+            ruleArray.push_back(prompt::selector::filterObject(
+                *rule, false, {"id", "name"}));
+        }
+
+        spdlog::info("[get_relevant_world_rules] chapter={}, count={}",
+                     chapter_id, rules.size());
+        return {
+            {"chapter_id", chapter_id},
+            {"total_count", rules.size()},
+            {"world_rules", ruleArray}
+        };
+    });
 }
 
 } // namespace agent

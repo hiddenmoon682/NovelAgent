@@ -4,7 +4,7 @@
 #include "agent/context/ContextBudgetEvaluator.h"
 #include "agent/context/TokenBudget.h"
 #include "agent/context/Memory.h"
-#include "agent/core/SessionManager.h"
+#include "agent/core/SessionPool.h"
 #include "agent/session/SessionPersistence.h"
 #include "llm/ILLMClient.h"
 #include "llm/TokenCounter.h"

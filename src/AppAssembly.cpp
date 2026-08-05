@@ -33,8 +33,8 @@ void NovelAgentApp::setupLongTermMemoryAndSkills()
 {
     // 长期记忆日志与技能发现均须先于工具注册完成
     //（save_memory 依赖已初始化的 store；use_skill/save_skill 持有 registry 指针）
-    if (project_ && !project_->path.empty()) {
-        ltm_store_.init(project_->path + "/.novelagent/memories.json");
+    if (project_access_ && !project_access_->path().empty()) {
+        ltm_store_.init(project_access_->path() + "/.novelagent/memories.json");
 
         // 内置技能安装到全局目录，再登记项目级 + 全局两个搜索路径
         const std::string global_skills = utils::file::configDir() + "/skills";
@@ -42,7 +42,7 @@ void NovelAgentApp::setupLongTermMemoryAndSkills()
         skill::installBuiltinSkills(global_skills);
         skill::installDefaultRules(utils::file::configDir());
 
-        skill_registry_.addSearchPath(project_->path + "/skills");  // 项目级优先
+        skill_registry_.addSearchPath(project_access_->path() + "/skills");  // 项目级优先
         skill_registry_.addSearchPath(global_skills);               // 全局兜底
         skill_registry_.setDisabledSkills(loadDisabledSkills());    // 恢复用户禁用列表
         skill_registry_.discoverAll();                              // 扫描并加载技能元数据
@@ -53,9 +53,10 @@ void NovelAgentApp::setupLongTermMemoryAndSkills()
 // 依赖包以指针传入，工具借此访问项目/向量库/嵌入生成器/长期记忆/技能。
 void NovelAgentApp::registerBuiltInTools()
 {
-    // 仅项目有效（有标题）时注册；依赖包以指针传入，工具借此访问向量库/记忆/技能
-    if (project_ && !project_->title.empty()) {
-        agent::ToolDependencies deps{project_, &vector_store_, &embedding_gen_,
+    // 仅项目有效（有标题）时注册；依赖包以指针传入，工具借此访问向量库/记忆/技能。
+    // 项目访问经 ProjectAccess 受控层（P2/P3），工具禁止直接碰 Project 裸字段。
+    if (project_access_ && !project_access_->title().empty()) {
+        agent::ToolDependencies deps{project_access_, &vector_store_, &embedding_gen_,
                                      &ltm_store_, &skill_registry_};
         agent::BuiltInTool::registerAllTo(registry_, deps);
     }
@@ -84,18 +85,18 @@ void NovelAgentApp::setupContextAndTokenBudget()
 }
 
 // 启用会话持久化并初始化向量存储。
-// 两步均仅项目已打开时执行，避免空路径时写到盘符根目录 /.novelagent；
-// 持久化同时会在启动时恢复 active 会话（system prompt 以本次装配为准）。
+// 两步均仅项目已打开时执行，避免空路径时写到盘符根目录 /.novelagent。
+// P8 懒物化：启动仅注入持久化层，不物化任何会话（不建 runtime/client）；
+// 历史会话由用户点开时经 materializeSession 恢复。
 void NovelAgentApp::setupPersistenceAndVectorStore()
 {
     // 仅项目已打开时启用持久化（避免空路径时写到盘符根目录 /.novelagent）
-    if (project_ && !project_->path.empty()) {
+    if (project_access_ && !project_access_->path().empty()) {
         agent_.setPersistence(&persistence_);
-        agent_.loadSessionState();  // 启动时恢复 active 会话（system prompt 以本次装配为准）
     }
 
-    if (project_ && !project_->path.empty()) {
-        std::string vec_path = project_->path + "/.novelagent/vectors.json";
+    if (project_access_ && !project_access_->path().empty()) {
+        std::string vec_path = project_access_->path() + "/.novelagent/vectors.json";
         vector_store_.init(vec_path);
     }
 }
@@ -115,5 +116,5 @@ void NovelAgentApp::setupSummarySinkAndIndexService()
     // 无需此处注册 sink 回调（压缩时按会话自身 id 落盘 <id>.history）。
 
     index_service_ = std::make_unique<agent::ProjectIndexService>(
-        project_, vector_store_, embedding_gen_, &ltm_store_);
+        project_access_, vector_store_, embedding_gen_, &ltm_store_);
 }

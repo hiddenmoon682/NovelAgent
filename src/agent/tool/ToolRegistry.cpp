@@ -56,9 +56,9 @@ void ToolRegistry::registerBuiltInTool(std::unique_ptr<BuiltInTool> tool)
 }
 
 bool ToolRegistry::isReadOnly(const std::string& name) const {
+    // P4 定版：默认非只读（保守，漏标只多等锁），只有显式标记的工具才走共享锁。
     const ToolEntry* e = findTool(name);
-    if (e && e->is_readonly) return true;   // 显式标记只读优先
-    return IToolProvider::defaultIsReadOnly(name);  // 否则前缀启发式（保留只读工具共享锁）
+    return e && e->is_readonly;
 }
 
 // ===========================================================================

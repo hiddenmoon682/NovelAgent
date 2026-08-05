@@ -3,7 +3,7 @@
 #include "agent/tools/StyleTools.h"
 
 #include "project/Models.h"   // Style 的 to_json 序列化
-#include "project/ProjectIO.h"
+#include "project/ProjectAccess.h"
 #include "utils/SchemaUtils.h"
 
 #include <spdlog/spdlog.h>
@@ -27,7 +27,7 @@ json ReadStyleTool::parameters() const {
 // ===========================================================================
 
 json ReadStyleTool::execute(const json& /*args*/) {
-    const auto& s = project_->style;
+    const Style s = project_->getStyle();  // 读快照（共享锁，锁外计算）
     spdlog::info("[read_style] tone={}, pov={}, prose={}", s.tone, s.pov, s.prose_style);
 
     // 基础序列化（复用 Style.h 的 to_json）
@@ -96,8 +96,6 @@ json UpdateStyleTool::execute(const json& args) {
     const json& f = args["fields"];
     if (!f.is_object() || f.empty()) return {{"error", "fields 必须是非空对象"}};
 
-    auto& s = project_->style;
-
     // 字符串字段白名单
     using StrField = std::string Style::*;
     static const std::map<std::string, StrField> kStringMap = {
@@ -136,30 +134,31 @@ json UpdateStyleTool::execute(const json& args) {
     };
 
     std::vector<std::string> updated;
-    for (auto it = f.begin(); it != f.end(); ++it) {
-        const std::string& key = it.key();
-        const json& value = it.value();
+    project_->updateStyle([&](Style& s) {
+        for (auto it = f.begin(); it != f.end(); ++it) {
+            const std::string& key = it.key();
+            const json& value = it.value();
 
-        if (auto si = kStringMap.find(key); si != kStringMap.end() && value.is_string()) {
-            s.*si->second = value.get<std::string>();
-            updated.push_back(key);
-        } else if (auto ii = kIntMap.find(key); ii != kIntMap.end() && value.is_number_integer()) {
-            s.*ii->second = value.get<int>();
-            updated.push_back(key);
-        } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && value.is_array()) {
-            auto& arr = s.*ai->second;
-            arr.clear();
-            for (const auto& v : value) arr.push_back(v.get<std::string>());
-            updated.push_back(key);
+            if (auto si = kStringMap.find(key); si != kStringMap.end() && value.is_string()) {
+                s.*si->second = value.get<std::string>();
+                updated.push_back(key);
+            } else if (auto ii = kIntMap.find(key); ii != kIntMap.end() && value.is_number_integer()) {
+                s.*ii->second = value.get<int>();
+                updated.push_back(key);
+            } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && value.is_array()) {
+                auto& arr = s.*ai->second;
+                arr.clear();
+                for (const auto& v : value) arr.push_back(v.get<std::string>());
+                updated.push_back(key);
+            }
         }
-    }
+    });
 
     if (updated.empty()) {
         return {{"error", "没有可以更新的字段。请检查字段名是否在白名单中，以及值的类型是否匹配。"}};
     }
 
-    project_->markDirty(Project::DIRTY_STYLE);
-    ProjectIO::save(*project_);
+    project_->save();
     std::string fields_str;
     for (size_t i = 0; i < updated.size(); ++i) {
         if (i > 0) fields_str += ", ";

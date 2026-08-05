@@ -212,21 +212,14 @@ void ProjectIO::save(Project& project) {
     }
 
     Project mutableCopy = project;
-    // 保存时始终写出当前格式，避免新旧格式在磁盘上继续混杂。
-    mutableCopy.format_version = kCurrentFormatVersion;
-    mutableCopy.modified = nowTimestamp();
     migrateProject(mutableCopy);
 
     // Issue 5: 增量保存 — 仅写入脏标记置位的文件。
     // dirty_flags == DIRTY_ALL 时全量写入（首次保存/手动保存）。
-    // 注意：novel.json 始终写入（含 modified 时间戳 + format_version），
-    // 避免 projectSettingsMtime 等 staleness 检测失效。
-    const json novelJson = mutableCopy;
-    saveJsonFile(fu::joinPath(p, kNovelJson), novelJson);
+    uint32_t flags = project.dirty_flags;
 
     // Safety guard: 脏标记为空但有子实体数据 → 工具可能漏调 markDirty()。
     // 此时全量写入以防静默数据丢失，并记录告警以便排查。
-    uint32_t flags = project.dirty_flags;
     if (flags == 0) {
         bool has_entities = !mutableCopy.characters.empty()
                          || !mutableCopy.settings.empty()
@@ -240,22 +233,42 @@ void ProjectIO::save(Project& project) {
         }
     }
 
-    if (flags & Project::DIRTY_OUTLINE)
-        saveJsonFile(fu::joinPath(p, kOutlineJson), mutableCopy.outline);
-    if (flags & Project::DIRTY_CHARACTERS)
-        saveJsonFile(fu::joinPath(p, kCharactersJson), mutableCopy.characters);
-    if (flags & Project::DIRTY_SETTINGS)
-        saveJsonFile(fu::joinPath(p, kSettingsJson), mutableCopy.settings);
-    if (flags & Project::DIRTY_WORLD_RULES)
-        saveJsonFile(fu::joinPath(p, kWorldRulesJson), mutableCopy.world_rules);
-    if (flags & Project::DIRTY_STYLE)
-        saveJsonFile(fu::joinPath(p, kStyleJson), mutableCopy.style);
+    saveSnapshot(mutableCopy, flags);
 
     // save 成功，清除脏标记
     // 注意：mutableCopy 是栈上副本，需要修改原始 project 的 dirty_flags
     project.markClean();
 
     spdlog::info("Saved project '{}' to {} (dirty=0x{:x})", project.title, p, project.dirty_flags);
+}
+
+// 序列化快照写盘：刷新格式版本/时间戳后按 flags 增量写各 JSON 文件。
+// 不触碰调用方共享状态（dirty_flags 由调用方在锁内 test-and-clear）。
+void ProjectIO::saveSnapshot(Project& data, uint32_t flags) {
+    const std::string& p = data.path;
+    if (p.empty()) {
+        throw std::runtime_error("Cannot save: project.path is empty");
+    }
+
+    data.format_version = kCurrentFormatVersion;
+    data.modified = nowTimestamp();
+    migrateProject(data);
+
+    // 注意：novel.json 始终写入（含 modified 时间戳 + format_version），
+    // 避免 projectSettingsMtime 等 staleness 检测失效。
+    const json novelJson = data;
+    saveJsonFile(fu::joinPath(p, kNovelJson), novelJson);
+
+    if (flags & Project::DIRTY_OUTLINE)
+        saveJsonFile(fu::joinPath(p, kOutlineJson), data.outline);
+    if (flags & Project::DIRTY_CHARACTERS)
+        saveJsonFile(fu::joinPath(p, kCharactersJson), data.characters);
+    if (flags & Project::DIRTY_SETTINGS)
+        saveJsonFile(fu::joinPath(p, kSettingsJson), data.settings);
+    if (flags & Project::DIRTY_WORLD_RULES)
+        saveJsonFile(fu::joinPath(p, kWorldRulesJson), data.world_rules);
+    if (flags & Project::DIRTY_STYLE)
+        saveJsonFile(fu::joinPath(p, kStyleJson), data.style);
 }
 
 // ── 章节 Markdown 读写 ──

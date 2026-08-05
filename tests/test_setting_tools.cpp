@@ -1,4 +1,5 @@
 #include "agent/tools/SettingTools.h"
+#include "project/ProjectAccess.h"
 #include "agent/tool/ToolRegistry.h"
 #include "project/ProjectIO.h"
 
@@ -38,7 +39,7 @@ struct TestProject {
 void test_create_setting() {
     TEST("create_setting — 创建新设定");
     TestProject tp;
-    agent::CreateSettingTool tool(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateSettingTool tool(std::make_shared<ProjectAccess>(tp.project));
 
     auto result = tool.execute({{"name", "废弃密室"}, {"category", "location"}});
     CHECK(result["success"] == true);
@@ -59,10 +60,10 @@ void test_create_setting() {
 void test_get_setting() {
     TEST("get_setting — 查询设定详情");
     TestProject tp;
-    agent::CreateSettingTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateSettingTool create(std::make_shared<ProjectAccess>(tp.project));
     create.execute({{"name", "古堡"}, {"description", "废弃的哥特式古堡"}});
 
-    agent::GetSettingTool get(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::GetSettingTool get(std::make_shared<ProjectAccess>(tp.project));
     auto result = get.execute({{"setting_id", "setting-001"}});
     CHECK(result["name"] == "古堡");
     CHECK(result["description"] == "废弃的哥特式古堡");
@@ -78,11 +79,11 @@ void test_get_setting() {
 void test_get_settings() {
     TEST("get_settings — 列出所有设定摘要");
     TestProject tp;
-    agent::CreateSettingTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateSettingTool create(std::make_shared<ProjectAccess>(tp.project));
     create.execute({{"name", "城市广场"}});
     create.execute({{"name", "地下暗道"}});
 
-    agent::ListSettingsTool list(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::ListSettingsTool list(std::make_shared<ProjectAccess>(tp.project));
     auto result = list.execute({});
     CHECK(result["settings"].size() == 2);
     CHECK(result["settings"][0]["name"] == "城市广场");
@@ -98,10 +99,10 @@ void test_get_settings() {
 void test_update_setting() {
     TEST("update_setting — 更新字段");
     TestProject tp;
-    agent::CreateSettingTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateSettingTool create(std::make_shared<ProjectAccess>(tp.project));
     create.execute({{"name", "旧址"}});
 
-    agent::UpdateSettingTool update(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::UpdateSettingTool update(std::make_shared<ProjectAccess>(tp.project));
     auto result = update.execute({
         {"setting_id", "setting-001"},
         {"fields", {{"description", "一片废墟"}, {"story_function", "主角藏身处"}}}
@@ -122,7 +123,7 @@ void test_update_setting() {
 void test_delete_setting() {
     TEST("delete_setting — 删除设定并级联清理引用");
     TestProject tp;
-    agent::CreateSettingTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateSettingTool create(std::make_shared<ProjectAccess>(tp.project));
     create.execute({{"name", "待删除设定"}});
     CHECK(tp.project.settings.size() == 1);
     std::string sid = tp.project.settings[0].id;
@@ -133,7 +134,7 @@ void test_delete_setting() {
     pt.related_settings.push_back(sid);
     tp.project.outline.plot_threads.push_back(pt);
 
-    agent::DeleteSettingTool del(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::DeleteSettingTool del(std::make_shared<ProjectAccess>(tp.project));
     auto r = del.execute({{"setting_id", sid}});
     CHECK(r.value("success", false) == true);
     CHECK(tp.project.settings.empty());
@@ -151,11 +152,11 @@ void test_error_handling() {
     TEST("create_setting — 空名称 / 不存在设定");
     TestProject tp;
 
-    agent::CreateSettingTool create(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::CreateSettingTool create(std::make_shared<ProjectAccess>(tp.project));
     auto r = create.execute({{"name", ""}});
     CHECK(r.contains("error"));
 
-    agent::GetSettingTool get(std::shared_ptr<Project>(&tp.project, [](Project*){}));
+    agent::GetSettingTool get(std::make_shared<ProjectAccess>(tp.project));
     r = get.execute({{"setting_id", "setting-999"}});
     CHECK(r.contains("error"));
 

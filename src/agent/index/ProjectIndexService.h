@@ -18,8 +18,9 @@
 #include "agent/index/IndexManifest.h"
 
 #include <memory>
+#include <mutex>
 
-struct Project;
+class ProjectAccess;
 namespace retrieval {
 class IVectorStore;
 class IEmbeddingGenerator;
@@ -32,13 +33,13 @@ class LongTermMemoryStore;
 class ProjectIndexService : public IIndexService {
 public:
     // 构造索引服务。
-    // @param project 项目数据（共享所有权），索引时读取章节/角色/设定/规则。
+    // @param access 项目受控访问层（P2/P3：索引只读经 withReadLock 快照）。
     // @param vs 向量库（vector store）；非拥有引用，调用方保证其存活期
     //           覆盖本服务生命周期。
     // @param eg 嵌入生成器（embedding generator）；非拥有引用，存活期约定同上。
     // @param memory_store 长期记忆日志；非拥有指针，可为 nullptr（不索引长期记忆），
     //                     非空时调用方保证其存活期覆盖本服务。
-    ProjectIndexService(std::shared_ptr<Project> project,
+    ProjectIndexService(std::shared_ptr<ProjectAccess> access,
                         retrieval::IVectorStore& vs,
                         retrieval::IEmbeddingGenerator& eg,
                         LongTermMemoryStore* memory_store = nullptr);
@@ -55,10 +56,11 @@ public:
 private:
     std::string manifestPath() const;
 
-    std::shared_ptr<Project> project_;
+    std::shared_ptr<ProjectAccess> project_access_;
     retrieval::IVectorStore& vector_store_;
     retrieval::IEmbeddingGenerator& embedding_gen_;
     LongTermMemoryStore* memory_store_ = nullptr;
+    std::mutex index_mutex_;  // E8：indexAll 内部串行化（多会话完成回调并发调用）
 };
 
 } // namespace agent

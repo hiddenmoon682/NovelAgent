@@ -1,5 +1,119 @@
 # Changelog
 
+## [2026-08-05] 清理审查遗留 Minor（B2/A3/D9/P9/跨线程竞争）
+
+### 清理 — 补齐参考文档的次要项
+- **B2**：`SessionPersistence::listSessions` 移除 `updated_at` 排序（最近使用顺序由前端
+  `recent_sessions_` 维护，后端返回存储顺序）。
+- **D9**：`ToolPipeline` 去掉 `num_threads=0` 全串行分支（pool_ 恒创建，调用方传正数如每会话 2），
+  `execute` 移除 `!pool_` 判断（保留单工具调用走串行的优化）。
+- **跨线程竞争**：`SessionRuntime::running_`/`persisted_` 改 `std::atomic<bool>`（池线程写、GUI 线程读）；
+  `usage_` 加 `mutable std::mutex usage_mutex_` 保护（`refreshUsage` 写 / `contextUsage` 读）。
+- **A3**：`SessionManager` 重命名为 `SessionPool`（类名 + 文件 + Agent 成员 `session_pool_` +
+  CMake + 注释），纯机械重命名，功能不变（Agent 作为薄门面持有会话池）。
+- **P9 测试**：`test_agent` 新增 `test_concurrency_full`（提交 4 个并发慢 process 占满 in-flight，
+  第 5 个同步 process 返回 `concurrency_full`）。
+- **D10**：取消占位消息采用"过滤"方案（`conversationHistory` 跳过 `is_control`，D10 允许的选项之一），
+  无需特殊渲染。
+- 全量回归 30/30 通过。
+
+## [2026-08-05] 接入 system_prompt_provider（E1/D11 定版落地）：会话创建时重建 prompt
+
+### 修复 — provider 注册了但从未被调用，save_skill 新增技能下个会话不可见
+- `SessionManager::makeRuntime` 注入共享的 `system_prompt_provider_`（此前硬编码 `nullptr`）。
+- `SessionRuntime` 构造时经 provider 重建 system prompt（E1：会话创建/物化时读到最新技能目录，
+  save_skill 下个会话对 LLM 可见）；provider 为空或抛异常时回退构造注入的 `system_prompt` 兜底；
+  会话中途不重建（保 KV cache）。
+- 测试：`test_agent` 新增 `test_system_prompt_provider_rebuild`（provider 非空重建、为空回退、
+  抛异常回退不崩溃）；全量回归 30/30 通过。
+
+## [2026-08-05] 删除运行中会话：独立删除标志（修 cancel 被吞）+ 2s 超时不强制移除
+
+### 修复 — 删除排队任务时取消被吞、删除运行中会话无限等待
+- **问题 B（cancel 被吞）**：`SessionRuntime` 新增独立 `delete_requested_` 原子标志与
+  `setDeleteRequested/clearDeleteRequested/deleteRequested`；`deleteSessionRuntime` 删除运行中会话时
+  置位，`process()` 开头在 `resetCancel()` 之后检查——排队任务启动时立即以 `cancelled` 退出，
+  不被 `resetCancel()` 清零覆盖（此前删除者会白等一整轮 LLM）。
+- **问题 A（无超时）**：`deleteSessionRuntime` 的 `fut.wait()` 改为 `wait_for(2s)`；超时后**不强制移除**
+  （安全优先——池线程的异步任务捕获 runtime 裸指针，此刻 `pool_.erase` 析构会导致 use-after-free），
+  恢复会话标志（清除取消/删除请求，稍后可重试删除）并返回 false。`QmlBridge::deletePoolSession`
+  对删除失败短路，不执行归档（会话未删成）。
+- 全量回归 30/30 通过。
+
+## [2026-08-05] 删除池会话补持久层归档（D4 定版落地）：已删会话重启不再复活
+
+### 修复 — deletePoolSession 只移除内存池，漏掉持久层归档
+- `QmlBridge::deletePoolSession` 在 `deleteSessionRuntime`（cancel+wait+移除内存池）成功后，补调
+  `persistence->deleteSession(id)`：快照 `<id>.json` + 完整历史 `<id>.history` 归档到 `archive/`
+  并从 index 移除；未打开项目（无持久化）时跳过。此前池会话删除只 `pool_.erase`，磁盘文件残留，
+  重启后从持久层复活（历史会话删除已在上轮修复，本修复补齐池会话路径）。
+- 顺序：先等运行中会话退出移除内存池，再归档持久层（避免运行时读到写到一半的文件）。
+- 全量回归 30/30 通过。
+
+## [2026-08-05] 按会话 busy（D12/阶段 4 定版落地）：后台会话继续跑，可切到空闲会话发消息
+
+### 修复 — GUI 输入区从全局 busy 改为按"当前查看会话"判断
+- **新增 `sessionBusy` 属性/信号**（QmlBridge）：返回当前查看会话是否在跑
+  （`session(currentSessionId)->running()`）；在 runAgent 开始/完成、switchPoolSession 时发射
+  `sessionBusyChanged`。
+- **AgentPanel 输入区改用 `bridge.sessionBusy`**：`sendCurrentMessage` 与发送按钮的
+  禁用/文字/颜色（"发送"↔"取消"）都按当前查看会话运行态判断——会话 A 后台跑时切到空闲会话 B，
+  B 输入框可用、按钮显示"发送"，可发新对话（D12 核心场景可达）。
+- **取消语义修正**：`cancelRequest` 仅在当前查看会话 `running()` 时取消（不再受全局 busy 误导，
+  空闲会话不会显示"取消"按钮）。
+- **状态栏忙碌动画**按当前查看会话（E9 精神）。
+- 保留全局 `busy_` 用于重建索引/技能管理等全局互斥操作（非发送判断），语义不变。
+- 全量回归 30/30 通过。
+
+## [2026-08-05] 历史会话懒物化（P8 定版落地）：点开才物化、启动不物化、历史可打开/可删
+
+### 修复 — 会话恢复功能断裂：历史会话既看不到、打不开、也删不掉
+- **启动不再物化**：`AppAssembly::setupPersistenceAndVectorStore` 去掉 `loadSessionState()`（此前经
+  `currentSession()` 自动建 `s-multi-1` 空会话并建 client，白占并发槽位且遮蔽历史列表）；启动仅
+  `setPersistence` 注入持久化层。
+- **新增物化入口 `materializeSession(id)`**（SessionManager/Agent）：已在池则仅切当前焦点；不在池且
+  持久层存在该 id 时建 runtime + `loadSessionState()` 恢复历史消息并设为当前焦点；持久层不存在返回
+  false（不建幽灵 runtime）。QmlBridge `switchPoolSession` 对历史 id 走物化。
+- **列表合并**：`sessionList()` 返回"池会话 + 持久层历史会话"合并列表，去掉"有池会话就遮蔽持久层"
+  的分支；历史会话可点开物化，持久层异常仍 try/catch 不穿透 QML。
+- **历史会话可删**：`deleteSession` 对不在池的历史 id 改走 `persistence->deleteSession`（快照 + 完整
+  历史归档到 archive/），不再静默失败。
+- **GUI 属性读取不触发物化（P8）**：`QmlBridge::modelName`/`activeProviderName` 改从 provider 配置读
+  （`NovelAgentApp::modelName`/`providerName` 取自 `client_.config()`），不再经 `agent().client()` 触发
+  `currentSession()` 自动建会话。
+- 测试：`test_agent` 新增 `test_materialize_history_session`（启动不物化、materializeSession 恢复历史
+  2 条、不存在 id 拒绝且不影响既有会话）；全量回归 30/30 通过。
+
+## [2026-08-05] 项目锁下沉 ProjectAccess 访问层 + 撤销 ToolPipeline 批次锁（P2/P3/C1 定版落地）
+
+### 重构 — 锁集中在 ProjectAccess，Project 恢复纯数据模型，工具/GUI/索引统一经访问层
+- **Project 恢复纯 POJO（D7/C1/P3）**：移除 Project 上的锁与事务方法，恢复为纯数据模型
+  （序列化/ProjectIO/测试直接字段访问零改动）；锁、事务方法、withLock、快照读全部集中到
+  `ProjectAccess`（`src/project/ProjectAccess.h/.cpp`，持有 `shared_mutex`）。
+- **撤销批次锁（P2 定版）**：删除 `ToolPipeline::setProjectLock`/`project_lock_` 与 `execute()` 入口的
+  整批持锁（含 LLM/文件 IO 全在锁内）；`SessionManager`/`SessionRuntimeDeps` 同步移除 project_lock
+  注入链。并发安全完全由 ProjectAccess 方法级锁承担。
+- **ProjectAccess 受控访问层**：`withReadLock`/`withWriteLock`（lambda 接收 `Project&`，锁已持有）、
+  事务方法 `addXxx`/`updateXxx(id, fn)`/`removeXxx`（独占锁内一次读-改-写，自动 markDirty）、
+  快照读 `getXxx`（共享锁内拷贝）、`path()`/`title()` 只读 getter、`save()`（锁内快照 + 脏标记
+  test-and-clear，文件 IO 锁外，含防漏 markDirty 全量守卫）；删除 Phase 3.5 遗留死代码 `IProjectAccess.h`。
+- **工具全量改造（198 处访问）**：`ToolDependencies.project` → `project_access`，`REGISTER_TOOL` 宏/
+  全部工具构造函数改持 `shared_ptr<ProjectAccess>`；读工具走快照/withReadLock（selector 类锁内查询），
+  写工具"锁外读快照计算 → 锁内小改 → 锁外 save"；跨聚合删除（delete_chapter/delete_character/
+  delete_setting/delete_world_rule）用 withWriteLock 一次级联完成。
+- **P4 显式只读标记**：18 个只读工具类覆写 `isReadOnly() = true`；`ToolRegistry::isReadOnly` 移除前缀
+  启发式兜底（默认非只读，保守），`IToolProvider::defaultIsReadOnly` 删除。
+- **ProjectIO**：抽出 `saveSnapshot(Project&, flags)`（纯序列化 + 按脏位写盘），`save()` 复用。
+- **索引服务（E8）**：`ProjectIndexService` 改持 `ProjectAccess`，`indexAll` 内部加 `std::mutex` 串行化，
+  聚合数据 withReadLock 快照拷贝后锁外切分/嵌入。
+- **GUI/装配**：`QmlBridge` 的 projectName/projectPath/chapterList/loadChapter/rebuildIndex 与
+  `NovelAgentApp`/`AppAssembly` 的 path/title 读取统一改走 `projectAccess()`。
+- **顺带修复**：delete_setting/delete_character/delete_world_rule 级联修改遗漏脏位标记（settings/
+  outline/world_rules 落盘丢失级联清理）——已补全脏位。
+- 测试：新增 `tests/test_project_lock.cpp`（6 用例：快照拷贝/事务方法/withLock/并发写无丢失/
+  读写混合不崩溃/save 落盘重载）；工具测试构造适配 `make_shared<ProjectAccess>(tp.project)`；
+  全量回归 30/30 通过。
+
 ## [2026-08-04] 并发拒绝（P9）+ 构造注入（P5）
 
 ### 实现 — P9 并发上限拒绝 + P5 SessionRuntime 核心依赖构造注入

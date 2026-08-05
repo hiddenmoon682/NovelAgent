@@ -128,26 +128,26 @@ bool QmlBridge::rebuildApp(const std::string& providerName,
 }
 
 std::string QmlBridge::activeProviderName() const {
-    if (app_) return app_->agent().client().config().name;
+    if (app_) return app_->providerName();
     return config_.default_provider;
 }
 
 // ── 属性读取 ──
 
 QString QmlBridge::projectName() const {
-    if (project_ && !project_->title.empty())
-        return QString::fromStdString(project_->title);
+    if (app_ && app_->projectAccess() && !app_->projectAccess()->title().empty())
+        return QString::fromStdString(app_->projectAccess()->title());
     return QStringLiteral("未打开项目");
 }
 
 QString QmlBridge::projectPath() const {
-    if (project_ && !project_->path.empty())
-        return QString::fromStdString(project_->path);
+    if (app_ && app_->projectAccess())
+        return QString::fromStdString(app_->projectAccess()->path());
     return {};
 }
 
 QString QmlBridge::modelName() const {
-    if (app_) return QString::fromStdString(app_->agent().client().config().model);
+    if (app_) return QString::fromStdString(app_->modelName());
     if (const auto* p = config_.getDefaultProvider())
         return QString::fromStdString(p->model);
     return {};
@@ -155,6 +155,12 @@ QString QmlBridge::modelName() const {
 
 QString QmlBridge::providerName() const {
     return QString::fromStdString(activeProviderName());
+}
+
+bool QmlBridge::sessionBusy() const {
+    if (!app_ || current_session_id_.isEmpty()) return false;
+    auto* rt = app_->agent().session(current_session_id_.toStdString());
+    return rt && rt->running();
 }
 
 int QmlBridge::totalTokens() const {
@@ -196,12 +202,14 @@ QString QmlBridge::createPoolSession() {
 
 bool QmlBridge::switchPoolSession(const QString& sessionId) {
     if (!app_) return false;
-    if (app_->agent().session(sessionId.toStdString()) == nullptr) return false;
+    // P8 懒物化：点开会话才物化（已在池则切焦点；持久层历史会话则建 runtime+恢复历史）
+    if (!app_->agent().materializeSession(sessionId.toStdString())) return false;
     current_session_id_ = sessionId;
     recent_sessions_.removeAll(sessionId);
     recent_sessions_.prepend(sessionId);  // 最近使用置顶（B2/D3）
     app_->agent().releaseIdleClients();   // D6：切走释放非运行会话的 client 连接
     emit currentSessionIdChanged();
+    emit sessionBusyChanged();
     emit sessionReset();
     return true;
 }
@@ -226,7 +234,12 @@ void QmlBridge::sendMessageToSession(const QString& sessionId, const QString& te
 
 bool QmlBridge::deletePoolSession(const QString& sessionId) {
     if (!app_) return false;
+    // 先等运行中会话退出并移除内存池，再归档持久层（避免运行时读到写到一半的文件）
     if (!app_->agent().deleteSessionRuntime(sessionId.toStdString())) return false;
+    // 归档到 archive/：快照 <id>.json + 完整历史 <id>.history 移入 archive 并从 index 移除，
+    // 否则已删池会话重启后仍会从持久层复活。未打开项目（无持久化）时跳过。
+    if (auto* persistence = app_->agent().persistence())
+        persistence->deleteSession(sessionId.toStdString());
     // 删除当前会话 → 自动切到剩余池会话（或清空焦点）
     if (current_session_id_ == sessionId) {
         const auto ids = app_->agent().sessionIds();
@@ -240,7 +253,10 @@ bool QmlBridge::deletePoolSession(const QString& sessionId) {
 }
 
 void QmlBridge::cancelRequest() {
-    if (app_ && busy_.load()) {
+    // 取消当前查看会话（仅当其在运行；空闲会话无取消按钮，不会走到这里）
+    if (!app_ || current_session_id_.isEmpty()) return;
+    auto* rt = app_->agent().session(current_session_id_.toStdString());
+    if (rt && rt->running()) {
         app_->agent().requestCancel();
         setStatus(QStringLiteral("正在取消..."));
     }
@@ -259,9 +275,7 @@ QVariantList QmlBridge::sessionList() const {
     QVariantList list;
     if (!app_) return list;
 
-    // 多会话并行池会话（阶段 4）：按最近使用顺序展示，当前查看会话标 active。
-    // 标题取该会话首条 user 消息（截断 30 字），无则"新会话"。
-    // 先按 recent_sessions_ 排序，未在列表中的池会话排在后面。
+    // 池会话（已物化）：按最近使用顺序展示，当前查看会话标 active、运行态标 running。
     const auto pool_ids = app_->agent().sessionIds();
     QStringList ordered;
     for (const auto& sid : recent_sessions_)
@@ -291,33 +305,32 @@ QVariantList QmlBridge::sessionList() const {
         m.insert(QStringLiteral("updatedAt"), QString());
         list.push_back(m);
     }
-    if (!list.isEmpty()) return list;  // 有池会话时优先展示池会话列表
 
+    // 持久层历史会话（未物化）：合并展示，点开时经 switchPoolSession 物化。
     auto* persistence = app_->agent().persistence();
-    if (!persistence) return list;  // 未打开项目时无持久化，无会话列表
-
-    // 是否存在未落盘的新会话（延迟创建）：pending 时列表最前插入占位条目
-    const bool pending = app_->agent().pendingNewSession();
-
-    // 持久层异常（磁盘 IO/重建失败）不得穿透 Q_INVOKABLE 进 QML 引擎
-    try {
-        for (const auto& s : persistence->listSessions()) {
-            QVariantMap m;
-            m.insert(QStringLiteral("id"), QString::fromStdString(s.id));
-            m.insert(QStringLiteral("title"), s.title.empty()
-                         ? QStringLiteral("新会话")
-                         : QString::fromStdString(s.title));
-            // D3：持久层无 active；池会话优先（上方），此处无池会话时均不标 active
-            m.insert(QStringLiteral("active"), false);
-            m.insert(QStringLiteral("updatedAt"), QString::fromStdString(s.updated_at));
-            list.push_back(m);
+    if (persistence) {
+        // 持久层异常（磁盘 IO/重建失败）不得穿透 Q_INVOKABLE 进 QML 引擎
+        try {
+            for (const auto& s : persistence->listSessions()) {
+                if (std::find(pool_ids.begin(), pool_ids.end(), s.id) != pool_ids.end())
+                    continue;  // 已在池的跳过（上方池条目已含）
+                QVariantMap m;
+                m.insert(QStringLiteral("id"), QString::fromStdString(s.id));
+                m.insert(QStringLiteral("title"), s.title.empty()
+                             ? QStringLiteral("新会话")
+                             : QString::fromStdString(s.title));
+                m.insert(QStringLiteral("active"), current_session_id_ == s.id);
+                m.insert(QStringLiteral("running"), false);
+                m.insert(QStringLiteral("updatedAt"), QString::fromStdString(s.updated_at));
+                list.push_back(m);
+            }
+        } catch (const std::exception& e) {
+            spdlog::warn("[QmlBridge] 读取会话列表失败: {}", e.what());
         }
-    } catch (const std::exception& e) {
-        spdlog::warn("[QmlBridge] 读取会话列表失败: {}", e.what());
     }
 
     // 未落盘的新会话占位（ID 留空，标题"新会话"，置顶并标 active）
-    if (pending) {
+    if (app_->agent().pendingNewSession()) {
         QVariantMap m;
         m.insert(QStringLiteral("id"), QStringLiteral(""));
         m.insert(QStringLiteral("title"), QStringLiteral("新会话"));
@@ -352,13 +365,13 @@ bool QmlBridge::deleteSession(const QString& sessionId) {
         setStatus(QStringLiteral("已丢弃未发送的新会话"));
         return true;
     }
-    // D3：持久层无 active；删除当前查看的池会话时由 deletePoolSession 处理焦点切换，
-    // 此处仅判断是否为当前查看会话以便重建聊天流。
+    // 持久层历史会话（不在池）：直接持久层删除（快照 + 完整历史归档到 archive/）
+    auto* persistence = app_->agent().persistence();
     const bool wasCurrent = (current_session_id_ == sessionId);
-    if (!app_->agent().deleteSession(sessionId.toStdString())) return false;
+    if (!persistence || !persistence->deleteSession(sessionId.toStdString())) return false;
+    if (wasCurrent) current_session_id_.clear();
     emit sessionsChanged();
     if (wasCurrent) {
-        // 当前查看会话被删后焦点已由池回退，聊天流需重建
         emit sessionReset();
         emit usageChanged();
     }
@@ -404,7 +417,7 @@ void QmlBridge::rebuildIndex() {
         emit errorOccurred(QStringLiteral("尚未完成初始化，无法重建索引"));
         return;
     }
-    if (!project_ || project_->path.empty()) {
+    if (!app_->projectAccess() || app_->projectAccess()->path().empty()) {
         emit errorOccurred(QStringLiteral("未打开项目，无法重建索引"));
         return;
     }
@@ -429,45 +442,60 @@ void QmlBridge::rebuildIndex() {
 
 QVariantList QmlBridge::chapterList() const {
     QVariantList list;
-    if (!project_) return list;
+    if (!app_ || !app_->projectAccess()) return list;
 
-    std::vector<const Chapter*> sorted;
-    sorted.reserve(project_->outline.chapters.size());
-    for (const auto& ch : project_->outline.chapters)
-        sorted.push_back(&ch);
-    std::sort(sorted.begin(), sorted.end(),
-              [](const Chapter* a, const Chapter* b) { return a->order < b->order; });
+    // 锁内读取章节元数据（GUI 线程与池线程工具并发，防撕裂读）
+    app_->projectAccess()->withReadLock([&](const Project& p) {
+        std::vector<const Chapter*> sorted;
+        sorted.reserve(p.outline.chapters.size());
+        for (const auto& ch : p.outline.chapters)
+            sorted.push_back(&ch);
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const Chapter* a, const Chapter* b) { return a->order < b->order; });
 
-    for (const auto* ch : sorted) {
-        QVariantMap m;
-        m.insert(QStringLiteral("id"), QString::fromStdString(ch->id));
-        m.insert(QStringLiteral("title"), ch->title.empty()
-                     ? QStringLiteral("第 %1 章").arg(ch->order)
-                     : QString::fromStdString(ch->title));
-        m.insert(QStringLiteral("order"), ch->order);
-        m.insert(QStringLiteral("wordCount"), ch->word_count);
-        list.push_back(m);
-    }
+        for (const auto* ch : sorted) {
+            QVariantMap m;
+            m.insert(QStringLiteral("id"), QString::fromStdString(ch->id));
+            m.insert(QStringLiteral("title"), ch->title.empty()
+                         ? QStringLiteral("第 %1 章").arg(ch->order)
+                         : QString::fromStdString(ch->title));
+            m.insert(QStringLiteral("order"), ch->order);
+            m.insert(QStringLiteral("wordCount"), ch->word_count);
+            list.push_back(m);
+        }
+    });
     return list;
 }
 
 QString QmlBridge::loadChapter(const QString& chapterId) {
-    if (!project_) return {};
+    if (!app_ || !app_->projectAccess()) return {};
     const std::string id = chapterId.toStdString();
-    for (const auto& ch : project_->outline.chapters) {
-        if (ch.id != id) continue;
-        if (ch.file_path.empty()) {
-            emit errorOccurred(QStringLiteral("章节尚未写入正文文件"));
-            return {};
+
+    // 锁内取章节元数据（GUI 线程与池线程工具并发，防撕裂读）；文件 IO 在锁外
+    std::string file_path;
+    bool found = false;
+    app_->projectAccess()->withReadLock([&](const Project& p) {
+        for (const auto& ch : p.outline.chapters) {
+            if (ch.id != id) continue;
+            file_path = ch.file_path;
+            found = true;
+            return;
         }
-        const std::string content = ProjectIO::readChapter(project_->path, ch.file_path);
-        if (content.empty())
-            emit errorOccurred(QStringLiteral("章节文件不存在或为空: ")
-                               + QString::fromStdString(ch.file_path));
-        return QString::fromStdString(content);
+    });
+    if (!found) {
+        emit errorOccurred(QStringLiteral("未找到章节: ") + chapterId);
+        return {};
     }
-    emit errorOccurred(QStringLiteral("未找到章节: ") + chapterId);
-    return {};
+    if (file_path.empty()) {
+        emit errorOccurred(QStringLiteral("章节尚未写入正文文件"));
+        return {};
+    }
+    const std::string content = ProjectIO::readChapter(
+        app_->projectAccess()->path(), file_path);
+    if (content.empty())
+        emit errorOccurred(QStringLiteral("章节文件不存在或为空: ")
+                           + QString::fromStdString(file_path));
+    return QString::fromStdString(content);
 }
 
 // ── 技能管理 ──
@@ -510,6 +538,7 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
     busy_.store(true);
     cancel_requested_.store(false);
     emit busyChanged();
+    emit sessionBusyChanged();  // 当前会话进入运行态（按会话 busy）
     setStatus(QStringLiteral("思考中..."));
 
     const QString sid = QString::fromStdString(session_id);
@@ -564,7 +593,9 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
         [this, sid](const std::string&, llm::LLMResponse response) {
             // 池线程：响应完成后自动增量索引（内容哈希未变的源会被跳过；
             // 无变更时开销仅为哈希比对，不产生嵌入请求）。取消时跳过。
-            if (project_ && !project_->path.empty() && !cancel_requested_.load())
+            if (app_->projectAccess()
+                && !app_->projectAccess()->path().empty()
+                && !cancel_requested_.load())
                 runIndexUpdate(/*force=*/false);
 
             QString fullText = QString::fromStdString(response.content);
@@ -593,6 +624,7 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
                 }
                 busy_.store(false);
                 emit busyChanged();
+                emit sessionBusyChanged();  // 当前会话退出运行态（按会话 busy）
             }, Qt::QueuedConnection);
         });
 }

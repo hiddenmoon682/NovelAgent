@@ -6,12 +6,12 @@
 namespace agent {
 
 // 获取当前最新章节的基本信息。
-// 通过扫描 project_->outline.chapters 中 order 最大的章节来确定。
+// 通过 getOutline() 快照（共享锁内拷贝）扫描 order 最大的章节来确定。
 // LLM 无需自己追踪章节 ID，在开始写作前调用此工具即可了解当前进度。
 class GetLatestChapterTool : public BuiltInTool {
-    std::shared_ptr<Project> project_;
+    std::shared_ptr<ProjectAccess> project_;
 public:
-    explicit GetLatestChapterTool(std::shared_ptr<Project> p) : project_(p) {}
+    explicit GetLatestChapterTool(std::shared_ptr<ProjectAccess> p) : project_(p) {}
     std::string name() const override { return "get_latest_chapter"; }
     std::string description() const override {
         return "获取当前最新章节的基本信息，包括顺序号、标题、状态和概要。"
@@ -21,6 +21,7 @@ public:
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Outline; }
+    bool isReadOnly() const override { return true; }
 };
 
 } // namespace agent

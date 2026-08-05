@@ -367,11 +367,7 @@ std::vector<SessionInfo> SessionPersistence::listSessions()
         info.updated_at = utils::json::getOrDefault(e, "updated_at", std::string{});
         result.push_back(std::move(info));
     }
-    // ISO 8601 UTC 字符串可直接按字典序比较
-    std::sort(result.begin(), result.end(),
-              [](const SessionInfo& a, const SessionInfo& b) {
-                  return a.updated_at > b.updated_at;
-              });
+    // B2：最近使用排序由前端 recent_sessions_ 维护，后端返回存储顺序（不在此排序）
     return result;
 }
 

@@ -10,6 +10,7 @@
 // 手动执行：./build/tests/test_e2e_chapter.exe（需 config.json 或环境变量）
 
 #include "agent/core/Agent.h"
+#include "project/ProjectAccess.h"
 #include "agent/tool/ToolRegistry.h"
 #include "agent/tools/ChapterTools.h"
 #include "config/AppConfig.h"
@@ -104,15 +105,15 @@ int main() {
     agent::ToolRegistry registry;
 
     registry.registerBuiltInTool(
-        std::make_unique<agent::ListChaptersTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
+        std::make_unique<agent::ListChaptersTool>(std::make_shared<ProjectAccess>(tp.project)));
     registry.registerBuiltInTool(
-        std::make_unique<agent::ReadChapterTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
+        std::make_unique<agent::ReadChapterTool>(std::make_shared<ProjectAccess>(tp.project)));
     registry.registerBuiltInTool(
-        std::make_unique<agent::WriteChapterTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
+        std::make_unique<agent::WriteChapterTool>(std::make_shared<ProjectAccess>(tp.project)));
     registry.registerBuiltInTool(
-        std::make_unique<agent::AppendChapterTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
+        std::make_unique<agent::AppendChapterTool>(std::make_shared<ProjectAccess>(tp.project)));
     registry.registerBuiltInTool(
-        std::make_unique<agent::CreateChapterTool>(std::shared_ptr<Project>(&tp.project, [](Project*){})));
+        std::make_unique<agent::CreateChapterTool>(std::make_shared<ProjectAccess>(tp.project)));
 
     std::cout << "  已注册 " << registry.toolCount() << " 个工具:\n";
     for (const auto& name : registry.toolNames()) {

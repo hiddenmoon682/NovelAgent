@@ -41,6 +41,7 @@ class QmlBridge : public QObject {
     Q_PROPERTY(QString projectPath READ projectPath NOTIFY projectChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(bool sessionBusy READ sessionBusy NOTIFY sessionBusyChanged)
     Q_PROPERTY(QString modelName READ modelName NOTIFY modelChanged)
     Q_PROPERTY(QString providerName READ providerName NOTIFY modelChanged)
     Q_PROPERTY(int totalTokens READ totalTokens NOTIFY usageChanged)
@@ -57,6 +58,9 @@ public:
     QString projectPath() const;
     QString statusText() const { return status_text_; }
     bool busy() const { return busy_.load(); }
+    // 当前查看会话是否正在生成（按会话 busy，D12/阶段 4）：
+    // 该会话在后台跑时用户可切到其它空闲会话发消息。
+    bool sessionBusy() const;
     QString modelName() const;
     QString providerName() const;
     int totalTokens() const;
@@ -148,6 +152,8 @@ signals:
     void chaptersChanged();
     void statusChanged(const QString& text);
     void busyChanged();
+    // 当前查看会话的 busy 状态变化（runAgent 开始/完成、切换会话时发射）
+    void sessionBusyChanged();
     void modelChanged();
     void usageChanged();
 
