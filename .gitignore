@@ -2,6 +2,9 @@
 build/
 cmake-build-*/
 
+# CTest 输出（测试日志不含源代码）
+Testing/
+
 # IDE
 .vs/
 .vscode/
