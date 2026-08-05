@@ -43,6 +43,7 @@ bool isPlaceholderKey(const std::string& key) {
 
 QmlBridge::QmlBridge(QObject* parent)
     : QObject(parent)
+    , alive_(std::make_shared<std::atomic<bool>>(true))
 {
     config_ = AppConfig::load();
 
@@ -67,11 +68,21 @@ QmlBridge::QmlBridge(QObject* parent)
 QmlBridge::~QmlBridge() {
     cancel_requested_.store(true);
     if (app_) {
-        // 若仍在生成，请求取消后等待工作线程退出，避免回调竞态
-        // （app_ 成员销毁晚于本函数体，worker 引用的 Agent 仍有效）
+        // 方案 A：先取消全部 in-flight 会话并等待其退场，确保后台池线程的 on_complete
+        // 回调在本对象与 app_ 仍存活时执行完毕，避免 use-after-free（成员逆序析构，
+        // cancel_requested_ 先于 app_ 销毁，而 ThreadPool 深处 join 会执行残留回调）。
+        app_->agent().shutdown();
         bootstrap::g_cancel_flag.store(nullptr);
     }
+    // 生命周期令牌复位：即使有超时残留任务，on_complete 的 weak_ptr lock() 也会失败并跳过，
+    // 不再访问已进入析构的本对象（兜底 A 的 2s 超时窗口）。
+    alive_->store(false);
     joinWorker();
+}
+
+bool QmlBridge::busy() const {
+    // 聚合信号（D12/阶段 4）：索引重建中或任一会话运行即为 true。
+    return indexing_.load() || (app_ && app_->agent().anyRunning());
 }
 
 void QmlBridge::joinWorker() {
@@ -81,7 +92,7 @@ void QmlBridge::joinWorker() {
 
 bool QmlBridge::rebuildApp(const std::string& providerName,
                            std::shared_ptr<Project> project, QString* error) {
-    if (busy_.load()) {
+    if (busy()) {
         if (error) *error = QStringLiteral("Agent 正在生成中，请稍后再切换配置");
         return false;
     }
@@ -192,6 +203,8 @@ void QmlBridge::sendMessage(const QString& text) {
 QString QmlBridge::createPoolSession() {
     if (!app_) return {};
     const auto id = app_->agent().createSession();
+    // 同步池当前焦点：cancelRequest 等按池焦点定位会话，不同步会导致新建会话后取消按钮失效。
+    app_->agent().switchSession(id);
     current_session_id_ = QString::fromStdString(id);
     recent_sessions_.removeAll(current_session_id_);
     recent_sessions_.prepend(current_session_id_);  // 最近使用置顶（B2/D3）
@@ -253,9 +266,10 @@ bool QmlBridge::deletePoolSession(const QString& sessionId) {
 }
 
 void QmlBridge::cancelRequest() {
-    // 取消当前查看会话（仅当其在运行；空闲会话无取消按钮，不会走到这里）
-    if (!app_ || current_session_id_.isEmpty()) return;
-    auto* rt = app_->agent().session(current_session_id_.toStdString());
+    // 取消当前查看会话（仅当其在运行；空闲会话无取消按钮，不会走到这里）。
+    // 以池当前会话为准，避免 current_session_id_ 与池焦点失同步时误取消其它会话。
+    if (!app_) return;
+    auto* rt = app_->agent().session(app_->agent().currentSessionId());
     if (rt && rt->running()) {
         app_->agent().requestCancel();
         setStatus(QStringLiteral("正在取消..."));
@@ -263,8 +277,14 @@ void QmlBridge::cancelRequest() {
 }
 
 void QmlBridge::newSession() {
-    if (!app_ || busy_.load()) return;
+    if (!app_) return;
+    // 多会话并行下新建会话仅建独立 runtime，不影响在跑的会话，无需全局 busy 守卫。
     app_->agent().newSession();  // 旧会话保留在列表中，延迟创建：首条消息后才落盘
+    // 同步焦点到新会话（与 createPoolSession 一致），避免 sendMessage 仍发往旧会话。
+    current_session_id_ = QString::fromStdString(app_->agent().currentSessionId());
+    recent_sessions_.removeAll(current_session_id_);
+    recent_sessions_.prepend(current_session_id_);  // 最近使用置顶（B2/D3）
+    emit currentSessionIdChanged();
     emit sessionReset();
     emit sessionsChanged();
     emit usageChanged();
@@ -342,7 +362,7 @@ QVariantList QmlBridge::sessionList() const {
 }
 
 bool QmlBridge::switchSession(const QString& sessionId) {
-    if (!app_ || busy_.load()) return false;
+    if (!app_ || busy()) return false;
     if (!app_->agent().switchSession(sessionId.toStdString())) return false;
     emit sessionReset();
     emit sessionsChanged();
@@ -352,7 +372,7 @@ bool QmlBridge::switchSession(const QString& sessionId) {
 }
 
 bool QmlBridge::deleteSession(const QString& sessionId) {
-    if (!app_ || busy_.load()) return false;
+    if (!app_ || busy()) return false;
     // 多会话池会话：走池删除（阶段 4）
     if (!sessionId.isEmpty() && app_->agent().session(sessionId.toStdString()) != nullptr)
         return deletePoolSession(sessionId);
@@ -421,20 +441,20 @@ void QmlBridge::rebuildIndex() {
         emit errorOccurred(QStringLiteral("未打开项目，无法重建索引"));
         return;
     }
-    if (busy_.load()) {
-        spdlog::warn("[QmlBridge] 忽略重建索引请求（Agent 正忙）");
+    if (busy()) {
+        spdlog::warn("[QmlBridge] 忽略重建索引请求（会话生成中或索引进行中）");
         return;
     }
 
     joinWorker();
-    busy_.store(true);
+    indexing_.store(true);
     emit busyChanged();
     setStatus(QStringLiteral("正在重建索引..."));
 
     worker_ = std::thread([this]() {
         runIndexUpdate(/*force=*/true);
         QMetaObject::invokeMethod(this, [this]() {
-            busy_.store(false);
+            indexing_.store(false);
             emit busyChanged();
         }, Qt::QueuedConnection);
     });
@@ -517,7 +537,7 @@ QVariantList QmlBridge::skillList() const {
 
 bool QmlBridge::setSkillEnabled(const QString& name, bool enabled) {
     if (!app_) return false;
-    if (busy_.load()) {
+    if (busy()) {
         emit errorOccurred(QStringLiteral("生成中无法切换技能，请稍后再试"));
         return false;
     }
@@ -535,9 +555,8 @@ void QmlBridge::setStatus(const QString& text) {
 }
 
 void QmlBridge::runAgent(const std::string& session_id, std::string input) {
-    busy_.store(true);
     cancel_requested_.store(false);
-    emit busyChanged();
+    emit busyChanged();  // 进入运行态：busy() 聚合到 anyRunning，此处通知 QML 重新求值
     emit sessionBusyChanged();  // 当前会话进入运行态（按会话 busy）
     setStatus(QStringLiteral("思考中..."));
 
@@ -590,10 +609,14 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
     //（回调内部再 QueuedConnection 投递到 GUI 线程发射信号）。
     app_->agent().submitProcess(
         session_id, std::move(input), std::move(cb),
-        [this, sid](const std::string&, llm::LLMResponse response) {
+        [this, sid, alive = std::weak_ptr<std::atomic<bool>>(alive_)](
+            const std::string&, llm::LLMResponse response) {
+            // 生命周期令牌：本对象已析构（alive_ 复位）则 lock 失败即跳过，兜底超时残留，
+            // 确保池线程不访问已析构的 this（方案 B）。
+            if (!alive.lock()) return;
             // 池线程：响应完成后自动增量索引（内容哈希未变的源会被跳过；
             // 无变更时开销仅为哈希比对，不产生嵌入请求）。取消时跳过。
-            if (app_->projectAccess()
+            if (app_ && app_->projectAccess()
                 && !app_->projectAccess()->path().empty()
                 && !cancel_requested_.load())
                 runIndexUpdate(/*force=*/false);
@@ -622,7 +645,7 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
                 } else {
                     setStatus(QStringLiteral("就绪"));
                 }
-                busy_.store(false);
+                // 退出运行态：busy() 聚合到 anyRunning，此处通知 QML 重新求值
                 emit busyChanged();
                 emit sessionBusyChanged();  // 当前会话退出运行态（按会话 busy）
             }, Qt::QueuedConnection);

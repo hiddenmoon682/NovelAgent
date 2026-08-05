@@ -70,6 +70,8 @@ public:
     // ── 会话管理（薄转发到 SessionPool，公有 API 保持不变）──
 
     void newSession() { session_pool_.newSession(); }
+    // 当前会话 id（无则自动创建后返回）。
+    std::string currentSessionId() { return session_pool_.currentSessionId(); }
     bool switchSession(const std::string& id) { return session_pool_.switchSession(id); }
     bool deleteSession(const std::string& id) { return session_pool_.deleteSession(id); }
 
@@ -83,6 +85,8 @@ public:
     bool materializeSession(const std::string& id) { return session_pool_.materializeSession(id); }
     // 当前已建 SessionRuntime 的会话 id 列表。
     std::vector<std::string> sessionIds() const { return session_pool_.sessionIds(); }
+    // 是否存在任一运行中的会话（全局 busy 聚合信号）。
+    bool anyRunning() const { return session_pool_.anyRunning(); }
     // 多会话 process：定位 session_id 对应 SessionRuntime 并执行（D1）。
     llm::LLMResponse process(const std::string& session_id,
                              const std::string& input,
@@ -140,6 +144,9 @@ public:
     void requestCancel() { session_pool_.currentSession()->requestCancel(); }
     std::atomic<bool>* cancelFlag() { return session_pool_.currentSession()->cancelFlag(); }
     void resetCancel() { session_pool_.currentSession()->resetCancel(); }
+    // 优雅关闭：取消所有 in-flight 会话并等待其退场（退出/整体重建前调用，
+    // 确保 on_complete 回调在 SessionPool 存活期间执行完毕，防析构 use-after-free）。
+    void shutdown() { session_pool_.cancelAllAndWait(); }
 
     // ── 底层组件访问器（当前会话；供装配/测试使用）──
     llm::ILLMClient& client() { return session_pool_.currentSession()->client(); }

@@ -58,10 +58,10 @@ void test_worker_count() {
     PASS();
 }
 
-void test_zero_threads_fallback() {
-    TEST("ThreadPool — 0 线程回退到 12");
+void test_zero_threads_no_fallback() {
+    TEST("ThreadPool — 0 线程不再回退（D9 移除 0→12 兜底）");
     agent::ThreadPool pool(0);
-    CHECK(pool.workers() > 0);
+    CHECK(pool.workers() == 0);
     PASS();
 }
 
@@ -81,7 +81,7 @@ int main() {
     test_basic_submit();
     test_multiple_tasks();
     test_worker_count();
-    test_zero_threads_fallback();
+    test_zero_threads_no_fallback();
     test_over_max_threads_cap();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 通过\n";

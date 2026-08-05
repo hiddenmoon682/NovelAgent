@@ -13,6 +13,7 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <filesystem>
@@ -954,6 +955,168 @@ void test_concurrency_full() {
 }
 
 // =========================================================================
+// 测试: 方案 A — shutdown 取消并等待所有 in-flight 任务退场（防析构 UAF）
+// =========================================================================
+
+void test_shutdown_waits_inflight() {
+    TEST("A — shutdown 等待所有 in-flight 任务退场（on_complete 全部执行）");
+
+    MockServer server;
+    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        // 慢响应：模拟 LLM 长生成，留给 shutdown 取消的机会
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        if (isStreamRequest(req)) {
+            std::string body = llm::test::sseContentChunk("回复") +
+                               llm::test::sseFinishChunk("stop") +
+                               llm::test::sseDone;
+            res.set_content(body, "text/event-stream");
+        } else {
+            res.set_content(nonStreamJson("摘要"), "application/json");
+        }
+    });
+    server.start();
+
+    llm::LLMClientFactory factory(makeConfig(server.port));
+    agent::ToolRegistry registry;
+    agent::Agent agent(factory, registry);
+
+    std::atomic<int> completed{0};
+    for (int i = 0; i < 2; ++i) {
+        const std::string sid = agent.createSession();
+        agent.submitProcess(sid, "消息", {},
+                            [&completed](const std::string&, llm::LLMResponse) {
+                                completed.fetch_add(1);
+                            });
+    }
+
+    // 立即 shutdown：取消所有 in-flight 并等待它们退场
+    auto t0 = std::chrono::steady_clock::now();
+    agent.shutdown();
+    auto t1 = std::chrono::steady_clock::now();
+
+    // shutdown 返回时所有任务必须已完成（on_complete 全部执行，无残留）
+    CHECK(completed.load() == 2);
+    // 等待退场时间应远小于任务自然串行总和（2×200ms 并行 → 上限给宽裕值；
+    // 若实现误串行等满各自超时则会 >4s，此上限足以区分）
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+    CHECK(ms < 1500);
+
+    server.stop();
+    PASS();
+}
+
+// =========================================================================
+// 测试: 方案 A — anyRunning 聚合信号（任一会话运行即 true，全空闲即 false）
+// =========================================================================
+
+void test_any_running() {
+    TEST("A — anyRunning 聚合多次会话运行状态");
+
+    MockServer server;
+    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        // 慢响应：确保任务在断言期间处于 running 状态
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        if (isStreamRequest(req)) {
+            std::string body = llm::test::sseContentChunk("回复") +
+                               llm::test::sseFinishChunk("stop") +
+                               llm::test::sseDone;
+            res.set_content(body, "text/event-stream");
+        } else {
+            res.set_content(nonStreamJson("摘要"), "application/json");
+        }
+    });
+    server.start();
+
+    llm::LLMClientFactory factory(makeConfig(server.port));
+    agent::ToolRegistry registry;
+    agent::Agent agent(factory, registry);
+
+    // 空闲期：全空闲 → anyRunning 应为 false
+    agent.createSession();
+    agent.createSession();
+    CHECK(!agent.anyRunning());
+
+    // 提交会话 A 的慢任务（异步），轮询等待其进入 running
+    std::atomic<int> completed{0};
+    const std::string sidA = agent.createSession();
+    agent.submitProcess(sidA, "消息", {},
+                        [&completed](const std::string&, llm::LLMResponse) {
+                            completed.fetch_add(1);
+                        });
+    bool saw_running = false;
+    for (int i = 0; i < 100 && !saw_running; ++i) {
+        saw_running = agent.anyRunning();
+        if (!saw_running) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    CHECK(saw_running);
+
+    // 等任务完成退场 → 全空闲 → anyRunning 复位
+    for (int i = 0; i < 200 && agent.anyRunning(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    CHECK(completed.load() == 1);
+    CHECK(!agent.anyRunning());
+
+    server.stop();
+    PASS();
+}
+
+// =========================================================================
+// 测试: 方案 A — 并发提交上限（检查+占用原子，防 TOCTOU 突破 kMaxConcurrent）
+// =========================================================================
+
+void test_concurrent_submit_cap() {
+    TEST("A — 并发提交不突破并发上限（accepted ≤ 4）");
+
+    MockServer server;
+    server.svr.Post("/v1/chat/completions", [&](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        // 慢响应：让被接受的任务充分停留 in-flight，暴露并发上限
+        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+        if (isStreamRequest(req)) {
+            std::string body = llm::test::sseContentChunk("回复") +
+                               llm::test::sseFinishChunk("stop") +
+                               llm::test::sseDone;
+            res.set_content(body, "text/event-stream");
+        } else {
+            res.set_content(nonStreamJson("摘要"), "application/json");
+        }
+    });
+    server.start();
+
+    llm::LLMClientFactory factory(makeConfig(server.port));
+    agent::ToolRegistry registry;
+    agent::Agent agent(factory, registry);
+
+    std::atomic<int> accepted{0};
+    std::vector<std::string> sids;
+    for (int i = 0; i < 8; ++i) sids.push_back(agent.createSession());
+
+    // 8 线程同时并发提交，争抢并发上限（4 线程池）
+    std::vector<std::thread> threads;
+    for (auto& s : sids) {
+        threads.emplace_back([&, s]() {
+            agent.submitProcess(s, "消息", {},
+                                [&accepted](const std::string&, llm::LLMResponse r) {
+                                    if (r.finish_reason != "concurrency_full")
+                                        accepted.fetch_add(1);
+                                });
+        });
+    }
+    for (auto& t : threads) t.join();
+
+    // 等所有被接受任务完成退场（600ms 慢任务）
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    // 原子占用保证：被接受（非拒绝）的任务数不得超过并发上限
+    CHECK(accepted.load() <= 4);
+
+    server.stop();
+    PASS();
+}
+
+// =========================================================================
 
 int main() {
     std::cout << "=== test_agent ===\n\n";
@@ -973,6 +1136,9 @@ int main() {
     test_materialize_history_session();
     test_system_prompt_provider_rebuild();
     test_concurrency_full();
+    test_shutdown_waits_inflight();
+    test_any_running();
+    test_concurrent_submit_cap();
 
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;

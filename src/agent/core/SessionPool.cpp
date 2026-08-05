@@ -99,6 +99,9 @@ bool SessionPool::deleteSessionRuntime(const std::string& id) {
         // 安全优先：最多等 2s。超时后不强制移除——池线程的异步任务捕获了 runtime 裸指针，
         // 此刻 pool_.erase(id) 析构 runtime 会导致 use-after-free。
         if (fut.wait_for(std::chrono::seconds(2)) == std::future_status::timeout) {
+            // 恰在超时边界完成（任务已退出）则直接移除，避免回滚一个已按 cancelled 结束的会话。
+            if (fut.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
+                return pool_.erase(id) > 0;
             spdlog::warn("[SessionPool] 会话 {} 运行中删除超时，暂不移除（任务仍在执行，稍后重试）", id);
             // 恢复会话标志（清除取消/删除请求），让在跑任务若结束则会话可继续使用，稍后再删。
             if (auto rt_it = pool_.find(id); rt_it != pool_.end()) {
@@ -182,6 +185,12 @@ std::vector<std::string> SessionPool::sessionIds() const {
     return ids;
 }
 
+bool SessionPool::anyRunning() const {
+    for (const auto& [_, rt] : pool_)
+        if (rt && rt->running()) return true;
+    return false;
+}
+
 void SessionPool::releaseIdleClients() {
     for (auto& [_, rt] : pool_) {
         if (rt && !rt->running()) rt->releaseClient();
@@ -192,11 +201,6 @@ void SessionPool::releaseIdleClients() {
 // 执行
 // ===========================================================================
 
-bool SessionPool::canSubmit() const {
-    std::lock_guard<std::mutex> lock(in_flight_mutex_);
-    return in_flight_.size() < kMaxConcurrent;
-}
-
 llm::LLMResponse SessionPool::process(const std::string& session_id,
                                          const std::string& input,
                                          llm::StreamCallbacks callbacks) {
@@ -205,18 +209,23 @@ llm::LLMResponse SessionPool::process(const std::string& session_id,
         spdlog::warn("[SessionPool] 会话 {} 不存在，拒绝输入", session_id);
         return llm::LLMResponse{.finish_reason = "session_not_found"};
     }
-    // P9：并发上限拒绝（已提交未完成会话数 ≥ 上限时不排队，直接拒绝）
-    if (!canSubmit()) {
-        spdlog::warn("[SessionPool] 并发已满（{}），拒绝提交会话 {}", kMaxConcurrent, session_id);
-        return llm::LLMResponse{.finish_reason = "concurrency_full"};
-    }
-    auto future = pool_exec_->submit([rt, input, cb = std::move(callbacks)]() mutable {
-        return rt->process(input, std::move(cb));
-    });
-    auto shared = future.share();
+    // P9：并发检查 + 提交 + in-flight 占位在持锁内一次完成，避免 TOCTOU 突破上限。
+    llm::LLMResponse rejected;
+    std::shared_future<llm::LLMResponse> shared;
     {
         std::lock_guard<std::mutex> lock(in_flight_mutex_);
-        in_flight_[session_id] = shared;
+        if (in_flight_.size() >= kMaxConcurrent) {
+            rejected = llm::LLMResponse{.finish_reason = "concurrency_full"};
+        } else {
+            shared = pool_exec_->submit([rt, input, cb = std::move(callbacks)]() mutable {
+                return rt->process(input, std::move(cb));
+            }).share();
+            in_flight_[session_id] = shared;
+        }
+    }
+    if (!shared.valid()) {
+        spdlog::warn("[SessionPool] 并发已满（{}），拒绝提交会话 {}", kMaxConcurrent, session_id);
+        return rejected;
     }
     struct Cleanup {
         SessionPool* self; std::string sid;
@@ -243,27 +252,52 @@ void SessionPool::submitProcess(const std::string& session_id,
         if (on_complete) on_complete(session_id, llm::LLMResponse{.finish_reason = "session_not_found"});
         return;
     }
-    // P9：并发上限拒绝（已提交未完成会话数 ≥ 上限时不排队，直接拒绝）
-    if (!canSubmit()) {
-        spdlog::warn("[SessionPool] 并发已满（{}），拒绝提交会话 {}", kMaxConcurrent, session_id);
-        if (on_complete) on_complete(session_id, llm::LLMResponse{.finish_reason = "concurrency_full"});
-        return;
-    }
-    // 异步提交：池线程执行 process，完成后调用 on_complete 并清理 in-flight。
+    // P9：并发检查 + 提交 + in-flight 占位在持锁内一次完成，避免 TOCTOU 突破上限。
     // in_flight_ 记录供 deleteSessionRuntime 在删除运行中会话时 cancel+wait。
-    auto future = pool_exec_->submit(
-        [this, rt, session_id, input, cb = std::move(callbacks),
-         oc = std::move(on_complete)]() mutable {
-            auto resp = rt->process(input, std::move(cb));
-            if (oc) oc(session_id, resp);
-            std::lock_guard<std::mutex> l(in_flight_mutex_);
-            in_flight_.erase(session_id);
-            return resp;
-        });
     {
         std::lock_guard<std::mutex> lock(in_flight_mutex_);
+        if (in_flight_.size() >= kMaxConcurrent) {
+            spdlog::warn("[SessionPool] 并发已满（{}），拒绝提交会话 {}", kMaxConcurrent, session_id);
+            if (on_complete) on_complete(session_id, llm::LLMResponse{.finish_reason = "concurrency_full"});
+            return;
+        }
+        auto future = pool_exec_->submit(
+            [this, rt, session_id, input, cb = std::move(callbacks),
+             oc = std::move(on_complete)]() mutable {
+                auto resp = rt->process(input, std::move(cb));
+                if (oc) oc(session_id, resp);
+                std::lock_guard<std::mutex> l(in_flight_mutex_);
+                in_flight_.erase(session_id);
+                return resp;
+            });
         in_flight_[session_id] = future.share();
     }
+}
+
+bool SessionPool::cancelAllAndWait(std::chrono::milliseconds timeout) {
+    // 收集全部 in-flight future 并逐个请求取消。不能在持有 in_flight_mutex_ 时 wait——
+    // 异步任务清理逻辑也需该锁（防死锁，同 deleteSessionRuntime 约束）。
+    std::vector<std::shared_future<llm::LLMResponse>> futures;
+    {
+        std::lock_guard<std::mutex> lock(in_flight_mutex_);
+        futures.reserve(in_flight_.size());
+        for (const auto& [id, fut] : in_flight_) {
+            if (auto it = pool_.find(id); it != pool_.end())
+                it->second->requestCancel();
+            futures.push_back(fut);
+        }
+    }
+    bool all_exited = true;
+    // 逐任务依次等待：任一任务超时即不再等待后续（已超时者大概率同样卡死），
+    // 避免最坏 N×timeout 的总等待时长。
+    for (auto& fut : futures) {
+        if (!fut.valid()) continue;
+        if (fut.wait_for(timeout) == std::future_status::timeout) {
+            all_exited = false;
+            break;
+        }
+    }
+    return all_exited;
 }
 
 // ===========================================================================

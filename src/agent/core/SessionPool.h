@@ -17,6 +17,7 @@
 #include "agent/core/SessionRuntime.h"
 
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -73,6 +74,8 @@ public:
     std::string currentSessionId();
     // 已建 runtime 的会话 id 列表。
     std::vector<std::string> sessionIds() const;
+    // 是否存在任一运行中的会话（全局 busy 聚合信号，D12/阶段 4）。
+    bool anyRunning() const;
     // 释放所有非运行会话的 client 连接（D6 空闲休眠）。
     void releaseIdleClients();
 
@@ -91,6 +94,11 @@ public:
                        const std::string& input,
                        llm::StreamCallbacks callbacks,
                        std::function<void(const std::string&, llm::LLMResponse)> on_complete);
+
+    // 取消所有 in-flight 会话并等待其退场（方案 A：退出/重建前调用，防 on_complete
+    // 在调用方析构后访问其成员）。每任务最多等 timeout；超时后放弃等待（残留任务由
+    // 池析构 join 兜底）。返回是否所有任务在超时内退场。
+    bool cancelAllAndWait(std::chrono::milliseconds timeout = std::chrono::seconds(2));
 
     // ── 消息级操作（转发当前会话 runtime）──
 
@@ -144,8 +152,6 @@ private:
     const SessionRuntime* currentSessionConst() const;
     // 无会话时的空记忆兜底（const memory() 用）。
     static const llm::IMemory& kEmptyMemory();
-    // 并发上限检查（P9）：in-flight（已提交未完成）数量 < 上限才可提交。
-    bool canSubmit() const;
 
     llm::LLMClientFactory& factory_;
     ToolRegistry& registry_;

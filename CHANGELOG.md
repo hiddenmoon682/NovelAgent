@@ -1,5 +1,68 @@
 # Changelog
 
+## [2026-08-05] 修复 createPoolSession 未同步池焦点（取消按钮失效回归）
+
+### 修复 — 取消按钮失效
+- **回归根因**：Minor #7 将 `cancelRequest` 改为按池当前焦点（`agent.currentSessionId()`）定位会话后，
+  `createPoolSession` 只更新 QmlBridge 的 `current_session_id_`、未同步池焦点（`SessionPool::createSession`
+  不设当前）；新建会话后发送消息、会话在跑时点取消，`currentSessionId()` 取到旧/幽灵会话 → 取消静默失效。
+- **修复**：`createPoolSession` 末尾 `switchSession(id)` 同步池当前焦点。
+- 全量回归 30/30 通过。
+
+## [2026-08-05] 清理多会话审查遗留 Minor（#4/#5/#6/#7）
+
+### 清理 — 次要问题
+- **#5**：`ThreadPool` 移除 `num_threads==0→12` 兜底分支（D9 要求；调用方均传正数 4）；测试
+  `test_zero_threads_fallback` 改为 `test_zero_threads_no_fallback`（断言 0 不再回退）。
+- **#4**：`QmlBridge::newSession()` 同步焦点到新会话（`Agent::currentSessionId()` 新增转发 +
+  current_session_id_/recent_sessions_ 更新 + emit currentSessionIdChanged），避免后续 sendMessage 发往旧会话。
+- **#7**：`QmlBridge::cancelRequest()` 改为以池当前会话为准（`agent.currentSessionId()`），消除与
+  current_session_id_ 失同步时误取消它会话的风险。
+- **#6**：`SessionPool::deleteSessionRuntime` 超时分支加 `wait_for(0)` 防御性检查——任务恰在超时边界完成
+  则直接移除，避免回滚一个已按 cancelled 结束的会话。
+- 全量回归 30/30 通过。
+
+## [2026-08-05] 修复并发上限 TOCTOU（P9 检查+占用原子化）
+
+### 修复 — 并发上限计数正确性
+- **根因**：`canSubmit()` 检查（持锁即释放）与 `in_flight_` 插入占位是两步，中间不持锁；多线程并发提交时
+  两个线程可同时通过检查，突破 kMaxConcurrent=4。
+- **修复**：`process`/`submitProcess` 的「并发检查 + 池提交 + in_flight_ 占位」合并进持锁 `in_flight_mutex_`
+  一次性完成；删除不再使用的 `canSubmit()`。
+- 持锁提交不引入死锁：ThreadPool::submit 仅入队（O(1)，不阻塞），任务推进由 workerLoop 在锁外执行。
+- 测试：`test_agent` 新增 `test_concurrent_submit_cap`（8 线程并发提交，断言 accepted ≤ 4；并发竞态窗口小，
+  难稳定复现 RED，作为回归保护）。
+- 全量回归 30/30 通过。
+
+## [2026-08-05] 修复全局 busy 并发账目错误（D12 聚合信号）
+
+### 修复 — 全局 busy 语义修正
+- **根因**：`QmlBridge::busy_` 是单布尔，`runAgent` 置 true、**每次** `on_complete` 置 false。两会话并发时
+  任一会话完成即清 false，另一会话仍在跑时 `rebuildApp`/`rebuildIndex`/`setSkillEnabled` 会放行重建 app_，
+  叠加析构 UAF 风险。
+- **修复**：`busy_` 移除，`busy()` 改为聚合信号 = `indexing_`（索引重建中）或 `app_->agent().anyRunning()`
+  （任一会话运行）。
+- **新增**：`SessionPool::anyRunning() const`（遍历 pool_ 查任一 `running()`）+ `Agent::anyRunning()` 转发。
+- **rebuildIndex 独立互斥**：改用 `indexing_` 原子标志（原复用全局 busy 做自身互斥，聚合后不再适用）。
+- **newSession 移除守卫**：多会话下新建会话仅建独立 runtime，不影响在跑会话，去掉全局 busy 阻塞。
+- `runAgent`/`on_complete` 不再手动 store busy，仅 emit `busyChanged` 通知 QML 重新求值 `busy()`。
+- 测试：`test_agent` 新增 `test_any_running`（全空闲 false → 慢任务运行中 true → 完成后复位 false）。
+- 全量回归 30/30 通过。
+
+## [2026-08-05] 修复 QmlBridge 析构时后台回调 use-after-free（方案 A+B）
+
+### 修复 — 多会话退出/重建生命周期安全
+- **方案 A**：`SessionPool` 新增 `cancelAllAndWait(timeout=2s)`（持锁收集全部 in-flight future +
+  逐个 `requestCancel` → 释放锁 → 依次 `wait_for` 等待退场，任一超时即停止等待避免 N×timeout）；
+  `Agent` 新增 `shutdown()` 转发；`~QmlBridge` 析构体先 `app_->agent().shutdown()` 再 `joinWorker()`，
+  确保后台池线程的 on_complete 在对象与 app_ 存活时执行完毕。
+- **方案 B**：`QmlBridge` 新增生命周期令牌 `alive_`（`shared_ptr<atomic<bool>>`），`on_complete` 捕获其
+  weak_ptr 并先 `lock()` 检查，析构时复位 token——兜底 A 的 2s 超时窗口，彻底避免残留任务访问已析构的 this。
+- `on_complete` 访问 `app_` 前加 `app_ &&` 判空。
+- 测试：`test_agent` 新增 `test_shutdown_waits_inflight`（2 并发慢任务 + shutdown，断言 on_complete 全部执行
+  且等待时间远小于串行等满超时）。
+- 全量回归 30/30 通过。
+
 ## [2026-08-05] 清理审查遗留 Minor（B2/A3/D9/P9/跨线程竞争）
 
 ### 清理 — 补齐参考文档的次要项

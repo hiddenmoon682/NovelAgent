@@ -30,9 +30,6 @@ public:
     explicit ThreadPool(size_t num_threads = 12)
         : stop_(false)
     {
-        if (num_threads == 0) {
-            num_threads = 12;
-        }
         if (num_threads > 32) num_threads = 32;
 
         workers_.reserve(num_threads);

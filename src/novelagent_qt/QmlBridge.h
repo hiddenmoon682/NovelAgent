@@ -9,13 +9,12 @@
 //     rebuildApp()：销毁旧 NovelAgentApp、用现有构造函数整体重建。
 //   - agentReady 为 false 时所有 Agent 相关操作被拦截。
 //
-// 线程模型（串行模式）：
-//   - sendMessage() 在独立工作线程中调用 Agent::process()，避免阻塞 UI
-//   - StreamCallbacks 在 HTTP 线程触发，经 QMetaObject::invokeMethod
-//     (Qt::QueuedConnection) 转发到 QML 主线程
-//   - busy_ 原子标志保证同一时刻只有一个请求在执行（串行）
-//   - worker_ 不再 detach；重建/析构前 joinWorker()（仅在 !busy_ 时调用，
-//     此时 process() 已返回，join 只等待线程收尾，不会长阻塞）
+// 线程模型（多会话并行）：
+//   - sendMessage() 提交共享线程池异步执行（不阻塞 UI）；流式回调经
+//     QMetaObject::invokeMethod(Qt::QueuedConnection) 转发到 QML 主线程。
+//   - busy() 为聚合信号：索引重建中或任一会话运行即为 true（全局操作锁）；
+//     输入框/发送按钮按当前查看会话的 sessionBusy 控制。
+//   - worker_（索引线程）不再 detach；重建/析构前 joinWorker()。
 
 #include "config/AppConfig.h"
 
@@ -57,7 +56,9 @@ public:
     QString projectName() const;
     QString projectPath() const;
     QString statusText() const { return status_text_; }
-    bool busy() const { return busy_.load(); }
+    // 全局 busy（聚合信号，D12/阶段 4）：索引重建进行中或任一会话运行即为 true。
+    // 用于全局操作锁（重建/切技能）与 QML 禁用按钮；输入框按会话 busy 由 sessionBusy 表达。
+    bool busy() const;
     // 当前查看会话是否正在生成（按会话 busy，D12/阶段 4）：
     // 该会话在后台跑时用户可切到其它空闲会话发消息。
     bool sessionBusy() const;
@@ -90,7 +91,7 @@ public:
     // [{role: "user"|"assistant", content, reasoning}, ...]，跳过工具消息与空消息。
     Q_INVOKABLE QVariantList conversationHistory() const;
     Q_INVOKABLE void refreshProject();
-    // 强制全量重建向量索引（清空后重嵌入全部源），后台执行，走 busy_ 串行机制。
+    // 强制全量重建向量索引（清空后重嵌入全部源），后台执行，走 indexing_ 独立互斥。
     Q_INVOKABLE void rebuildIndex();
     // 章节列表（按 order 升序）：[{id, title, order, wordCount}, ...]；项目未打开返回空。
     Q_INVOKABLE QVariantList chapterList() const;
@@ -174,8 +175,13 @@ private:
     std::unique_ptr<NovelAgentApp> app_;
     std::shared_ptr<Project> project_;   // 与 app_->project() 保持同步
 
+    // 生命周期令牌（方案 B）：runAgent 的 on_complete 捕获其 weak_ptr，~QmlBridge 复位后
+    // lock() 失败，兜底超时残留任务不访问已析构的本对象。
+    std::shared_ptr<std::atomic<bool>> alive_;
+
     QString status_text_;
-    std::atomic<bool> busy_{false};
+    // 索引重建进行中标志（rebuildIndex 独立互斥，供 busy() 聚合）。
+    std::atomic<bool> indexing_{false};
     std::atomic<bool> cancel_requested_{false};
     std::thread worker_;
     QString current_session_id_;  // 多会话并行：当前查看会话 id（阶段 4）
