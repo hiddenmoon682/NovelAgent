@@ -14,14 +14,17 @@ NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
     , project_(project ? std::move(project) : std::make_shared<Project>())
     , project_access_(std::make_shared<ProjectAccess>(project_))
     , storage_(project_access_ ? project_access_->path() : "")
-    , persistence_(storage_)
     , embedding_gen_(provider)
     , rules_provider_(utils::file::configDir())
 {
     setupAgent();
 }
 
-NovelAgentApp::~NovelAgentApp() = default;
+NovelAgentApp::~NovelAgentApp()
+{
+    // SQLite 单库生命周期收尾（未 open 时为 no-op；open 装配在 Task 6）
+    sqlite_store_.close();
+}
 
 agent::IIndexService* NovelAgentApp::indexService()
 {

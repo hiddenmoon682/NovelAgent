@@ -1,4 +1,5 @@
 #include "agent/core/Agent.h"
+#include "agent/session/SessionRuntime.h"
 #include "agent/tool/ToolRegistry.h"
 #include "agent/session/SessionPersistence.h"
 #include "agent/context/Memory.h"
@@ -6,6 +7,7 @@
 #include "llm/LLMClientFactory.h"
 #include "project/FileStorageBackend.h"
 #include "project/ProjectIO.h"
+#include "storage/SqliteStore.h"
 #include "utils/FileUtils.h"
 #include "test_sse_helpers.h"
 #include "utils/SchemaUtils.h"
@@ -36,6 +38,17 @@ static int tests_passed = 0;
     do { if (!(cond)) { FAIL(#cond); } } while(0)
 
 using json = nlohmann::json;
+
+// 清理共享测试库（test_agent.db 及其 WAL 附属文件）：5 个相关用例共用一个
+// 临时库路径，各用例需从空库起步，避免跨用例残留会话污染 listSessions 等断言。
+static void removeSharedTestDb() {
+    const std::string db_path =
+        (std::filesystem::temp_directory_path() / "test_agent.db").string();
+    for (const auto& suffix : {"", "-wal", "-shm"}) {
+        const std::string p = db_path + suffix;
+        if (utils::file::exists(p)) utils::file::removeFile(p);
+    }
+}
 
 // ── Mock 服务器辅助 ──
 
@@ -337,7 +350,7 @@ void test_exception_recovery() {
 // =========================================================================
 
 void test_session_persisted_after_message() {
-    TEST("B2 — processUserMessage 后会话增量落盘到 sessions/<id>.json");
+    TEST("B2 — processUserMessage 后会话增量落盘到 SQLite（sessions/messages 表）");
 
     // 准备一个临时项目目录（先清理残留，避免跨运行干扰断言）
     // 路径来自系统临时目录，避免硬编码仓库绝对路径导致盘符绑定
@@ -367,33 +380,32 @@ void test_session_persisted_after_message() {
 
     // 绑定 SessionPersistence，使 processUserMessage 末尾的 saveSessionState 真正落盘
     FileStorageBackend storage(tmp);
-    agent::SessionPersistence persistence(storage);
+    removeSharedTestDb();
+    storage::SqliteStore sqlite;
+    sqlite.open((std::filesystem::temp_directory_path() / "test_agent.db").string());
+    agent::SessionPersistence persistence(sqlite, storage);
     agent.setPersistence(&persistence);
 
-    // 处理前：多会话索引尚未创建（首次 save 时才初始化）
-    const std::string indexPath = tmp + "/.novelagent/sessions/index.json";
-    CHECK(!utils::file::exists(indexPath));
+    // 处理前：尚无任何会话登记（首次 save 时才写入数据库 sessions 表）
+    CHECK(persistence.listSessions().empty());
 
     auto response = agent.process("帮我写第二章开头");
     CHECK(response.content == "第二章开头");
 
-    // 处理后：当前池会话按 id 落盘（D3），会话文件含本轮 user + assistant 两条消息
+    // 处理后：当前池会话按 id 落盘（D3），快照层含本轮 user + assistant 两条消息
     CHECK(!agent.sessionIds().empty());
     const std::string sid = agent.sessionIds().front();
-    CHECK(utils::file::exists(tmp + "/.novelagent/sessions/" + sid + ".json"));
-
-    json after = json::parse(utils::file::readText(
-        tmp + "/.novelagent/sessions/" + sid + ".json"));
-    CHECK(after.is_array());
-    CHECK(after.size() == 2);
-    CHECK(after[0]["role"] == "user");
-    CHECK(after[0]["content"] == "帮我写第二章开头");
-    CHECK(after[1]["role"] == "assistant");
+    auto saved = persistence.load(sid).messages();
+    CHECK(saved.size() == 2);
+    CHECK(saved[0].role == llm::MessageRole::User);
+    CHECK(saved[0].content == "帮我写第二章开头");
+    CHECK(saved[1].role == llm::MessageRole::Assistant);
 
     // token 用量缓存应已刷新（供 StatusBar 展示）
     CHECK(agent.contextUsage().total_tokens > 0);
 
     server.stop();
+    sqlite.close();
     utils::file::removeDir(tmp);
     PASS();
 }
@@ -430,18 +442,19 @@ void test_lazy_creation_via_process() {
     agent::Agent agent(factory, registry);
 
     FileStorageBackend storage(tmp);
-    agent::SessionPersistence persistence(storage);
+    removeSharedTestDb();
+    storage::SqliteStore sqlite;
+    sqlite.open((std::filesystem::temp_directory_path() / "test_agent.db").string());
+    agent::SessionPersistence persistence(sqlite, storage);
     agent.setPersistence(&persistence);
 
-    const std::string indexPath = tmp + "/.novelagent/sessions/index.json";
-
-    // 第一条消息：当前池会话按 id 落盘（方案 C：首条消息才写文件）
+    // 第一条消息：当前池会话按 id 落盘（方案 C：首条消息才写数据库）
     auto r1 = agent.process("第一条消息");
     CHECK(r1.content == "回复");
     CHECK(!agent.pendingNewSession());
     CHECK(agent.sessionIds().size() == 1);
     const std::string a_id = agent.sessionIds().front();
-    CHECK(utils::file::exists(tmp + "/.novelagent/sessions/" + a_id + ".json"));
+    CHECK(persistence.load(a_id).messages().size() == 2);
 
     // 新建会话：新池会话在池中但未落盘（pending）
     agent.newSession();
@@ -455,16 +468,15 @@ void test_lazy_creation_via_process() {
     CHECK(agent.sessionIds().size() == 2);
     const std::string b_id = agent.sessionIds().back();
     CHECK(b_id != a_id);
-    CHECK(utils::file::exists(tmp + "/.novelagent/sessions/" + b_id + ".json"));
-    json b = json::parse(utils::file::readText(
-        tmp + "/.novelagent/sessions/" + b_id + ".json"));
-    CHECK(b.is_array());
+    // 快照层已按 b_id 落库：含本轮 user + assistant 两条消息
+    auto b = persistence.load(b_id).messages();
     CHECK(b.size() == 2);
-    CHECK(b[0]["role"] == "user");
-    CHECK(b[0]["content"] == "新会话的第一条消息");
-    CHECK(b[1]["role"] == "assistant");
+    CHECK(b[0].role == llm::MessageRole::User);
+    CHECK(b[0].content == "新会话的第一条消息");
+    CHECK(b[1].role == llm::MessageRole::Assistant);
 
     server.stop();
+    sqlite.close();
     utils::file::removeDir(tmp);
     PASS();
 }
@@ -613,7 +625,10 @@ void test_history_sink_wiring() {
     agent::Agent agent(factory, registry);
 
     FileStorageBackend storage(tmp);
-    agent::SessionPersistence persistence(storage);
+    removeSharedTestDb();
+    storage::SqliteStore sqlite;
+    sqlite.open((std::filesystem::temp_directory_path() / "test_agent.db").string());
+    agent::SessionPersistence persistence(sqlite, storage);
     agent.setPersistence(&persistence);
 
     // 生成 8 轮对话 = 16 条消息（> keep_exchanges=5 的 10 条保留窗口，可压缩）
@@ -624,7 +639,7 @@ void test_history_sink_wiring() {
     auto cr = agent.compactConversation();
     CHECK(cr.messages_compacted > 0);
 
-    // 完整历史层已按会话 id 落盘：<sid>.history 含被压缩消息（D4 直接落盘验证）
+    // 完整历史层已按会话 id 落库：message_history 表含被压缩消息（D4 直接落盘验证）
     const std::string sid = agent.sessionIds().front();
     auto history = persistence.loadHistory(sid);
     CHECK(history.size() == static_cast<size_t>(cr.messages_compacted));
@@ -638,6 +653,7 @@ void test_history_sink_wiring() {
     CHECK(persistence.loadHistory(sid).size() == history_before);
 
     server.stop();
+    sqlite.close();
     utils::file::removeDir(tmp);
     PASS();
 }
@@ -726,7 +742,10 @@ void test_multi_session_persistence() {
     server.start();
 
     FileStorageBackend storage(tmp);
-    agent::SessionPersistence persistence(storage);
+    removeSharedTestDb();
+    storage::SqliteStore sqlite;
+    sqlite.open((std::filesystem::temp_directory_path() / "test_agent.db").string());
+    agent::SessionPersistence persistence(sqlite, storage);
 
     llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
@@ -738,7 +757,10 @@ void test_multi_session_persistence() {
     const std::string sid1 = agent.createSession();
     agent.process(sid1, "持久化消息");
     CHECK(agent.session(sid1)->persisted());
-    CHECK(utils::file::exists(tmp + "/.novelagent/sessions/" + sid1 + ".json"));
+    // 快照层已落库，且会话列表（不含归档）恰好为本会话
+    auto sessions = persistence.listSessions();
+    CHECK(sessions.size() == 1);
+    CHECK(sessions[0].id == sid1);
 
     // 用持久化层按 id 直接读回：内容一致
     auto loaded = persistence.load(sid1);
@@ -754,6 +776,7 @@ void test_multi_session_persistence() {
     CHECK(rt.memory().messages()[0].content == "持久化消息");
 
     server.stop();
+    sqlite.close();
     utils::file::removeDir(tmp);
     PASS();
 }
@@ -834,7 +857,10 @@ void test_materialize_history_session() {
     server.start();
 
     FileStorageBackend storage(tmp);
-    agent::SessionPersistence persistence(storage);
+    removeSharedTestDb();
+    storage::SqliteStore sqlite;
+    sqlite.open((std::filesystem::temp_directory_path() / "test_agent.db").string());
+    agent::SessionPersistence persistence(sqlite, storage);
 
     llm::LLMClientFactory factory(makeConfig(server.port));
     agent::ToolRegistry registry;
@@ -865,6 +891,7 @@ void test_materialize_history_session() {
     CHECK(agent.session(sid) != nullptr);  // 既有物化会话不受影响
 
     server.stop();
+    sqlite.close();
     utils::file::removeDir(tmp);
     PASS();
 }

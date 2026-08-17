@@ -4,13 +4,14 @@
 #include "agent/context/ContextBudgetEvaluator.h"
 #include "agent/context/TokenBudget.h"
 #include "agent/context/Memory.h"
-#include "agent/core/SessionPool.h"
+#include "agent/session/SessionPool.h"
 #include "agent/session/SessionPersistence.h"
 #include "llm/ILLMClient.h"
 #include "llm/TokenCounter.h"
 #include "project/FileStorageBackend.h"
 #include "project/Models.h"
 #include "project/ProjectIO.h"
+#include "storage/SqliteStore.h"
 #include "utils/FileUtils.h"
 
 #include <cassert>
@@ -40,6 +41,15 @@ static int tests_passed = 0;
 // 避免硬编码仓库绝对路径导致的盘符绑定；目录名保留各用例独立前缀以防互相干扰
 static std::string tmpPath(const std::string& name) {
     return (std::filesystem::temp_directory_path() / name).string();
+}
+
+// 清理临时 SQLite 测试库（含 WAL 附属文件）：各用例从空库起步，
+// 避免同秒生成的会话 id / 残留数据跨用例相互干扰。
+static void cleanupDb(const std::string& path) {
+    for (const auto& suffix : {"", "-wal", "-shm"}) {
+        const std::string p = path + suffix;
+        if (utils::file::exists(p)) utils::file::removeFile(p);
+    }
 }
 
 // 校验消息序列符合 OpenAI 协议：tool 消息必须紧随携带匹配 tool_call_id 的
@@ -92,8 +102,12 @@ void test_session_save_load() {
     const std::string tmp = tmpPath("tmp_test_session_enhanced");
     ProjectIO::createProjectDir(tmp, "测试");
     FileStorageBackend storage(tmp);
+    const std::string db_path = tmpPath("tmp_test_session_enhanced.db");
+    cleanupDb(db_path);
+    storage::SqliteStore sqlite;
+    sqlite.open(db_path);
 
-    agent::SessionPersistence sp(storage);
+    agent::SessionPersistence sp(sqlite, storage);
     llm::Memory conv;
     conv.addUser("消息一");
     conv.addAssistant("回复一");
@@ -103,6 +117,7 @@ void test_session_save_load() {
 
     CHECK(loaded.size() == 2);
 
+    sqlite.close();
     utils::file::removeDir(tmp);
     PASS();
 }
@@ -113,8 +128,12 @@ void test_session_fidelity() {
     const std::string tmp = tmpPath("tmp_test_session_fidelity");
     ProjectIO::createProjectDir(tmp, "测试");
     FileStorageBackend storage(tmp);
+    const std::string db_path = tmpPath("tmp_test_session_fidelity.db");
+    cleanupDb(db_path);
+    storage::SqliteStore sqlite;
+    sqlite.open(db_path);
 
-    agent::SessionPersistence sp(storage);
+    agent::SessionPersistence sp(sqlite, storage);
     llm::Memory conv;
     conv.setSystemPrompt("旧的 system prompt");
     conv.addUser("问题");
@@ -132,6 +151,7 @@ void test_session_fidelity() {
     CHECK(loaded.messages()[0].preserved);
     CHECK(loaded.messages()[1].reasoning_content == "推理过程");
 
+    sqlite.close();
     utils::file::removeDir(tmp);
     PASS();
 }
@@ -143,8 +163,12 @@ void test_multi_session_lifecycle() {
     if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
     ProjectIO::createProjectDir(tmp, "测试");
     FileStorageBackend storage(tmp);
+    const std::string db_path = tmpPath("tmp_test_multi_session.db");
+    cleanupDb(db_path);
+    storage::SqliteStore sqlite;
+    sqlite.open(db_path);
 
-    agent::SessionPersistence sp(storage);
+    agent::SessionPersistence sp(sqlite, storage);
     llm::Memory conv;
     conv.addUser("第一个会话的消息");
     conv.addAssistant("回复");
@@ -166,17 +190,16 @@ void test_multi_session_lifecycle() {
     CHECK(loaded.size() == 2);
     CHECK(loaded.messages()[0].content == "第一个会话的消息");
 
-    // 删除会话：非空内容归档，会话文件移除，列表剩 1 个
+    // 删除会话：置归档态（数据保留、列表不可见），列表剩 1 个
     CHECK(sp.deleteSession("s-first"));
-    CHECK(utils::file::exists(
-        tmp + "/.novelagent/archive/s-first.json"));
-    CHECK(!utils::file::exists(
-        tmp + "/.novelagent/sessions/s-first.json"));
+    // 归档态数据仍在库中：按 id 直接加载仍可恢复
+    CHECK(sp.load("s-first").size() == 2);
     CHECK(sp.listSessions().size() == 1);
 
     // 删除不存在的会话应返回 false
     CHECK(!sp.deleteSession("s-nonexistent"));
 
+    sqlite.close();
     utils::file::removeDir(tmp);
     PASS();
 }
@@ -188,14 +211,18 @@ void test_history_layer() {
     if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
     ProjectIO::createProjectDir(tmp, "测试");
     FileStorageBackend storage(tmp);
+    const std::string db_path = tmpPath("tmp_test_history_layer.db");
+    cleanupDb(db_path);
+    storage::SqliteStore sqlite;
+    sqlite.open(db_path);
 
-    agent::SessionPersistence sp(storage);
+    agent::SessionPersistence sp(sqlite, storage);
     llm::Memory conv;
     conv.addUser("会话消息");
     sp.save("s-test", conv);
     const std::string sid = "s-test";
 
-    // 历史文件初始不存在：load 返回空
+    // 历史层初始为空：load 返回空
     CHECK(sp.loadHistory(sid).empty());
 
     // 构造一批被压缩消息（含 reasoning 等字段）
@@ -231,19 +258,24 @@ void test_history_layer() {
     const std::string other = sp.createSession();
     CHECK(sp.loadHistory(other).empty());
 
+    sqlite.close();
     utils::file::removeDir(tmp);
     PASS();
 }
 
 void test_delete_archives_history() {
-    TEST("SessionPersistence — 删除会话时完整历史一并归档到 archive/");
+    TEST("SessionPersistence — 删除会话后完整历史数据保留（归档态）");
 
     const std::string tmp = tmpPath("tmp_test_delete_archive_history");
     if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
     ProjectIO::createProjectDir(tmp, "测试");
     FileStorageBackend storage(tmp);
+    const std::string db_path = tmpPath("tmp_test_delete_archive_history.db");
+    cleanupDb(db_path);
+    storage::SqliteStore sqlite;
+    sqlite.open(db_path);
 
-    agent::SessionPersistence sp(storage);
+    agent::SessionPersistence sp(sqlite, storage);
     llm::Memory conv;
     conv.addUser("会话消息");
     sp.save("s-test", conv);
@@ -255,17 +287,16 @@ void test_delete_archives_history() {
     sp.appendHistory(sid, batch);
     CHECK(sp.loadHistory(sid).size() == 1);
 
-    // 删除会话：快照与完整历史都应归档到 archive/，sessions/ 下原文件被删除
+    // 删除会话：置归档态（数据保留、列表不可见），历史层数据仍可读
     CHECK(sp.deleteSession(sid));
-    CHECK(utils::file::exists(tmp + "/.novelagent/archive/" + sid + ".json"));
-    CHECK(utils::file::exists(tmp + "/.novelagent/archive/" + sid + ".history"));
-    CHECK(!utils::file::exists(tmp + "/.novelagent/sessions/" + sid + ".history"));
+    CHECK(sp.load(sid).size() == 1);
+    CHECK(sp.loadHistory(sid).size() == 1);
 
-    // 归档历史内容可读：与删除前一致（可从 archive 手工恢复）
-    const std::string archived = utils::file::readText(
-        tmp + "/.novelagent/archive/" + sid + ".history");
-    CHECK(archived.find("被压缩的旧问题") != std::string::npos);
+    // 归档历史内容与删除前一致（完整历史层不因删除而丢失）
+    auto archived = sp.loadHistory(sid);
+    CHECK(archived[0].content == "被压缩的旧问题");
 
+    sqlite.close();
     utils::file::removeDir(tmp);
     PASS();
 }
@@ -277,8 +308,12 @@ void test_delete_last_session() {
     if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
     ProjectIO::createProjectDir(tmp, "测试");
     FileStorageBackend storage(tmp);
+    const std::string db_path = tmpPath("tmp_test_del_last_session.db");
+    cleanupDb(db_path);
+    storage::SqliteStore sqlite;
+    sqlite.open(db_path);
 
-    agent::SessionPersistence sp(storage);
+    agent::SessionPersistence sp(sqlite, storage);
     llm::Memory conv;
     conv.addUser("唯一会话的消息");
     sp.save("s-only", conv);
@@ -295,73 +330,41 @@ void test_delete_last_session() {
     CHECK(sp.listSessions().size() == 1);
     CHECK(sp.load("s-a").size() == 1);
 
+    sqlite.close();
     utils::file::removeDir(tmp);
     PASS();
 }
 
 void test_corrupt_index_recovery() {
-    TEST("SessionPersistence — 损坏 index.json 扫描目录重建（不丢会话）");
+    TEST("SessionPersistence — 旧布局 index.json 残留不影响 SQLite 会话管理");
 
     const std::string tmp = tmpPath("tmp_test_corrupt_index");
     if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
     ProjectIO::createProjectDir(tmp, "测试");
     FileStorageBackend storage(tmp);
+    const std::string db_path = tmpPath("tmp_test_corrupt_index.db");
+    cleanupDb(db_path);
+    storage::SqliteStore sqlite;
+    sqlite.open(db_path);
 
-    // 先建两个正常会话
-    std::string first_id, second_id;
-    {
-        agent::SessionPersistence sp(storage);
-        llm::Memory conv;
-        conv.addUser("第一个会话的消息");
-        sp.save("s-first", conv);
-        first_id = "s-first";
-        second_id = sp.createSession();
-        llm::Memory conv2;
-        conv2.addUser("第二个会话的消息");
-        sp.save(second_id, conv2);
-    }
+    // 写入损坏的旧布局 index.json：SQLite 版持久化不读它，任何操作不得抛异常
+    utils::file::writeText(tmp + "/.novelagent/sessions/index.json", "{ 损坏的 json !!!");
 
-    const std::string index_path = tmp + "/.novelagent/sessions/index.json";
+    agent::SessionPersistence sp(sqlite, storage);
+    llm::Memory conv;
+    conv.addUser("第一个会话的消息");
+    sp.save("s-first", conv);
+    llm::Memory conv2;
+    conv2.addUser("第二个会话的消息");
+    const std::string second_id = sp.createSession();
+    sp.save(second_id, conv2);
 
-    // 场景 1：结构损坏（缺 sessions 数组）——旧实现会抛 type_error 炸穿启动路径
-    utils::file::writeText(index_path, R"({"active": 123})");
-    {
-        agent::SessionPersistence sp(storage);
-        auto sessions = sp.listSessions();      // 不得抛异常
-        CHECK(sessions.size() == 2);            // 磁盘上的会话文件全部找回
-        // 会话内容完好，标题从消息重新提取
-        bool found_first = false;
-        for (const auto& s : sessions) {
-            if (s.id == first_id) { found_first = true; CHECK(!s.title.empty()); }
-        }
-        CHECK(found_first);
-    }
+    auto sessions = sp.listSessions();      // 不得抛异常
+    CHECK(sessions.size() == 2);            // 会话全部登记在库中
+    CHECK(sp.load("s-first").size() == 1);
+    CHECK(sp.load(second_id).size() == 1);
 
-    // 场景 2：索引条目损坏（空 id）——重建从磁盘找回全部，并回收损坏索引中的元数据
-    utils::file::writeText(index_path,
-        R"({"sessions": [{"id": ")" + first_id +
-        R"(", "title": "旧标题", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}, {"id": ""}]})");
-    {
-        agent::SessionPersistence sp(storage);
-        auto sessions = sp.listSessions();
-        CHECK(sessions.size() == 2);
-        // 重建时从旧索引回收了 first_id 的元数据
-        for (const auto& s : sessions) {
-            if (s.id == first_id) CHECK(s.title == "旧标题");
-        }
-    }
-
-    // 场景 3：非法 JSON —— 同样扫描重建，会话不丢，且 save 不再静默跳过索引更新
-    utils::file::writeText(index_path, "{ 损坏的 json !!!");
-    {
-        agent::SessionPersistence sp(storage);
-        llm::Memory conv;
-        conv.addUser("重建后的新消息");
-        sp.save("s-first", conv);               // 不得抛异常，索引正常更新
-        CHECK(sp.listSessions().size() == 2);
-        CHECK(sp.load("s-first").size() == 1);
-    }
-
+    sqlite.close();
     utils::file::removeDir(tmp);
     PASS();
 }
@@ -656,12 +659,16 @@ void test_auto_pin_cap_on_session_load() {
     if (utils::file::exists(tmp)) utils::file::removeDir(tmp);
     ProjectIO::createProjectDir(tmp, "测试");
     FileStorageBackend storage(tmp);
+    const std::string db_path = tmpPath("tmp_test_auto_pin_load.db");
+    cleanupDb(db_path);
+    storage::SqliteStore sqlite;
+    sqlite.open(db_path);
 
     const size_t limit = llm::Memory::kMaxAutoPinned;
 
     // 构造"存量超限"会话：用手动 pin 绕过上限（手动 pin 不受限），
-    // 落盘后文件内容等价于本机制上线前累积的旧格式会话
-    agent::SessionPersistence sp(storage);
+    // 落库后内容等价于本机制上线前累积的旧格式会话
+    agent::SessionPersistence sp(sqlite, storage);
     llm::Memory conv;
     for (size_t i = 0; i < limit + 3; ++i) {
         conv.addToolResult("call_" + std::to_string(i), "旧设定 " + std::to_string(i));
@@ -670,8 +677,8 @@ void test_auto_pin_cap_on_session_load() {
     CHECK(countPinned(conv.messages()) == limit + 3);
     sp.save("s-test", conv);
 
-    // 加载路径（parseMessages 走 inject）按启发式将 preserved Tool 消息
-    // 视为自动 pin 并收敛到上限；旧文件无需格式升级即可加载
+    // 加载路径（走 inject）按启发式将 preserved Tool 消息
+    // 视为自动 pin 并收敛到上限
     auto loaded = sp.load("s-test");
     CHECK(loaded.messages().size() == limit + 3);  // 消息完整往返，不丢内容
     CHECK(countPinned(loaded.messages()) == limit);
@@ -682,6 +689,7 @@ void test_auto_pin_cap_on_session_load() {
                        "call_" + std::to_string(limit + 2))->preserved);
     CHECK(findByCallId(loaded.messages(), "call_0")->content == "旧设定 0");
 
+    sqlite.close();
     utils::file::removeDir(tmp);
     PASS();
 }
@@ -778,7 +786,8 @@ void test_compact_cut_aligns_tool_boundary() {
 
 void test_compact_preserves_pinned_message() {
     TEST("Compactor — 压缩区间内 pinned 普通消息保留不进摘要");
-    // 语义依据：pin 的产品语义是“压缩时保留”（PIN_STALE_DATA_REVIEW_2026-07-19），
+    // 语义依据：pin 的产品语义是“压缩时保留”（ToolPipeline 自动 pin 设定类工具
+    // 结果，Memory 以 kMaxAutoPinned 约束其数量），
     // 落在压缩区间的 pinned 消息必须原样保留在摘要对之后、近期消息之前。
     agent::Compactor compactor;  // 默认 keep_exchanges=5 → 保留最近 10 条
     CompactMockLLMClient llm;
