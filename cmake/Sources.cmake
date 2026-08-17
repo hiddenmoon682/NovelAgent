@@ -34,6 +34,10 @@ set(NOVELAGENT_PROJECT
     src/project/ProjectManager.h src/project/ProjectManager.cpp
 )
 
+set(NOVELAGENT_STORAGE
+    src/storage/SqliteStore.h src/storage/SqliteStore.cpp
+)
+
 set(NOVELAGENT_LLM
     src/llm/Message.h src/llm/ILLMClient.h src/llm/StreamingTypes.h
     src/llm/TokenCounter.h src/llm/TokenCounter.cpp
@@ -54,13 +58,11 @@ set(NOVELAGENT_RETRIEVAL
 )
 
 set(NOVELAGENT_AGENT
-    # core/
+    # core/（Agent 门面与执行引擎）
     src/agent/core/Agent.h src/agent/core/Agent.cpp
     src/agent/core/AgentState.h src/agent/core/AgentState.cpp
     src/agent/core/CoreLoop.h src/agent/core/CoreLoop.cpp
     src/agent/core/ExecutionTracer.h src/agent/core/ExecutionTracer.cpp
-    src/agent/core/SessionPool.h src/agent/core/SessionPool.cpp
-    src/agent/core/SessionRuntime.h src/agent/core/SessionRuntime.cpp
     # tool/
     src/agent/tool/IToolProvider.h src/agent/tool/IToolProvider.cpp
     src/agent/tool/ToolRegistry.h src/agent/tool/ToolRegistry.cpp
@@ -82,12 +84,14 @@ set(NOVELAGENT_AGENT
     src/agent/prompt/RulesProvider.h src/agent/prompt/RulesProvider.cpp
     # session/
     src/agent/session/SessionPersistence.h src/agent/session/SessionPersistence.cpp
+    src/agent/session/SessionPool.h src/agent/session/SessionPool.cpp
+    src/agent/session/SessionRuntime.h src/agent/session/SessionRuntime.cpp
     # index/
     src/agent/index/IIndexService.h
     src/agent/index/IndexManifest.h src/agent/index/IndexManifest.cpp
     src/agent/index/ProjectIndexService.h src/agent/index/ProjectIndexService.cpp
-    # memory/
-    src/agent/memory/LongTermMemoryStore.h src/agent/memory/LongTermMemoryStore.cpp
+    # longterm/（长期记忆存储）
+    src/agent/longterm/LongTermMemoryStore.h src/agent/longterm/LongTermMemoryStore.cpp
     # tools/ (基础工具定义)
     src/agent/tools/BuiltInTool.h src/agent/tools/BuiltInTool.cpp
 )

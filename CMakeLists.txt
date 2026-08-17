@@ -51,6 +51,7 @@ include(Sources)  # Fix #1: 模块化源文件列表
 # Fix #1: 模块化源文件列表（直接在 Sources.cmake 中定义变量，无需函数调用）
 set(CORE_SOURCES
     ${NOVELAGENT_CONFIG} ${NOVELAGENT_UTILS} ${NOVELAGENT_PROJECT}
+    ${NOVELAGENT_STORAGE}
     ${NOVELAGENT_LLM} ${NOVELAGENT_RETRIEVAL} ${NOVELAGENT_AGENT}
     ${NOVELAGENT_SKILL}
 )
