@@ -11,6 +11,19 @@
 namespace agent {
 using json = nlohmann::json;
 
+namespace {
+// 回传 LLM 的结果文本做 UTF-8 安全截断：
+// 压缩摘要类长文本会占用大量上下文，超限部分按字节截断并回退到最近
+// 字符边界（不拆坏多字节字符），末尾追加省略号提示截断。
+std::string utf8Truncate(const std::string& s, size_t max_bytes)
+{
+    if (s.size() <= max_bytes) return s;
+    size_t end = max_bytes;
+    while (end > 0 && (static_cast<unsigned char>(s[end]) & 0xC0) == 0x80) --end;
+    return s.substr(0, end) + "…";
+}
+} // namespace
+
 SearchMemoryTool::SearchMemoryTool(const ToolDependencies& deps)
     : vector_store_(deps.vector_store)
     , embedding_gen_(deps.embedding_gen)
@@ -50,7 +63,7 @@ json SearchMemoryTool::execute(const json& args) {
             json item;
             item["id"]         = r.id;
             item["similarity"] = r.similarity;
-            item["text"]       = r.metadata.value("text", "");
+            item["text"]       = utf8Truncate(r.metadata.value("text", ""), 500);
             item["type"]       = r.metadata.value("type", "");
             if (r.metadata.contains("chapter_id")) {
                 item["chapter_id"] = r.metadata["chapter_id"];

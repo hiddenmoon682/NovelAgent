@@ -639,9 +639,27 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
                             if (!alive.lock())
                                 throw std::runtime_error("索引已取消：应用正在关闭");
                         };
-                    app_->indexService()->indexAll(cancel_progress, /*force=*/false);
+                    auto idx_result = app_->indexService()->indexAll(cancel_progress, /*force=*/false);
+                    if (!idx_result.ok()) {
+                        spdlog::warn("[QmlBridge] 自动索引更新失败: {}", idx_result.error);
+                        // 仅记日志时 GUI 无感知（状态仍"就绪"、搜索静默为空）；
+                        // 应用仍存活则经 errorOccurred 上报一次，关闭导致的取消不打扰用户
+                        if (alive.lock()) {
+                            QString e = QString::fromStdString(idx_result.error);
+                            QMetaObject::invokeMethod(this, [this, e]() {
+                                emit errorOccurred(QStringLiteral("自动索引更新失败: ") + e);
+                            }, Qt::QueuedConnection);
+                        }
+                    }
                 } catch (const std::exception& e) {
                     spdlog::warn("[QmlBridge] 自动索引取消/失败: {}", e.what());
+                    // 关闭/切换导致的取消（alive 失效）不打扰用户；其余异常同样上报一次
+                    if (alive.lock()) {
+                        QString msg = QString::fromStdString(e.what());
+                        QMetaObject::invokeMethod(this, [this, msg]() {
+                            emit errorOccurred(QStringLiteral("自动索引更新异常: ") + msg);
+                        }, Qt::QueuedConnection);
+                    }
                 }
                 flag->store(false);
                 QMetaObject::invokeMethod(this, [this]() { emit busyChanged(); },
