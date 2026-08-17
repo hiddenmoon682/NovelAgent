@@ -12,7 +12,9 @@
 #include <sqlite-vec.h>
 
 #include <chrono>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <system_error>
 
 namespace storage {
@@ -44,6 +46,19 @@ std::string nowTimestamp() {
     return buf;
 }
 
+// 校验 path 是否为合法 SQLite 库：读取头部 16 字节魔数 "SQLite format 3\0"。
+// 文件不存在或读取不足 16 字节 → 非法（供损坏自愈判定使用）。
+bool hasValidSqliteHeader(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    char buf[16];
+    f.read(buf, sizeof(buf));
+    if (f.gcount() < 16) return false;
+    // 显式长度 16：魔数本身含结尾 '\0'
+    static const std::string kMagic("SQLite format 3", 16);
+    return std::memcmp(buf, kMagic.data(), 16) == 0;
+}
+
 } // namespace
 
 void SqliteStore::open(const std::string& db_path)
@@ -61,12 +76,20 @@ void SqliteStore::open(const std::string& db_path)
         db_ = std::make_unique<SQLite::Database>(
             db_path, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX);
         ensureSchema();
+        restoreVectorDimension();
     } catch (const std::exception& e) {
-        spdlog::error("[SqliteStore] 打开库失败（尝试损坏自愈）: {} - {}", db_path, e.what());
+        spdlog::error("[SqliteStore] 打开库失败: {} - {}", db_path, e.what());
         db_.reset();
-        removeCorruptAndReopen();
+        // 损坏自愈：仅当文件存在且头部魔数非法（确实不是 SQLite 库）时才
+        // 改名重建，避免 open/建表等临时失败误伤健康库。头部合法或文件
+        // 缺失时只记错误，保持未打开。
+        if (utils::file::exists(path_) && !hasValidSqliteHeader(path_)) {
+            removeCorruptAndReopen();
+        } else {
+            spdlog::warn("[SqliteStore] 库未销毁，保持未打开: {}", path_);
+        }
     }
-    spdlog::info("[SqliteStore] 已打开数据库: {} ({} 张业务表)", db_path, 6);
+    spdlog::info("[SqliteStore] 已打开数据库: {}", db_path);
 }
 
 void SqliteStore::close()
@@ -122,6 +145,8 @@ void SqliteStore::ensureVectorTable(int dimension)
         ")";
     db_->exec(ddl);
     vector_dimension_ = dimension;
+    // 记录维度到 kv_store：重启后 open() 恢复缓存，同维度调用短路不 DROP 重建
+    setKV("vector_dimension", std::to_string(dimension));
     spdlog::info("[SqliteStore] vec_chunks 已创建 (维度 {})", dimension);
 }
 
@@ -192,6 +217,18 @@ void SqliteStore::ensureSchema()
         ")");
 }
 
+void SqliteStore::restoreVectorDimension()
+{
+    vector_dimension_ = 0;
+    try {
+        const std::string v = getKV("vector_dimension");
+        if (!v.empty()) vector_dimension_ = std::stoi(v);
+    } catch (...) {
+        // kv 缺失（新库/自愈重建）或写入值非法 → 保持 0，下次按需建表
+        vector_dimension_ = 0;
+    }
+}
+
 void SqliteStore::removeCorruptAndReopen()
 {
     try {
@@ -212,6 +249,7 @@ void SqliteStore::removeCorruptAndReopen()
         db_ = std::make_unique<SQLite::Database>(
             path_, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX);
         ensureSchema();
+        restoreVectorDimension();
         spdlog::warn("[SqliteStore] 已重建空库: {}", path_);
     } catch (const std::exception& e) {
         db_.reset();

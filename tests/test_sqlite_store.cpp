@@ -33,6 +33,13 @@ static void cleanup(const std::string& path) {
         const std::string p = path + suffix;
         if (utils::file::exists(p)) utils::file::removeFile(p);
     }
+    // 一并清理损坏自愈备份（<path>.corrupt-*），避免残留
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(
+             std::filesystem::temp_directory_path(), ec)) {
+        if (e.path().filename().string().rfind(path + ".corrupt-", 0) == 0)
+            std::filesystem::remove(e.path(), ec);
+    }
 }
 
 // ── open/close/建表 ──
@@ -264,6 +271,38 @@ void test_vec0_drop_recreate_in_txn() {
     PASS();
 }
 
+void test_reopen_keeps_vector_data() {
+    TEST("SqliteStore — 重启后同维度 ensureVectorTable 不丢向量（reopen 语义）");
+    const std::string db_path = tmpPath("tmp_test_store_reopen.db");
+    cleanup(db_path);
+
+    {  // 首次会话：建库 + 建 vec_chunks(4) + 插入一条向量
+        storage::SqliteStore store;
+        store.open(db_path);
+        store.withLock([&](storage::SqliteStore& s) {
+            s.ensureVectorTable(4);
+            SQLite::Statement ins(s.db(),
+                "INSERT INTO vec_chunks(chunk_id, metadata, embedding_json, embedding) "
+                "VALUES('keep-1', '{}', '[0.1,0.2,0.3,0.4]', '[0.1,0.2,0.3,0.4]')");
+            ins.exec();
+        });
+    }  // 析构即 close，模拟一次完整启停
+
+    // 二次会话：open 应恢复维度缓存，同维度 ensureVectorTable 短路、不 DROP
+    storage::SqliteStore store2;
+    store2.open(db_path);
+    CHECK(store2.vectorDimension() == 4);  // 维度从库内恢复，而非初始 0
+    store2.withLock([&](storage::SqliteStore& s) {
+        s.ensureVectorTable(4);
+        SQLite::Statement c(s.db(), "SELECT COUNT(*) FROM vec_chunks");
+        c.executeStep();
+        CHECK(c.getColumn(0).getInt() == 1);  // 既有向量仍在
+    });
+    store2.close();
+    cleanup(db_path);
+    PASS();
+}
+
 void test_kv_roundtrip() {
     TEST("kv_store — 读写往返（模型指纹等）");
     const std::string db_path = tmpPath("tmp_test_kv.db");
@@ -293,6 +332,7 @@ int main() {
     test_vec0_additional_columns();
     test_vec0_cosine_mapping();
     test_vec0_drop_recreate_in_txn();
+    test_reopen_keeps_vector_data();
     test_kv_roundtrip();
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;

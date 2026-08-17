@@ -8,12 +8,14 @@
 // 只能在 withLock/inTransaction 回调内调用（文档约束，编译期不强制）。
 // open/close 是唯一可在锁外调用的方法（应用生命周期保证不与锁内回调并发）。
 //
-// 异常策略：inTransaction 回调抛异常 → 自动 ROLLBACK 并重抛；其他低层方法
-// 不捕获 SQLiteCpp 异常（由调用方按语义处理）；open 的建表失败走损坏自愈
-// （改名 .corrupt-<时间戳> → 重建空库），保证应用可用性。
+// 异常策略：inTransaction 回调抛异常 → 自动 ROLLBACK 并重抛（回滚失败仅记日志
+// 不吞原始异常）；其他低层方法不捕获 SQLiteCpp 异常（由调用方按语义处理）；
+// open 的建表失败仅在文件头部魔数非法（确实非 SQLite 库）时走损坏自愈
+// （改名 .corrupt-<时间戳> → 重建空库），头部合法或文件缺失时仅记错误保持未打开。
 
 #include <SQLiteCpp/Database.h>
 #include <SQLiteCpp/Statement.h>
+#include <spdlog/spdlog.h>
 
 #include <memory>
 #include <mutex>
@@ -30,8 +32,11 @@ public:
     SqliteStore(const SqliteStore&) = delete;
     SqliteStore& operator=(const SqliteStore&) = delete;
 
-    // 打开/创建 db_path；已打开则忽略。首次打开执行建表迁移与 PRAGMA。
-    // 建表失败视为库损坏：改名 novel.db.corrupt-<时间戳> 后重建空库。
+    // 打开/创建 db_path；已打开则忽略。首次打开执行建表迁移与 PRAGMA，
+    // 并从 kv_store 恢复向量维度缓存（vector_dimension_），保证重启后同维度
+    // ensureVectorTable 短路、不 DROP 重建。
+    // 建表失败时：仅当文件存在且头部魔数非法（非 SQLite 库）才改名
+    // .corrupt-<时间戳> 重建空库；头部合法或文件缺失仅记错误、保持未打开。
     void open(const std::string& db_path);
     // 关闭连接（WAL 由 SQLite 在最后连接关闭时自动 checkpoint）；未打开时 no-op。
     void close();
@@ -61,7 +66,12 @@ public:
                 return r;
             }
         } catch (...) {
-            db.exec("ROLLBACK");
+            // 回滚失败只记日志，不吞原始异常（原始异常继续重抛）
+            try {
+                db.exec("ROLLBACK");
+            } catch (const std::exception& e) {
+                spdlog::error("[SqliteStore] 事务回滚失败: {}", e.what());
+            }
             throw;
         }
     }
@@ -78,6 +88,8 @@ public:
     void setKV(const std::string& key, const std::string& value);
 
     // 确保 vec_chunks 存在（维度 dimension）；维度与库中不同时 DROP 重建。
+    // 建表成功后把维度写入 kv_store（vector_dimension），open() 据此恢复缓存，
+    // 重启后同维度调用短路不重建。
     // 注意：DROP 会清空全部向量，调用者须在指纹失配等语义下使用。
     void ensureVectorTable(int dimension);
     int vectorDimension() const { return vector_dimension_; }
@@ -86,13 +98,17 @@ private:
     // 建全部业务表与 PRAGMA（sessions/messages/message_history/index_sources/
     // index_chunks/kv_store；vec_chunks 由 ensureVectorTable 按维度创建）。
     void ensureSchema();
+    // 从 kv_store 恢复向量维度缓存；kv 缺失或非法 → 0。
+    // 须在 ensureSchema 之后、锁内调用。
+    void restoreVectorDimension();
     // 损坏自愈：改名 + 重建空库；再次失败则保持未打开。
+    // 仅在文件头部魔数非法时由 open() 调用。
     void removeCorruptAndReopen();
 
     std::unique_ptr<SQLite::Database> db_;
     mutable std::mutex mutex_;
     std::string path_;
-    int vector_dimension_ = 0;  // 内存缓存当前向量维度；打开时从库内推理
+    int vector_dimension_ = 0;  // 内存缓存当前向量维度；open() 从 kv_store 恢复
 };
 
 } // namespace storage
