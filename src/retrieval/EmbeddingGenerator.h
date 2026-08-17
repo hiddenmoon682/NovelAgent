@@ -14,6 +14,7 @@
 #include "retrieval/IEmbeddingGenerator.h"
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -28,7 +29,8 @@ struct EmbeddingConfig {
 
 // 嵌入向量生成器 — OpenAI /v1/embeddings API 实现。
 //
-// 线程安全：不安全。同一实例不应并发调用。
+// 线程安全：generateEmbedding/generateEmbeddings/dimension 内部以 std::mutex
+// 互斥，支持跨线程并发调用（网络密集，调用会串行等待，性能影响可接受）。
 class EmbeddingGenerator : public IEmbeddingGenerator {
 public:
     // 构造生成器，使用默认 EmbeddingConfig。
@@ -65,7 +67,7 @@ public:
         const std::vector<std::string>& texts) override;
 
     // 返回嵌入向量的维度（首次成功调用后确定，此前返回 0）。
-    int dimension() const override { return dimension_; }
+    int dimension() const override;
 
     // 返回嵌入模型名称。
     std::string modelName() const override { return embed_config_.model; }
@@ -76,6 +78,9 @@ public:
 private:
     ProviderConfig provider_config_;
     EmbeddingConfig embed_config_;
+    // 内部互斥：串行化并发访问（dimension_ 读写 + 共享 http_ 的请求），
+    // 同一实例可被索引池线程与工具线程同时调用。
+    mutable std::mutex mutex_;
     int dimension_ = 0;
     std::unique_ptr<llm::HttpClient> http_;  // Phase 4 改进：复用共享 HTTP 基础设施
 

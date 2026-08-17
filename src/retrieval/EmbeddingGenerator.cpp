@@ -57,6 +57,7 @@ EmbeddingGenerator::EmbeddingGenerator(
 
 std::vector<float> EmbeddingGenerator::generateEmbedding(const std::string& text)
 {
+    // 不在此加锁：委托 generateEmbeddings（其内部已持 mutex_），嵌套加锁会死锁。
     auto results = generateEmbeddings({text});
     if (results.empty()) {
         throw std::runtime_error("[EmbeddingGenerator] 嵌入生成返回空结果");
@@ -67,6 +68,10 @@ std::vector<float> EmbeddingGenerator::generateEmbedding(const std::string& text
 std::vector<std::vector<float>> EmbeddingGenerator::generateEmbeddings(
     const std::vector<std::string>& texts)
 {
+    // 串行化并发调用：维度写入与共享 http_ 请求在同一把锁内，避免 dimension_
+    // 数据竞争与 httplib::Client 并发 post 的未定义行为（网络密集，等待可接受）。
+    std::lock_guard<std::mutex> lock(mutex_);
+
     if (texts.empty()) {
         return {};
     }
@@ -114,6 +119,12 @@ std::vector<std::vector<float>> EmbeddingGenerator::generateEmbeddings(
     }
 
     return all_embeddings;
+}
+
+int EmbeddingGenerator::dimension() const {
+    // 与 generateEmbeddings 内的维度写入互斥，避免跨线程撕裂读。
+    std::lock_guard<std::mutex> lock(mutex_);
+    return dimension_;
 }
 
 // ===========================================================================
