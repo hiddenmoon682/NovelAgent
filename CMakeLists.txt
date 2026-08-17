@@ -15,7 +15,7 @@ endif()
 
 project(NovelAgent
     DESCRIPTION "AI-powered novel writing assistant"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -62,6 +62,27 @@ set(COMMON_LIBS
     yaml-cpp::yaml-cpp
 )
 
+# ── 内置 SQLite（sqlite3 amalgamation + sqlite-vec + SQLiteCpp，全部 vendor）──
+# SQLITE_CORE：sqlite-vec 以静态扩展编译进 sqlite3；SQLITE_ENABLE_FTS5：Phase 2 全文索引。
+# 本目标不进 PCH：sqlite3.c 为 C 巨型文件，且 PCH 只能用于 C++。
+add_library(novelagent_sqlite STATIC
+    third_party/sqlite/sqlite3.c
+    third_party/sqlite-vec/sqlite-vec.c
+    third_party/sqlitecpp/src/Backup.cpp
+    third_party/sqlitecpp/src/Column.cpp
+    third_party/sqlitecpp/src/Database.cpp
+    third_party/sqlitecpp/src/Exception.cpp
+    third_party/sqlitecpp/src/Savepoint.cpp
+    third_party/sqlitecpp/src/Statement.cpp
+    third_party/sqlitecpp/src/Transaction.cpp
+)
+target_include_directories(novelagent_sqlite PUBLIC
+    third_party/sqlite
+    third_party/sqlite-vec
+    third_party/sqlitecpp/include
+)
+target_compile_definitions(novelagent_sqlite PUBLIC SQLITE_CORE SQLITE_ENABLE_FTS5)
+
 add_library(novelagent_core OBJECT ${CORE_SOURCES})
 target_include_directories(novelagent_core PUBLIC src)
 target_compile_definitions(novelagent_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
@@ -73,7 +94,7 @@ if(WIN32)
     # 此定义不改变任何运行时行为，仅修复 PCH 命中。
     target_compile_definitions(novelagent_core PUBLIC UNICODE _UNICODE)
 endif()
-target_link_libraries(novelagent_core PUBLIC ${COMMON_LIBS})
+target_link_libraries(novelagent_core PUBLIC ${COMMON_LIBS} novelagent_sqlite)
 target_precompile_headers(novelagent_core PRIVATE
     <string> <vector> <map> <algorithm> <sstream>
     <functional> <optional>
@@ -98,7 +119,7 @@ target_compile_definitions(novelagent_core_prelinked PUBLIC CPPHTTPLIB_OPENSSL_S
 if(WIN32)
     target_compile_definitions(novelagent_core_prelinked PUBLIC UNICODE _UNICODE)
 endif()
-target_link_libraries(novelagent_core_prelinked PUBLIC ${COMMON_LIBS})
+target_link_libraries(novelagent_core_prelinked PUBLIC ${COMMON_LIBS} novelagent_sqlite)
 
 # tools 预链接库：仅含 tools 对象，core 依赖经 core_prelinked 传递。
 # 重要：tools 对象靠 REGISTER_TOOL 的文件级静态初始化自注册，
