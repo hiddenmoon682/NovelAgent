@@ -2,6 +2,13 @@
 
 #include "storage/SqliteStore.h"
 
+// ProjectIndexService 多 chunk 回归测试所需（core 内模块，与本测试同一预链接库）。
+#include "agent/index/ProjectIndexService.h"
+#include "project/Models/Project.h"
+#include "project/ProjectAccess.h"
+#include "project/ProjectIO.h"
+#include "retrieval/IEmbeddingGenerator.h"
+
 #include "utils/FileUtils.h"
 
 #include <algorithm>
@@ -355,6 +362,99 @@ void test_index_tables_cascade() {
     PASS();
 }
 
+// ── ProjectIndexService 回归：多 chunk 章节（Statement 循环复用需 reset）──
+
+// fake 嵌入生成器（固定 4 维向量，无网络依赖）。
+class FakeEmbeddingGenerator : public retrieval::IEmbeddingGenerator {
+public:
+    retrieval::EmbeddingVector generateEmbedding(const std::string&) override {
+        return retrieval::EmbeddingVector(4, 1.0f);
+    }
+    std::vector<retrieval::EmbeddingVector> generateEmbeddings(
+        const std::vector<std::string>& texts) override {
+        return std::vector<retrieval::EmbeddingVector>(texts.size(),
+                                                       retrieval::EmbeddingVector(4, 1.0f));
+    }
+    int dimension() const override { return 4; }
+    std::string modelName() const override { return "fake-embedding"; }
+};
+
+void test_index_all_multi_chunk() {
+    TEST("ProjectIndexService — 多 chunk 章节索引与二次增量跳过");
+    const std::string db_path = tmpPath("tmp_test_index_all.db");
+    cleanup(db_path);
+    const std::string proj_path =
+        (std::filesystem::temp_directory_path() / "tmp_index_project").string();
+    std::filesystem::remove_all(proj_path);
+    std::filesystem::create_directories(proj_path + "/chapters");
+
+    // 章节正文 >2000 字（chunker 默认 max 2000）→ 必然切分为 ≥2 个 chunk，
+    // 若 ins_chunk/ins_vec 复用未 reset，二次 exec 抛 SQLITE_MISUSE 整体回滚。
+    std::string content;
+    const std::string sentence =
+        "少年在雨夜推开了客栈的门，烛火在风里摇晃，掌柜抬起浑浊的眼睛看了他一眼。"
+        "旧日的传闻在青石巷口重新响起，仿佛有人一遍遍念着那个被遗忘的名字。";
+    for (int i = 0; i < 7; ++i) {
+        for (int k = 0; k < 7; ++k) content += sentence;
+        content += "\n\n";
+    }
+    ProjectIO::writeChapter(proj_path, "chapters/ch-001.md", content);
+
+    auto proj = std::make_shared<Project>();
+    proj->path = proj_path;
+    proj->title = "索引回归测试";
+    Chapter ch;
+    ch.id = "ch-001";
+    ch.title = "第一章";
+    ch.file_path = "chapters/ch-001.md";
+    proj->outline.chapters.push_back(ch);
+
+    storage::SqliteStore store;
+    store.open(db_path);
+    FakeEmbeddingGenerator gen;
+    agent::ProjectIndexService svc(std::make_shared<ProjectAccess>(proj), store, gen);
+
+    auto r1 = svc.indexAll();
+    CHECK(r1.ok());
+    CHECK(r1.chapters == 1);
+    CHECK(r1.total_chunks >= 2);   // 多 chunk 章节不再因 Statement 复用而回滚
+    CHECK(r1.updated_sources == 1);
+
+    int vec_rows = -1, chunk_rows = -1, src_rows = -1;
+    store.withLock([&](storage::SqliteStore& s) {
+        SQLite::Statement c1(s.db(), "SELECT COUNT(*) FROM vec_chunks");
+        c1.executeStep();
+        vec_rows = c1.getColumn(0).getInt();
+        SQLite::Statement c2(s.db(), "SELECT COUNT(*) FROM index_chunks");
+        c2.executeStep();
+        chunk_rows = c2.getColumn(0).getInt();
+        SQLite::Statement c3(s.db(), "SELECT COUNT(*) FROM index_sources");
+        c3.executeStep();
+        src_rows = c3.getColumn(0).getInt();
+    });
+    CHECK(vec_rows == r1.total_chunks);   // 每 chunk 一条向量
+    CHECK(chunk_rows == r1.total_chunks); // 每 chunk 一清单行
+    CHECK(src_rows == 1);
+
+    // 第二次索引：内容哈希未变 → 全跳过，向量数不变
+    auto r2 = svc.indexAll();
+    CHECK(r2.ok());
+    CHECK(r2.skipped_sources == 1);
+    CHECK(r2.updated_sources == 0);
+    int vec_rows2 = -1;
+    store.withLock([&](storage::SqliteStore& s) {
+        SQLite::Statement c(s.db(), "SELECT COUNT(*) FROM vec_chunks");
+        c.executeStep();
+        vec_rows2 = c.getColumn(0).getInt();
+    });
+    CHECK(vec_rows2 == vec_rows);
+
+    store.close();
+    cleanup(db_path);
+    std::filesystem::remove_all(proj_path);
+    PASS();
+}
+
 int main() {
     std::cout << "=== test_sqlite_store ===\n\n";
     test_open_close();
@@ -368,6 +468,7 @@ int main() {
     test_reopen_keeps_vector_data();
     test_kv_roundtrip();
     test_index_tables_cascade();
+    test_index_all_multi_chunk();
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;
 }

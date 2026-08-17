@@ -196,7 +196,11 @@ IndexResult ProjectIndexService::indexAll(
 
     std::map<std::string, PrevEntry> prevs;
     sqlite_.withLock([&](storage::SqliteStore& s) {
-        prevs = loadAllPrevEntries(s.db());
+        if (wiped) {
+            prevs.clear();  // 整库失效后清单表已清空，跳过第二次全表扫描
+        } else {
+            prevs = loadAllPrevEntries(s.db());
+        }
     });
 
     std::vector<Chapter> chapters;
@@ -374,6 +378,7 @@ IndexResult ProjectIndexService::indexAll(
                 ins_chunk.bind(1, key);
                 ins_chunk.bind(2, c.id);
                 ins_chunk.exec();
+                ins_chunk.reset();  // 复用 Statement 需复位：exec 后 mbDone=true，二次 exec 会抛 SQLITE_MISUSE
             }
         }
 
@@ -390,6 +395,7 @@ IndexResult ProjectIndexService::indexAll(
             ins_vec.bind(3, j.dump());
             ins_vec.bind(4, j.dump());
             ins_vec.exec();
+            ins_vec.reset();  // 复用 Statement 需复位：exec 后 mbDone=true，二次 exec 会抛 SQLITE_MISUSE
         }
 
         writeFingerprint(s, model, embeddings.front().size());
