@@ -13,12 +13,12 @@
 #include <SQLiteCpp/Statement.h>
 #include <spdlog/spdlog.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cinttypes>
 #include <cstdio>
 #include <map>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 using json = nlohmann::json;
@@ -293,10 +293,13 @@ IndexResult ProjectIndexService::indexAll(
         int removed = 0;
         sqlite_.inTransaction([&](storage::SqliteStore& s) {
             SQLite::Database& db = s.db();
+            // 拷贝 unchanged_keys 进哈希集合：孤儿判定从"全量 × 线性 find"
+            // 的 O(N²) 降为 O(N)，避免大项目清点删除时逐源线性扫描。
+            const std::unordered_set<std::string> unchanged_set(
+                unchanged_keys.begin(), unchanged_keys.end());
             for (const auto& [key, prev] : prevs) {
                 const bool alive = desired.count(key) > 0
-                    || std::find(unchanged_keys.begin(), unchanged_keys.end(), key)
-                       != unchanged_keys.end();
+                    || unchanged_set.count(key) > 0;
                 if (!alive) {
                     deleteSourceVectorsAndManifest(db, key, prev);
                     ++removed;
@@ -379,6 +382,19 @@ IndexResult ProjectIndexService::indexAll(
                 ins_chunk.bind(2, c.id);
                 ins_chunk.exec();
                 ins_chunk.reset();  // 复用 Statement 需复位：exec 后 mbDone=true，二次 exec 会抛 SQLITE_MISUSE
+            }
+        }
+
+        // 覆盖清理：vec0 无 UNIQUE 约束，save_memory 等直达路径只插向量不写
+        // 清单（deleteSourceVectorsAndManifest 管不到），先对本次 desired 的
+        // 全部 chunk_id 逐条 DELETE 再插入，避免同 id 重复行累积成永久孤儿。
+        {
+            SQLite::Statement del_vec(db, "DELETE FROM vec_chunks WHERE chunk_id = ?");
+            for (size_t i = 0; i < chunk_owner.size(); ++i) {
+                const auto& [key, ci] = chunk_owner[i];
+                del_vec.bind(1, desired[key].chunks[ci].id);
+                del_vec.exec();
+                del_vec.reset();  // 复用 Statement 需复位：exec 后 mbDone=true，二次 exec 会抛 SQLITE_MISUSE
             }
         }
 

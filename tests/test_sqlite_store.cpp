@@ -8,6 +8,7 @@
 #include "project/ProjectAccess.h"
 #include "project/ProjectIO.h"
 #include "retrieval/IEmbeddingGenerator.h"
+#include "retrieval/NovelChunker.h"
 
 #include "utils/FileUtils.h"
 
@@ -455,6 +456,91 @@ void test_index_all_multi_chunk() {
     PASS();
 }
 
+// ── ProjectIndexService 回归：覆盖清理 save_memory 直达写入的同 chunk_id 向量 ──
+
+void test_index_all_dedup_direct_rows() {
+    TEST("ProjectIndexService — 批量写入先删后插，直达向量（无清单记录）不产生重复行");
+    const std::string db_path = tmpPath("tmp_test_index_dedup.db");
+    cleanup(db_path);
+    const std::string proj_path =
+        (std::filesystem::temp_directory_path() / "tmp_index_dedup_project").string();
+    std::filesystem::remove_all(proj_path);
+    std::filesystem::create_directories(proj_path + "/chapters");
+
+    // 章节正文 >2000 字 → 必然切分为 ≥2 个 chunk
+    std::string content;
+    const std::string sentence =
+        "巷口的老灯笼在风里摇晃，守夜人把昨天的故事又讲了一遍，没有人记得名字。";
+    for (int i = 0; i < 8; ++i) {
+        for (int k = 0; k < 6; ++k) content += sentence;
+        content += "\n\n";
+    }
+    ProjectIO::writeChapter(proj_path, "chapters/ch-001.md", content);
+
+    auto proj = std::make_shared<Project>();
+    proj->path = proj_path;
+    proj->title = "索引去重回归测试";
+    Chapter ch;
+    ch.id = "ch-001";
+    ch.title = "第一章";
+    ch.file_path = "chapters/ch-001.md";
+    proj->outline.chapters.push_back(ch);
+
+    storage::SqliteStore store;
+    store.open(db_path);
+    FakeEmbeddingGenerator gen;
+
+    // 用与 indexAll 相同的 chunker 配置推导首个 chunk 的 id（避免硬编码格式漂移）
+    retrieval::NovelChunker probe;
+    const auto probe_chunks = probe.chunkChapter(ch, content);
+    CHECK(probe_chunks.size() >= 2);
+    const std::string first_id = probe_chunks.front().id;
+
+    // 模拟 save_memory 直达路径：仅插向量、不写清单。vec0 无 UNIQUE 约束，
+    // 若批量写入不先删旧向量，同 chunk_id 将累积重复行（迁移回归）。
+    store.withLock([&](storage::SqliteStore& s) {
+        s.ensureVectorTable(gen.dimension());  // 与 fake 生成器维度一致，防 DROP
+        SQLite::Statement ins(s.db(),
+            "INSERT INTO vec_chunks(chunk_id, metadata, embedding_json, embedding) "
+            "VALUES(?, '{}', '[0.1,0.2,0.3,0.4]', '[0.1,0.2,0.3,0.4]')");
+        ins.bind(1, first_id);
+        ins.exec();
+    });
+
+    agent::ProjectIndexService svc(std::make_shared<ProjectAccess>(proj), store, gen);
+
+    auto r1 = svc.indexAll();
+    CHECK(r1.ok());
+    CHECK(r1.total_chunks >= 2);
+
+    int vec_rows = -1;
+    store.withLock([&](storage::SqliteStore& s) {
+        SQLite::Statement c(s.db(), "SELECT COUNT(*) FROM vec_chunks");
+        c.executeStep();
+        vec_rows = c.getColumn(0).getInt();
+    });
+    // 重复行被先删后插覆盖：行数 == chunk 总数（旧实现无 DELETE → 多 1 行，red）
+    CHECK(vec_rows == r1.total_chunks);
+
+    // 第二次索引：内容哈希未变 → 全跳过，行数仍不变
+    auto r2 = svc.indexAll();
+    CHECK(r2.ok());
+    CHECK(r2.skipped_sources == 1);
+    CHECK(r2.updated_sources == 0);
+    int vec_rows2 = -1;
+    store.withLock([&](storage::SqliteStore& s) {
+        SQLite::Statement c(s.db(), "SELECT COUNT(*) FROM vec_chunks");
+        c.executeStep();
+        vec_rows2 = c.getColumn(0).getInt();
+    });
+    CHECK(vec_rows2 == vec_rows);
+
+    store.close();
+    cleanup(db_path);
+    std::filesystem::remove_all(proj_path);
+    PASS();
+}
+
 int main() {
     std::cout << "=== test_sqlite_store ===\n\n";
     test_open_close();
@@ -469,6 +555,7 @@ int main() {
     test_kv_roundtrip();
     test_index_tables_cascade();
     test_index_all_multi_chunk();
+    test_index_all_dedup_direct_rows();
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;
 }

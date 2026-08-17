@@ -2,11 +2,16 @@
 
 // SqliteStore — SQLite 单库入口（产品代码内唯一的 SQLite 连接）。
 //
-// 线程模型：全库一把互斥锁。withLock/inTransaction 自行加锁，回调内
-// **禁止**再调用本类任何加锁方法（包括二者本身，不可嵌套）。
+// 线程模型：全库一把互斥锁（产品代码内唯一的 SQLite 连接）。
+// withLock/inTransaction 自行加锁，回调内**禁止**再调用本类任何加锁方法
+// （包括二者本身，不可嵌套）。
 // exec/getKV/setKV/ensureVectorTable/db 均为"锁内使用"的低层方法，
 // 只能在 withLock/inTransaction 回调内调用（文档约束，编译期不强制）。
 // open/close 是唯一可在锁外调用的方法（应用生命周期保证不与锁内回调并发）。
+// 单连接 + 全库互斥锁是 indexAll 跨表单事务原子性（vec_chunks/index_sources/
+// index_chunks/kv_store 同一事务）与三个消费域（索引/检索/会话）各自一致性的
+// 前提：多连接并发各自开事务会破坏单事务原子性（他连接读到中间态），
+// 故不采用 thread_local 连接池等多连接方案。
 //
 // 异常策略：inTransaction 回调抛异常 → 自动 ROLLBACK 并重抛（回滚失败仅记日志
 // 不吞原始异常）；其他低层方法不捕获 SQLiteCpp 异常（由调用方按语义处理）；

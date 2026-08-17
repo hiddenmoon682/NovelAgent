@@ -137,6 +137,10 @@ void SqliteStore::ensureVectorTable(int dimension)
 
     // DROP 旧表（维度不同或首次建表）：虚拟表不支持 ALTER 改维度，
     // 维度变更语义即"整库失效"（调用方已在指纹层清空清单）。
+    if (vector_dimension_ > 0 && vector_dimension_ != dimension) {
+        spdlog::warn("[SqliteStore] vec_chunks 维度变更 {} → {}，DROP 重建（全部向量将清空）",
+                     vector_dimension_, dimension);
+    }
     db_->exec("DROP TABLE IF EXISTS vec_chunks");
     // vec0 附加列：chunk_id/metadata/embedding_json 随行存储，可查询返回；
     // embedding_json 保存原始向量（JSON），避免依赖 vec0 内部存储格式。
@@ -256,6 +260,17 @@ void SqliteStore::removeCorruptAndReopen()
             return;  // 保持未打开
         }
         spdlog::warn("[SqliteStore] 损坏库已改名备份: {}", backup);
+        // WAL/SHM 伴生文件一并改名：旧 WAL 携带原库的随机盐（salt），与新库
+        // 不匹配会导致重建后仍打开失败；伴生文件不存在时仅 warn，不中断自愈。
+        for (const char* suffix : {"-wal", "-shm"}) {
+            const std::string side_path = path_ + suffix;
+            std::error_code sec;
+            std::filesystem::rename(side_path, backup + suffix, sec);
+            if (sec) {
+                spdlog::warn("[SqliteStore] 伴生文件改名失败（可能不存在）: {} - {}",
+                             side_path, sec.message());
+            }
+        }
     } catch (const std::exception& e) {
         spdlog::error("[SqliteStore] 损坏库改名失败: {}", e.what());
         return;
