@@ -245,7 +245,6 @@ void test_cosine_similarity_basic() {
     auto v_orth2 = std::vector<float>{0.0f, 1.0f, 0.0f, 0.0f};
     fx.store.insert("orth1", v_orth, {});
     fx.store.insert("orth2", v_orth2, {});
-    (void)v_orth2; // 用于数据多样性，不需要单独使用
 
     auto res2 = fx.store.search(v_orth, 3);
     // v_orth 应最接近自身
