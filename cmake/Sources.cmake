@@ -50,6 +50,7 @@ set(NOVELAGENT_LLM
 )
 
 set(NOVELAGENT_RETRIEVAL
+    src/retrieval/SqliteVectorStore.h src/retrieval/SqliteVectorStore.cpp
     src/retrieval/VectorStore.h src/retrieval/VectorStore.cpp
     src/retrieval/IVectorStore.h
     src/retrieval/EmbeddingGenerator.h src/retrieval/EmbeddingGenerator.cpp
