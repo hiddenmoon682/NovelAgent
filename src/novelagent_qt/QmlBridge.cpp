@@ -77,14 +77,12 @@ QmlBridge::~QmlBridge() {
     // 生命周期令牌复位：即使有超时残留任务，on_complete 的 weak_ptr lock() 也会失败并跳过，
     // 不再访问已进入析构的本对象（兜底 A 的 2s 超时窗口）。
     alive_->store(false);
-    // 有界等待自动索引退场：正常增量索引仅哈希比对（<1s）；嵌入中最多等 10s，
-    // 超时后依靠进度回调的 alive 检查中止，不再访问本对象成员。
-    {
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        while (indexing_ && indexing_->load()
-               && std::chrono::steady_clock::now() < deadline) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
+    // 无界等待自动索引退场：池线程池（std::jthread）析构时本就 join 到任务
+    // 结束，此等待只是提前到依赖对象（embedding_gen_/index_service_/sqlite_）
+    // 销毁之前，不增加总关闭时长。进度回调的 alive 检查保证 HTTP 返回后
+    // 立即在阶段检查点抛"已取消"，不会死等。
+    while (indexing_ && indexing_->load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     joinWorker();
 }
