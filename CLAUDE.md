@@ -24,7 +24,7 @@
 - `agent::Agent` 依赖 `llm::ILLMClient`（非具体 `LLMClient`）
 - 只读工具依赖 `IProjectReader&`，写入工具依赖 `Project&`（通过 `ProjectAccess` 适配器）
 - CLI 层（`ReplHandler`, `CommandParser`, `StreamDisplay`）通过 `IOutputChannel&` 输出，不硬编码 `std::cout`
-- 会话持久化通过 `FileStorageBackend`（封装项目路径 + 转发 `ProjectIO`）；向量存储扩展点在 `IVectorStore`（未来可选 sqlite-vec 后端，非 IStorageBackend）
+- 会话持久化通过 `SessionPersistence`（SQLite，novel.db 的 sessions/messages/message_history 表）；向量存储为 `SqliteVectorStore`（sqlite-vec，novel.db 的 vec_chunks），创作资产与 `memories.json` 仍为文件
 - **禁止**：直接持有具体类引用、硬编码全局流、跨层 include 实现头文件
 
 ### 门面模式

@@ -22,8 +22,10 @@
 // 路径语义（Issue 23 修复后统一）：
 // - 所有接受 filePath 参数的方法，相对路径自动以 project_path_ 为基准解析
 // - readChapter/writeChapter: filePath 为相对路径（如 "chapters/001.md"）
-// - loadJson/saveJson: filePath 可以是相对路径（如 "sessions/index.json"）
-//   或已包含 project_path_ 的绝对路径（向后兼容已有调用方）
+// - loadJson/saveJson: filePath 可以是相对路径（如 "summaries.json"）
+//   或已包含 project_path_ 的绝对路径（向后兼容已有调用方）。
+//   注意：会话已迁入 novel.db（SessionPersistence 走 SQLite），
+//   本类仍负责章节与 JSON 项目数据（summaries/state 等）。
 class FileStorageBackend {
 public:
     // 构造后端，绑定项目根目录。

@@ -14,7 +14,7 @@
 //     style.json          — 写作风格配置
 //     chapters/           — 章节 Markdown 文件
 //     .novelagent/
-//       sessions/         — 多会话对话历史（由 SessionPersistence 管理）
+//       novel.db          — 会话/消息/索引清单/向量（SQLite，由 SessionPersistence 与索引服务管理）
 //       summaries.json    — 章节摘要缓存
 //       state.json        — Agent 运行时状态
 

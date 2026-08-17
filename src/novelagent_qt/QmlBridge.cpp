@@ -252,9 +252,9 @@ void QmlBridge::sendMessageToSession(const QString& sessionId, const QString& te
 
 bool QmlBridge::deletePoolSession(const QString& sessionId) {
     if (!app_) return false;
-    // 先等运行中会话退出并移除内存池，再归档持久层（避免运行时读到写到一半的文件）
+    // 先等运行中会话退出并移除内存池，再从持久层删除（避免运行时读到写到一半的数据）
     if (!app_->agent().deleteSessionRuntime(sessionId.toStdString())) return false;
-    // 归档到 archive/：快照 <id>.json + 完整历史 <id>.history 移入 archive 并从 index 移除，
+    // 删除持久层会话：novel.db 的 sessions 表置 archived=1（数据保留、列表不可见），
     // 否则已删池会话重启后仍会从持久层复活。未打开项目（无持久化）时跳过。
     if (auto* persistence = app_->agent().persistence())
         persistence->deleteSession(sessionId.toStdString());
@@ -390,7 +390,7 @@ bool QmlBridge::deleteSession(const QString& sessionId) {
         setStatus(QStringLiteral("已丢弃未发送的新会话"));
         return true;
     }
-    // 持久层历史会话（不在池）：直接持久层删除（快照 + 完整历史归档到 archive/）
+    // 持久层历史会话（不在池）：直接删除持久层记录（置 archived=1，数据保留、列表不可见）
     auto* persistence = app_->agent().persistence();
     const bool wasCurrent = (current_session_id_ == sessionId);
     if (!persistence || !persistence->deleteSession(sessionId.toStdString())) return false;
@@ -400,7 +400,7 @@ bool QmlBridge::deleteSession(const QString& sessionId) {
         emit sessionReset();
         emit usageChanged();
     }
-    setStatus(QStringLiteral("会话已删除（内容归档到 archive/）"));
+    setStatus(QStringLiteral("会话已删除（数据保留、列表不可见）"));
     return true;
 }
 
