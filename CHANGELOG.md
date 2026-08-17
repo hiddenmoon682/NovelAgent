@@ -1,5 +1,10 @@
 # Changelog
 
+## [2026-08-17] 存储层清理：移除 vec_chunks 的 embedding_json 冗余列
+
+### 清理 — 存储瘦身
+- vec_chunks 表与全部写入路径移除 embedding_json JSON 副本（约为向量本体的 2.5 倍冗余），`get()` 不再返回原始向量（仅 id/metadata，vec0 内部存储格式不做依赖假设）；向量表体积下降约 70%。
+
 ## [2026-08-17] 存储层迁入 SQLite 单库（Phase 1：会话/向量/索引清单）
 
 ### 重构 — SQLite 集成
@@ -10,6 +15,49 @@
 - `SessionPersistence` 公开接口不变，内部改 `sessions/messages/message_history` 表；删除会话置 `archived=1`（原 archive/ 归档语义）。
 - 旧文件布局（vectors.json/index_manifest.json/sessions/archive）启动时清理，不做数据迁移（未发布）。
 - NovelAgentApp 装配整体切换：向量库/持久化/索引服务共用 novel.db 单连接；`test_retrieval.cpp` 用例全部迁到 SqliteVectorStore。
+
+## [2026-08-17] 重组 agent 模块目录：会话组件归入 session/，长期记忆改 longterm/
+
+### 重构 — 目录语义对齐
+- `src/agent/core/SessionPool.{h,cpp}`、`SessionRuntime.{h,cpp}` 移入 `src/agent/session/`
+  （与会话持久化 SessionPersistence 同目录，core/ 只保留 Agent 门面 + AgentState/CoreLoop/ExecutionTracer 执行引擎）。
+- `src/agent/memory/` 更名为 `src/agent/longterm/`（仅含长期记忆存储 LongTermMemoryStore，原名易与 context/Memory.h 混淆）。
+- 受影响引用全部更新：`core/Agent.h/.cpp`、`session/SessionPool.h/.cpp`、`session/SessionRuntime.cpp`、
+  `NovelAgentApp.h`、`tools/SaveMemoryTool.cpp`、`index/ProjectIndexService.cpp`、
+  `tests/test_context_manager.cpp`、`tests/test_index_manifest.cpp`、`tests/test_agent.cpp`（补直接 include）、
+  `cmake/Sources.cmake` 目录段同步调整。
+- 文件移动使用 `git mv`，无内容变更，历史可追溯。
+
+## [2026-08-17] 移除 SIGINT（Ctrl+C）取消机制 — 暂停改由前端按钮负责
+
+### 清理 — 冗余取消路径
+- 背景：多会话并行 + GUI 化后，暂停已由前端按钮触发（`AgentPanel.qml → QmlBridge::cancelRequest()
+  → Agent::requestCancel() → 按会话置 cancel_requested_`）。SIGINT 仅是同一标志的另一条置位路径
+  （`g_cancel_flag` 指向当前会话的 cancelFlag），且 GUI 模式下手动 SIGINT 语义模糊，故整体移除。
+- `src/Bootstrap.h`：**删除**（内容仅为 SIGINT handler + g_cancel_flag + installSigint）。
+- `src/main_gui.cpp`：移除 include 与 `installSigint()` 调用。
+- `src/novelagent_qt/QmlBridge.cpp`：移除 include 与 3 处 `g_cancel_flag` 管理（析构/rebuildApp）。
+- 死代码清理：`Agent::cancelFlag()`、`SessionRuntime::cancelFlag()`（仅为 SIGINT 接线存在的访问器）。
+- 效果：Ctrl+C 恢复进程默认行为；优雅退出/重建路径不变（窗口关闭 → QmlBridge 析构 → shutdown）。
+
+## [2026-08-17] 清理过时/失效文档（15 个）
+
+### 清理 — 一次性方案、评审快照与过期状态文档
+- **已实施的计划/方案**：`design/QT_INTEGRATION_PLAN.md`（Qt 迁移已完成，且"保留 CLI"与现状不符）、
+  `superpowers/plans/2026-07-26-moran-ui-redesign.md` + `specs/2026-07-26-moran-ui-redesign-design.md`
+  （墨染 UI 改版已落地）、`superpowers/plans/2026-07-30-yaml-cpp-integration.md`（yaml-cpp 已集成）、
+  `superpowers/plans/2026-07-30-global-rules-layer.md`（全局/项目双层规则层已落地）。
+- **状态过时的设计文档**：`design/PROGRESSIVE_TOOL_LOADING.md`（标注"未实现"，实际 ProgressiveToolProvider
+  已实现并接入）、`design/CONTEXTUAL_TOOL_PROVIDER_STATUS.md`（组件从未接入，已被渐进式方案取代）。
+- **未采纳/被取代的方案**：`plan/QUEUE_QT_INTEGRATION_PLAN_2026-07-20.md`（队列方案未实施，被多会话并行架构
+  取代）、`plan/TOOL_CALL_IMPROVEMENT_PLAN_2026-07-20.md`（混合状态无更新，引用旧架构）。
+- **结案的评审快照**：`review/CONCURRENT_INPUT_HANDLING_2026-07-19.md`（方案 A 未采纳，实际走多会话并行）、
+  `review/PIN_STALE_DATA_REVIEW_2026-07-19.md`（"未修复"结论过时，kMaxAutoPinned=12 已解决）、
+  `review/QUANTCLAW_REFERENCE_REVIEW_2026-07-20.md`、`review/SIGINT_HANDLING_REVIEW_2026-07-27.md`（结论"无需修复"）、
+  `review/MULTI_SESSION_PARALLEL_REVIEW_2026-08-03.md` + `MULTI_SESSION_PARALLEL_REFERENCE_2026-08-04.md`（蓝图已落地）。
+- **保留**：`DEV_GUIDE.md`、`design/CONTEXT_OVERFLOW_RECOVERY.md`（实现记录仍有效）、`review/DESIGN_REVIEW.md`、
+  `review/REVIEW_STATUS.md`（已更新过时章节）、`design/TOOL_CHAIN_DESIGN.md`（chain 工具设计提案）。
+- `REVIEW_STATUS.md`：§〇 多会话评审标记为已实施；过时引用（已删文档/待定状态）全部修正为结案说明。
 
 ## [2026-08-05] 修复 createPoolSession 未同步池焦点（取消按钮失效回归）
 
