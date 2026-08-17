@@ -89,7 +89,6 @@ set(NOVELAGENT_AGENT
     src/agent/session/SessionRuntime.h src/agent/session/SessionRuntime.cpp
     # index/
     src/agent/index/IIndexService.h
-    src/agent/index/IndexManifest.h src/agent/index/IndexManifest.cpp
     src/agent/index/ProjectIndexService.h src/agent/index/ProjectIndexService.cpp
     # longterm/（长期记忆存储）
     src/agent/longterm/LongTermMemoryStore.h src/agent/longterm/LongTermMemoryStore.cpp

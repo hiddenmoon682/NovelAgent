@@ -122,5 +122,5 @@ void NovelAgentApp::setupSummarySinkAndIndexService()
     // 无需此处注册 sink 回调（压缩时按会话自身 id 落盘 <id>.history）。
 
     index_service_ = std::make_unique<agent::ProjectIndexService>(
-        project_access_, vector_store_, embedding_gen_, &ltm_store_);
+        project_access_, sqlite_store_, embedding_gen_, &ltm_store_);
 }

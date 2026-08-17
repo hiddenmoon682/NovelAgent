@@ -92,6 +92,11 @@ public:
     // 重启后同维度调用短路不重建。
     // 注意：DROP 会清空全部向量，调用者须在指纹失配等语义下使用。
     void ensureVectorTable(int dimension);
+    // 使向量表失效：DROP 表并清零维度缓存（下次 ensureVectorTable 重建）。
+    // 同时删除 kv_store 中的维度记录，保证重启后 restoreVectorDimension 恢复
+    // 为 0——否则残留旧维度会让同维度 ensureVectorTable 短路不建表，
+    // 导致后续 INSERT 落空。
+    void resetVectorTable();
     int vectorDimension() const { return vector_dimension_; }
 
 private:

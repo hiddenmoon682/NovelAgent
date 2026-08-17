@@ -156,6 +156,16 @@ void SqliteStore::ensureVectorTable(int dimension)
     spdlog::info("[SqliteStore] vec_chunks 已创建 (维度 {})", dimension);
 }
 
+void SqliteStore::resetVectorTable()
+{
+    db_->exec("DROP TABLE IF EXISTS vec_chunks");
+    // 同步清空 kv 中的维度记录：仅清零内存缓存会在重启时由
+    // restoreVectorDimension 恢复旧维度，导致同维度 ensureVectorTable
+    // 短路不重建表，后续 INSERT 落空（no such table）。
+    db_->exec("DELETE FROM kv_store WHERE key = 'vector_dimension'");
+    vector_dimension_ = 0;
+}
+
 void SqliteStore::ensureSchema()
 {
     db_->exec("PRAGMA journal_mode=WAL");

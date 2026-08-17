@@ -1,21 +1,27 @@
-// ProjectIndexService 实现 — 基于内容哈希清单的增量索引。
+// ProjectIndexService 实现 — 基于内容哈希清单的增量索引（SQLite 单事务）。
 
 #include "agent/index/ProjectIndexService.h"
 
-#include "agent/memory/LongTermMemoryStore.h"
+#include "agent/longterm/LongTermMemoryStore.h"
 #include "project/Models/Project.h"
 #include "project/ProjectAccess.h"
 #include "project/ProjectIO.h"
 #include "retrieval/IEmbeddingGenerator.h"
-#include "retrieval/IVectorStore.h"
 #include "retrieval/NovelChunker.h"
+#include "storage/SqliteStore.h"
 
+#include <SQLiteCpp/Statement.h>
 #include <spdlog/spdlog.h>
-#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cinttypes>
+#include <cstdio>
 #include <map>
+#include <string>
+#include <vector>
+
+using json = nlohmann::json;
 
 namespace agent {
 
@@ -27,34 +33,108 @@ struct PendingSource {
     std::vector<retrieval::TextChunk> chunks;
 };
 
+// 清单历史条目（SQL 快照，供哈希比对与孤儿清理）。
+struct PrevEntry {
+    std::string content_hash;
+    std::vector<std::string> chunk_ids;
+};
+
 int64_t nowEpochSeconds() {
     return std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+// FNV-1a 64 位内容哈希（与旧 IndexManifest::hashContent 算法一致）。
+std::string hashContent(const std::string& content)
+{
+    uint64_t hash = 14695981039346656037ULL;
+    for (unsigned char c : content) {
+        hash ^= c;
+        hash *= 1099511628211ULL;
+    }
+    char buf[17];
+    std::snprintf(buf, sizeof(buf), "%016" PRIx64, hash);
+    return std::string(buf);
+}
+
+// 解析 kv_store 中存储的整数；空串/非法返回 0。
+int parseInt(const std::string& s)
+{
+    if (s.empty()) return 0;
+    try {
+        return std::stoi(s);
+    } catch (...) {
+        return 0;
+    }
 }
 
 } // namespace
 
 ProjectIndexService::ProjectIndexService(
     std::shared_ptr<ProjectAccess> access,
-    retrieval::IVectorStore& vs,
+    storage::SqliteStore& sqlite,
     retrieval::IEmbeddingGenerator& eg,
     LongTermMemoryStore* memory_store)
     : project_access_(std::move(access))
-    , vector_store_(vs)
+    , sqlite_(sqlite)
     , embedding_gen_(eg)
     , memory_store_(memory_store)
 {}
 
-std::string ProjectIndexService::manifestPath() const
+namespace {
+
+// 读取全部清单条目（source_key → {hash, chunk_ids}）（锁内调用）。
+std::map<std::string, PrevEntry> loadAllPrevEntries(SQLite::Database& db)
 {
-    return project_access_->path() + "/.novelagent/index_manifest.json";
+    std::map<std::string, PrevEntry> out;
+    SQLite::Statement stmt(db,
+        "SELECT src.source_key, src.content_hash, ch.chunk_id "
+        "FROM index_sources src "
+        "LEFT JOIN index_chunks ch ON ch.source_key = src.source_key "
+        "ORDER BY src.source_key");
+    while (stmt.executeStep()) {
+        const std::string key = stmt.getColumn(0).getString();
+        if (!stmt.getColumn(1).isNull()) {
+            out[key].content_hash = stmt.getColumn(1).getString();
+        }
+        if (!stmt.getColumn(2).isNull()) {
+            out[key].chunk_ids.push_back(stmt.getColumn(2).getString());
+        }
+    }
+    return out;
 }
+
+// 删除指定源的向量与清单（锁内调用）。
+void deleteSourceVectorsAndManifest(SQLite::Database& db, const std::string& key,
+                                    const PrevEntry& prev)
+{
+    for (const auto& id : prev.chunk_ids) {
+        SQLite::Statement del(db, "DELETE FROM vec_chunks WHERE chunk_id = ?");
+        del.bind(1, id);
+        del.exec();
+    }
+    SQLite::Statement del(db, "DELETE FROM index_sources WHERE source_key = ?");
+    del.bind(1, key);
+    del.exec();
+}
+
+// 写模型指纹（dim==0 且模型没变时保留已知维度，防清零静默失效）。
+void writeFingerprint(storage::SqliteStore& s, const std::string& model, int dim)
+{
+    int final_dim = dim;
+    if (dim == 0 && model == s.getKV("embedding_model")) {
+        final_dim = parseInt(s.getKV("embedding_dimension"));
+    }
+    s.setKV("embedding_model", model);
+    s.setKV("embedding_dimension", std::to_string(final_dim));
+}
+
+} // namespace
 
 IndexResult ProjectIndexService::indexAll(
     std::function<void(const std::string&)> progress,
     bool force)
 {
-    // E8：内部互斥串行化——多会话完成回调可并发调用 indexAll
     std::lock_guard<std::mutex> lock(index_mutex_);
     IndexResult result;
 
@@ -62,36 +142,63 @@ IndexResult ProjectIndexService::indexAll(
         result.error = "未打开项目";
         return result;
     }
+    if (!sqlite_.isOpen()) {
+        result.error = "SQLite 库未打开";
+        return result;
+    }
 
     auto report = [&](const std::string& msg) {
         if (progress) progress(msg);
     };
 
-    IndexManifest manifest;
-    manifest.load(manifestPath());
-
-    // ── 模型指纹校验：模型/维度变化时整库失效 ──
     const std::string model = embedding_gen_.modelName();
-    bool store_dirty = false;  // 向量库有未落盘的删除时置位（早退分支也需 flush）
-    if (force || !manifest.fingerprintMatches(model, embedding_gen_.dimension())) {
-        if (!manifest.sources().empty()) {
-            report(force ? "强制全量重建索引..."
-                         : "嵌入模型已变更 (" + manifest.embeddingModel() + " → "
-                           + model + ")，整库重建...");
-            for (const auto& id : manifest.allChunkIds()) {
-                vector_store_.remove(id);
-            }
-            manifest.clear();
-            store_dirty = true;
+    const int dim = embedding_gen_.dimension();
+
+    // ── 模型指纹校验：模型/维度变化或强制时整库失效（单事务）──
+    // 注：不可在 withLock 回调内再调 inTransaction（同锁不可重入），
+    // 校验与失效合并进同一个 inTransaction。
+    bool wiped = false;
+    std::string wipe_reason;
+    sqlite_.inTransaction([&](storage::SqliteStore& s) {
+        const std::string saved_model = s.getKV("embedding_model");
+        const int saved_dim = parseInt(s.getKV("embedding_dimension"));
+        std::map<std::string, PrevEntry> prevs = loadAllPrevEntries(s.db());
+        const bool has_sources = !prevs.empty();
+
+        const bool incompatible =
+            !saved_model.empty() && saved_model != model;
+        const bool dim_changed =
+            saved_dim != 0 && dim != 0 && saved_dim != dim;
+        const bool orphan_fingerprint =
+            saved_model.empty() && has_sources;  // 有源但无指纹（异常态）
+
+        if (force && has_sources) {
+            wipe_reason = "强制全量重建索引...";
+        } else if (incompatible || dim_changed || orphan_fingerprint) {
+            wipe_reason = "嵌入模型已变更 (" + saved_model + " → "
+                        + model + ")，整库重建...";
         }
-    }
 
-    // ── 收集当前项目的全部索引源，变更的才切分 ──
+        if (!wipe_reason.empty()) {
+            s.resetVectorTable();   // DROP vec_chunks + 清维度缓存（写入时重建）
+            s.db().exec("DELETE FROM index_sources");  // 级联清空 index_chunks
+            s.setKV("embedding_model", "");
+            s.setKV("embedding_dimension", "");
+            wiped = true;
+        }
+    });
+    if (wiped) report(wipe_reason);
+
+    // ── 收集当前项目的全部索引源并读取前次清单快照 ──
     retrieval::NovelChunker chunker;
-    std::map<std::string, PendingSource> desired;   // source_key → 待处理源
-    std::vector<std::string> unchanged_keys;        // 哈希未变的源
+    std::map<std::string, PendingSource> desired;
+    std::vector<std::string> unchanged_keys;
 
-    // 锁内拷贝快照（共享锁）；文件读取/切分/哈希等耗时计算全部在锁外
+    std::map<std::string, PrevEntry> prevs;
+    sqlite_.withLock([&](storage::SqliteStore& s) {
+        prevs = loadAllPrevEntries(s.db());
+    });
+
     std::vector<Chapter> chapters;
     std::vector<Character> chars;
     std::vector<Setting> settings;
@@ -104,7 +211,6 @@ IndexResult ProjectIndexService::indexAll(
         world_rules = p.world_rules;
     });
 
-    // 章节：内容 = Markdown 正文
     for (const auto& ch : chapters) {
         if (ch.file_path.empty()) continue;
         std::string md = ProjectIO::readChapter(project_path, ch.file_path);
@@ -112,9 +218,9 @@ IndexResult ProjectIndexService::indexAll(
         ++result.chapters;
 
         const std::string key = "chapter:" + ch.id;
-        const std::string hash = IndexManifest::hashContent(md);
-        const ManifestEntry* prev = manifest.find(key);
-        if (prev && prev->content_hash == hash) {
+        const std::string hash = hashContent(md);
+        const auto it = prevs.find(key);
+        if (it != prevs.end() && it->second.content_hash == hash) {
             unchanged_keys.push_back(key);
             continue;
         }
@@ -124,12 +230,11 @@ IndexResult ProjectIndexService::indexAll(
         desired[key] = std::move(ps);
     }
 
-    // 单 chunk 实体源的通用处理
     auto collectEntity = [&](const std::string& key, const std::string& text,
                              retrieval::TextChunk chunk) {
-        const std::string hash = IndexManifest::hashContent(text);
-        const ManifestEntry* prev = manifest.find(key);
-        if (prev && prev->content_hash == hash) {
+        const std::string hash = hashContent(text);
+        const auto it = prevs.find(key);
+        if (it != prevs.end() && it->second.content_hash == hash) {
             unchanged_keys.push_back(key);
             return;
         }
@@ -146,7 +251,6 @@ IndexResult ProjectIndexService::indexAll(
         collectEntity("char:" + c.id, text,
                       retrieval::TextChunk::characterChunk(c.id, text));
     }
-
     for (const auto& s : settings) {
         std::string text = retrieval::NovelChunker::chunkSetting(s);
         if (text.empty()) continue;
@@ -154,7 +258,6 @@ IndexResult ProjectIndexService::indexAll(
         collectEntity("setting:" + s.id, text,
                       retrieval::TextChunk::settingChunk(s.id, text));
     }
-
     for (const auto& r : world_rules) {
         std::string text = retrieval::NovelChunker::chunkWorldRule(r);
         if (text.empty()) continue;
@@ -163,7 +266,6 @@ IndexResult ProjectIndexService::indexAll(
                       retrieval::TextChunk::worldRuleChunk(r.id, text));
     }
 
-    // 长期记忆：日志为事实源，向量为派生索引
     if (memory_store_ && memory_store_->initialized()) {
         for (const auto& m : memory_store_->entries()) {
             if (m.text.empty()) continue;
@@ -182,25 +284,22 @@ IndexResult ProjectIndexService::indexAll(
         }
     }
 
-    // ── 孤儿清理：清单中存在但项目中已删除的源 ──
+    // ── 孤儿清理：清单中存在但项目中已删除的源（单事务）──
     {
-        std::vector<std::string> orphans;
-        for (const auto& [key, entry] : manifest.sources()) {
-            bool alive = desired.count(key) > 0
-                || std::find(unchanged_keys.begin(), unchanged_keys.end(), key)
-                   != unchanged_keys.end();
-            if (!alive) orphans.push_back(key);
-        }
-        for (const auto& key : orphans) {
-            const ManifestEntry* entry = manifest.find(key);
-            if (entry) {
-                for (const auto& id : entry->chunk_ids) {
-                    vector_store_.remove(id);
+        int removed = 0;
+        sqlite_.inTransaction([&](storage::SqliteStore& s) {
+            SQLite::Database& db = s.db();
+            for (const auto& [key, prev] : prevs) {
+                const bool alive = desired.count(key) > 0
+                    || std::find(unchanged_keys.begin(), unchanged_keys.end(), key)
+                       != unchanged_keys.end();
+                if (!alive) {
+                    deleteSourceVectorsAndManifest(db, key, prev);
+                    ++removed;
                 }
             }
-            manifest.erase(key);
-            ++result.removed_sources;
-        }
+        });
+        result.removed_sources = removed;
     }
 
     result.skipped_sources = static_cast<int>(unchanged_keys.size());
@@ -211,23 +310,12 @@ IndexResult ProjectIndexService::indexAll(
          + std::to_string(result.removed_sources) + " 个已删除");
 
     if (desired.empty()) {
-        // 无内容变化：仅孤儿清理发生时才落盘向量库，避免每次响应后全量重写 vectors.json。
-        // 顺序必须先向量库后清单：清单落后于向量库只会导致下次重嵌入（安全），
-        // 反之哈希跳过机制会让缺失的向量永不被补齐。
-        if (result.removed_sources > 0 || store_dirty) {
-            try {
-                vector_store_.flush();
-            } catch (const std::exception& e) {
-                result.error = std::string("向量库落盘失败: ") + e.what();
-                return result;
-            }
-        }
-        manifest.setModelFingerprint(model, embedding_gen_.dimension());
-        // D3: 与下方全量路径保持一致——清单写失败不影响向量正确性，下次索引会重试
-        try {
-            manifest.save(manifestPath());
-        } catch (const std::exception& e) {
-            spdlog::warn("[ProjectIndexService] 清单保存失败（下次将重试）: {}", e.what());
+        // 无内容变化：若刚执行过整库失效，补写指纹（与旧实现的 setModelFingerprint
+        // 时机一致），确保下次运行不会因空指纹反复重建。
+        if (wiped) {
+            sqlite_.withLock([&](storage::SqliteStore& s) {
+                writeFingerprint(s, model, dim);
+            });
         }
         report("向量索引已是最新，无需重建");
         return result;
@@ -235,7 +323,7 @@ IndexResult ProjectIndexService::indexAll(
 
     // ── 批量嵌入所有变更源的 chunks ──
     std::vector<std::string> texts;
-    std::vector<std::pair<std::string, size_t>> chunk_owner;  // (source_key, chunk 下标)
+    std::vector<std::pair<std::string, size_t>> chunk_owner;
     for (const auto& [key, ps] : desired) {
         for (size_t i = 0; i < ps.chunks.size(); ++i) {
             texts.push_back(ps.chunks[i].text);
@@ -250,7 +338,6 @@ IndexResult ProjectIndexService::indexAll(
     try {
         embeddings = embedding_gen_.generateEmbeddings(texts);
     } catch (const std::exception& e) {
-        // 嵌入失败不写清单——下次索引会重试这批源，向量库保持旧数据可用
         result.error = std::string("嵌入生成失败: ") + e.what();
         return result;
     }
@@ -261,47 +348,56 @@ IndexResult ProjectIndexService::indexAll(
         return result;
     }
 
-    // ── 写入向量库：先删旧 chunk，再插新 chunk，最后更新清单 ──
+    // ── 单事务提交：删旧向量 → 写清单 → 插新向量 → 写指纹 ──
     const int64_t now = nowEpochSeconds();
-    for (auto& [key, ps] : desired) {
-        if (const ManifestEntry* prev = manifest.find(key)) {
-            for (const auto& id : prev->chunk_ids) {
-                vector_store_.remove(id);   // 旧 chunk 数可能多于新 chunk 数
+    sqlite_.inTransaction([&](storage::SqliteStore& s) {
+        SQLite::Database& db = s.db();
+        // 向量表维度（以本批嵌入为准；首启建表/维度变更在此完成）
+        s.ensureVectorTable(static_cast<int>(embeddings.front().size()));
+
+        for (auto& [key, ps] : desired) {
+            const auto it = prevs.find(key);
+            if (it != prevs.end()) {
+                deleteSourceVectorsAndManifest(db, key, it->second);
+            }
+            SQLite::Statement ins_src(db,
+                "INSERT INTO index_sources (source_key, content_hash, updated_at)"
+                " VALUES (?, ?, ?)");
+            ins_src.bind(1, key);
+            ins_src.bind(2, ps.content_hash);
+            ins_src.bind(3, static_cast<long long>(now));
+            ins_src.exec();
+
+            SQLite::Statement ins_chunk(db,
+                "INSERT INTO index_chunks (source_key, chunk_id) VALUES (?, ?)");
+            for (const auto& c : ps.chunks) {
+                ins_chunk.bind(1, key);
+                ins_chunk.bind(2, c.id);
+                ins_chunk.exec();
             }
         }
-        ManifestEntry entry;
-        entry.content_hash = ps.content_hash;
-        entry.updated_at = now;
-        for (const auto& c : ps.chunks) {
-            entry.chunk_ids.push_back(c.id);
-        }
-        manifest.upsert(key, std::move(entry));
-    }
-    for (size_t i = 0; i < chunk_owner.size(); ++i) {
-        const auto& [key, ci] = chunk_owner[i];
-        const auto& chunk = desired[key].chunks[ci];
-        vector_store_.insert(chunk.id, embeddings[i], chunk.metadata);
-    }
 
-    // 先落盘向量库，成功后再写清单——反序时若 flush 失败/中途崩溃，
-    // 清单已声明“已按新哈希索引”，哈希跳过机制会让缺失的向量永不被补齐
-    try {
-        vector_store_.flush();
-    } catch (const std::exception& e) {
-        result.error = std::string("向量库落盘失败: ") + e.what();
-        return result;
-    }
-    manifest.setModelFingerprint(model, embedding_gen_.dimension());
-    try {
-        manifest.save(manifestPath());
-    } catch (const std::exception& e) {
-        // 清单写失败不影响向量正确性：下次索引会重嵌入本批源
-        spdlog::warn("[ProjectIndexService] 清单保存失败（下次将重试）: {}", e.what());
-    }
+        SQLite::Statement ins_vec(db,
+            "INSERT INTO vec_chunks (chunk_id, metadata, embedding_json, embedding)"
+            " VALUES (?, ?, ?, ?)");
+        for (size_t i = 0; i < chunk_owner.size(); ++i) {
+            const auto& [key, ci] = chunk_owner[i];
+            const auto& chunk = desired[key].chunks[ci];
+            const auto& emb = embeddings[i];
+            ins_vec.bind(1, chunk.id);
+            ins_vec.bind(2, chunk.metadata.dump());
+            nlohmann::json j = emb;
+            ins_vec.bind(3, j.dump());
+            ins_vec.bind(4, j.dump());
+            ins_vec.exec();
+        }
+
+        writeFingerprint(s, model, embeddings.front().size());
+    });
 
     report("向量索引已更新: " + std::to_string(result.total_chunks) + " 个片段 ("
          + std::to_string(result.updated_sources) + " 个源) → "
-         + project_path + "/.novelagent/vectors.json");
+         + project_path + "/.novelagent/novel.db");
     return result;
 }
 

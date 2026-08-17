@@ -325,6 +325,36 @@ void test_kv_roundtrip() {
     PASS();
 }
 
+void test_index_tables_cascade() {
+    TEST("index_sources/index_chunks — 级联删除与外键");
+    const std::string db_path = tmpPath("tmp_test_store_cascade.db");
+    cleanup(db_path);
+
+    storage::SqliteStore store;
+    store.open(db_path);
+    store.withLock([&](storage::SqliteStore& s) {
+        {
+            SQLite::Statement ins(s.db(),
+                "INSERT INTO index_sources (source_key, content_hash, updated_at)"
+                " VALUES ('chapter:ch-001', 'abc', 1)");
+            ins.exec();
+            SQLite::Statement ins2(s.db(),
+                "INSERT INTO index_chunks (source_key, chunk_id) VALUES ('chapter:ch-001', 'ch-001-0')");
+            ins2.exec();
+        }
+        {
+            SQLite::Statement del(s.db(), "DELETE FROM index_sources WHERE source_key = 'chapter:ch-001'");
+            del.exec();
+        }
+        SQLite::Statement c(s.db(), "SELECT COUNT(*) FROM index_chunks");
+        c.executeStep();
+        CHECK(c.getColumn(0).getInt() == 0);  // 级联清空
+    });
+    store.close();
+    cleanup(db_path);
+    PASS();
+}
+
 int main() {
     std::cout << "=== test_sqlite_store ===\n\n";
     test_open_close();
@@ -337,6 +367,7 @@ int main() {
     test_vec0_drop_recreate_in_txn();
     test_reopen_keeps_vector_data();
     test_kv_roundtrip();
+    test_index_tables_cascade();
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;
 }

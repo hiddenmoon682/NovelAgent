@@ -13,7 +13,7 @@ foreach(name test_main test_models test_project_io test_prompt_context
              test_token_counter test_sse_parser test_llm_client
              test_context_manager test_retrieval test_file_utils test_app_config
              test_parameter_validator test_thread_pool test_memory
-             test_index_manifest test_id_utils test_rules_provider
+             test_id_utils test_rules_provider
              test_project_lock test_sqlite_store test_sqlite_vector_store
              test_session_sqlite)
     add_novelagent_test(${name} novelagent_core_prelinked)
@@ -44,7 +44,7 @@ if(WIN32 AND EXISTS "${NOVELAGENT_TOOLCHAIN_BIN}")
                    test_token_counter test_sse_parser test_llm_client
                    test_context_manager test_retrieval test_file_utils test_app_config
                    test_parameter_validator test_thread_pool test_memory
-                   test_index_manifest test_id_utils test_rules_provider
+                   test_id_utils test_rules_provider
                    test_project_lock test_sqlite_store test_sqlite_vector_store
                    test_session_sqlite)
     set(TOOLS_TESTS test_tool_registry test_agent test_chapter_tools
