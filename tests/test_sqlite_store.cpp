@@ -177,7 +177,7 @@ void test_corrupt_recover() {
 // ── vec0 虚拟表能力（spike 核验，锁定用法）──
 
 void test_vec0_additional_columns() {
-    TEST("vec0 — 附加列读写（chunk_id/metadata/embedding_json + embedding）");
+    TEST("vec0 — 附加列读写（chunk_id/metadata）");
     const std::string db_path = tmpPath("tmp_test_vec0_additional.db");
     cleanup(db_path);
 
@@ -189,12 +189,11 @@ void test_vec0_additional_columns() {
 
         // 插入：附加列 + JSON 形式绑定向量
         SQLite::Statement ins(db,
-            "INSERT INTO vec_chunks(chunk_id, metadata, embedding_json, embedding) "
-            "VALUES(?, ?, ?, ?)");
+            "INSERT INTO vec_chunks(chunk_id, metadata, embedding) "
+            "VALUES(?, ?, ?)");
         ins.bind(1, "ch-001-seg-0");
         ins.bind(2, "{\"type\":\"chapter\"}");
         ins.bind(3, "[0.1,0.2,0.3,0.4]");
-        ins.bind(4, "[0.1,0.2,0.3,0.4]");
         ins.exec();
 
         // 附加列可查询（kNN 返回时携带）
@@ -223,9 +222,9 @@ void test_vec0_cosine_mapping() {
 
         auto insert = [&](const std::string& id, const std::string& vec) {
             SQLite::Statement ins(db,
-                "INSERT INTO vec_chunks(chunk_id, metadata, embedding_json, embedding) "
-                "VALUES(?, '{}', ?, ?)");
-            ins.bind(1, id); ins.bind(2, vec); ins.bind(3, vec);
+                "INSERT INTO vec_chunks(chunk_id, metadata, embedding) "
+                "VALUES(?, '{}', ?)");
+            ins.bind(1, id); ins.bind(2, vec);
             ins.exec();
         };
         insert("same", "[1.0,1.0]");
@@ -267,8 +266,8 @@ void test_vec0_drop_recreate_in_txn() {
         s.ensureVectorTable(4);
         {
             SQLite::Statement ins(s.db(),
-                "INSERT INTO vec_chunks(chunk_id, metadata, embedding_json, embedding) "
-                "VALUES('old', '{}', '[0.1,0.2,0.3,0.4]', '[0.1,0.2,0.3,0.4]')");
+                "INSERT INTO vec_chunks(chunk_id, metadata, embedding) "
+                "VALUES('old', '{}', '[0.1,0.2,0.3,0.4]')");
             ins.exec();
         }
         // 重置维度 → DROP 重建
@@ -293,8 +292,8 @@ void test_reopen_keeps_vector_data() {
         store.withLock([&](storage::SqliteStore& s) {
             s.ensureVectorTable(4);
             SQLite::Statement ins(s.db(),
-                "INSERT INTO vec_chunks(chunk_id, metadata, embedding_json, embedding) "
-                "VALUES('keep-1', '{}', '[0.1,0.2,0.3,0.4]', '[0.1,0.2,0.3,0.4]')");
+                "INSERT INTO vec_chunks(chunk_id, metadata, embedding) "
+                "VALUES('keep-1', '{}', '[0.1,0.2,0.3,0.4]')");
             ins.exec();
         });
     }  // 析构即 close，模拟一次完整启停
@@ -501,8 +500,8 @@ void test_index_all_dedup_direct_rows() {
     store.withLock([&](storage::SqliteStore& s) {
         s.ensureVectorTable(gen.dimension());  // 与 fake 生成器维度一致，防 DROP
         SQLite::Statement ins(s.db(),
-            "INSERT INTO vec_chunks(chunk_id, metadata, embedding_json, embedding) "
-            "VALUES(?, '{}', '[0.1,0.2,0.3,0.4]', '[0.1,0.2,0.3,0.4]')");
+            "INSERT INTO vec_chunks(chunk_id, metadata, embedding) "
+            "VALUES(?, '{}', '[0.1,0.2,0.3,0.4]')");
         ins.bind(1, first_id);
         ins.exec();
     });

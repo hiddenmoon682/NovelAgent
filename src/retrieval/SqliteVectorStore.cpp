@@ -21,22 +21,6 @@ std::string vecToJson(const EmbeddingVector& v)
     return j.dump();
 }
 
-// 从 embedding_json 列还原向量。
-EmbeddingVector parseEmbeddingJson(const std::string& s)
-{
-    EmbeddingVector out;
-    try {
-        auto j = nlohmann::json::parse(s);
-        if (!j.is_array()) return out;
-        for (const auto& val : j) {
-            if (val.is_number()) out.push_back(val.get<float>());
-        }
-    } catch (...) {
-        // 列损坏时返回空向量（与旧实现 load 防御一致）
-    }
-    return out;
-}
-
 } // namespace
 
 bool SqliteVectorStore::vecTableReady() const
@@ -64,12 +48,11 @@ void SqliteVectorStore::insert(
         }
         const std::string vec_json = vecToJson(embedding);
         SQLite::Statement ins(db,
-            "INSERT INTO vec_chunks(chunk_id, metadata, embedding_json, embedding) "
-            "VALUES(?, ?, ?, ?)");
+            "INSERT INTO vec_chunks(chunk_id, metadata, embedding) "
+            "VALUES(?, ?, ?)");
         ins.bind(1, id);
         ins.bind(2, metadata.dump());
         ins.bind(3, vec_json);
-        ins.bind(4, vec_json);
         ins.exec();
     });
 }
@@ -94,12 +77,11 @@ void SqliteVectorStore::insertBatch(const std::vector<VectorEntry>& entries)
             }
             const std::string vec_json = vecToJson(entry.embedding);
             SQLite::Statement ins(db,
-                "INSERT INTO vec_chunks(chunk_id, metadata, embedding_json, embedding) "
-                "VALUES(?, ?, ?, ?)");
+                "INSERT INTO vec_chunks(chunk_id, metadata, embedding) "
+                "VALUES(?, ?, ?)");
             ins.bind(1, entry.id);
             ins.bind(2, entry.metadata.dump());
             ins.bind(3, vec_json);
-            ins.bind(4, vec_json);
             ins.exec();
         }
     });
@@ -150,12 +132,11 @@ void SqliteVectorStore::update(const std::string& id, const EmbeddingVector& emb
         }
         const std::string vec_json = vecToJson(embedding);
         SQLite::Statement ins(db,
-            "INSERT INTO vec_chunks(chunk_id, metadata, embedding_json, embedding) "
-            "VALUES(?, ?, ?, ?)");
+            "INSERT INTO vec_chunks(chunk_id, metadata, embedding) "
+            "VALUES(?, ?, ?)");
         ins.bind(1, id);
         ins.bind(2, meta.dump());
         ins.bind(3, vec_json);
-        ins.bind(4, vec_json);
         ins.exec();
     });
 }
@@ -215,7 +196,7 @@ std::optional<VectorEntry> SqliteVectorStore::get(const std::string& id) const
     if (!vecTableReady() || id.empty()) return std::nullopt;
     return store_.withLock([&](storage::SqliteStore& s) -> std::optional<VectorEntry> {
         SQLite::Statement stmt(s.db(),
-            "SELECT chunk_id, metadata, embedding_json FROM vec_chunks WHERE chunk_id = ?");
+            "SELECT chunk_id, metadata FROM vec_chunks WHERE chunk_id = ?");
         stmt.bind(1, id);
         if (!stmt.executeStep()) return std::nullopt;
         VectorEntry e;
@@ -225,7 +206,7 @@ std::optional<VectorEntry> SqliteVectorStore::get(const std::string& id) const
         } catch (...) {
             e.metadata = nlohmann::json::object();
         }
-        e.embedding = parseEmbeddingJson(stmt.getColumn(2).getString());
+        // 原始向量不落库（vec0 内部格式为实现细节），embedding 恒为空
         return e;
     });
 }

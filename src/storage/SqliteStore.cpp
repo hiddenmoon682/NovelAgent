@@ -142,13 +142,12 @@ void SqliteStore::ensureVectorTable(int dimension)
                      vector_dimension_, dimension);
     }
     db_->exec("DROP TABLE IF EXISTS vec_chunks");
-    // vec0 附加列：chunk_id/metadata/embedding_json 随行存储，可查询返回；
-    // embedding_json 保存原始向量（JSON），避免依赖 vec0 内部存储格式。
+    // 不保存原始向量的 JSON 副本：vec0 内部存储格式属实现细节，不做依赖假设，
+    // get() 仅返回 id 与 metadata，embedding 恒为空。
     const std::string ddl =
         "CREATE VIRTUAL TABLE vec_chunks USING vec0("
         "  chunk_id TEXT,"
         "  metadata TEXT,"
-        "  embedding_json TEXT,"
         "  embedding float[" + std::to_string(dimension) + "] distance_metric=cosine"
         ")";
     db_->exec(ddl);

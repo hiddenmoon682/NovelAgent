@@ -139,8 +139,8 @@ void test_vector_store_persistence() {
 
         auto entry = fx.store.get("persist-1");
         CHECK(entry.has_value());
-        CHECK(entry->embedding.size() == 3);
-        CHECK(std::abs(entry->embedding[0] - 0.1f) < 0.001f);
+        // 原始向量不落库：get() 仅返回 id/metadata，embedding 恒为空
+        CHECK(entry->metadata["key"] == "value1");
 
         fx.db.close();
     }
@@ -188,7 +188,7 @@ void test_vector_store_update() {
 
     auto entry = fx.store.get("up-1");
     CHECK(entry.has_value());
-    CHECK(std::abs(entry->embedding[0] - 0.9f) < 0.001f);
+    // 原始向量不落库：get() 仅返回 id/metadata，embedding 恒为空
 
     // 更新不存在的 id → 等同于 insert
     fx.store.update("up-2", {0.5f, 0.5f});

@@ -43,6 +43,8 @@ public:
     void flush() override {}
 
     // 与旧 VectorStore 兼容的查询：按 id 返回条目副本；未命中返回 nullopt。
+    // 仅返回 id 与 metadata：原始向量不落库（vec0 内部格式为实现细节），
+    // 故返回的 embedding 恒为空。
     std::optional<VectorEntry> get(const std::string& id) const;
 
 private:

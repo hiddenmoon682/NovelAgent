@@ -407,8 +407,8 @@ IndexResult ProjectIndexService::indexAll(
         }
 
         SQLite::Statement ins_vec(db,
-            "INSERT INTO vec_chunks (chunk_id, metadata, embedding_json, embedding)"
-            " VALUES (?, ?, ?, ?)");
+            "INSERT INTO vec_chunks (chunk_id, metadata, embedding)"
+            " VALUES (?, ?, ?)");
         for (size_t i = 0; i < chunk_owner.size(); ++i) {
             const auto& [key, ci] = chunk_owner[i];
             const auto& chunk = desired[key].chunks[ci];
@@ -417,7 +417,6 @@ IndexResult ProjectIndexService::indexAll(
             ins_vec.bind(2, chunk.metadata.dump());
             nlohmann::json j = emb;
             ins_vec.bind(3, j.dump());
-            ins_vec.bind(4, j.dump());
             ins_vec.exec();
             ins_vec.reset();  // 复用 Statement 需复位：exec 后 mbDone=true，二次 exec 会抛 SQLITE_MISUSE
         }

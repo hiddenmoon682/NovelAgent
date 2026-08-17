@@ -130,7 +130,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
 );
 ```
 
-> 实现补充：vec_chunks 增加附加列 `embedding_json TEXT`（原始向量 JSON）。理由：vec0 内部存储格式属实现细节，不做依赖假设；`get()` 需按原样还原向量，借此列往返。
+> 实现补充（2026-08-17 修订）：向量不落 JSON 副本（vec_chunks 仅 chunk_id/metadata/embedding 三列），get() 不返回 embedding（vec0 内部格式为实现细节，不做依赖）。
 
 ## 7. 模块改造映射
 

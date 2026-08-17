@@ -88,7 +88,6 @@ void test_insert_overwrite() {
     auto e = fx.store.get("a");
     CHECK(e.has_value());
     CHECK(e->metadata["v"] == 2);
-    CHECK(std::abs(e->embedding[0] - 0.0f) < 1e-6f);
 
     fx.db.close();
     cleanup(db_path);
@@ -112,8 +111,6 @@ void test_persistence_across_reopen() {
         CHECK(fx.store.contains("persist-1"));
         auto entry = fx.store.get("persist-1");
         CHECK(entry.has_value());
-        CHECK(entry->embedding.size() == 3);
-        CHECK(std::abs(entry->embedding[0] - 0.1f) < 0.001f);
         CHECK(entry->metadata["key"] == "value1");
         fx.db.close();
     }
@@ -150,7 +147,6 @@ void test_update() {
     fx.store.update("up-1", {0.9f, 0.8f});
     auto entry = fx.store.get("up-1");
     CHECK(entry.has_value());
-    CHECK(std::abs(entry->embedding[0] - 0.9f) < 0.001f);
     CHECK(entry->metadata["keep"] == "me");
 
     // 更新不存在的 id → 等价 insert（空元数据）
