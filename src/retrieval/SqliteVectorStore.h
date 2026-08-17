@@ -27,6 +27,8 @@ public:
     void insert(const std::string& id,
                 const EmbeddingVector& embedding,
                 const nlohmann::json& metadata) override;
+    // 批量插入。批次内维度以首条为准，混维条目会因 ensureVectorTable DROP
+    // 重建而丢失——调用方须保证同批同维；空 id / 空向量条目会被过滤。
     void insertBatch(const std::vector<VectorEntry>& entries) override;
     bool remove(const std::string& id) override;
     void update(const std::string& id, const EmbeddingVector& embedding) override;
@@ -44,6 +46,14 @@ public:
     std::optional<VectorEntry> get(const std::string& id) const;
 
 private:
+    // 向量表是否就绪：仅当库已打开且记录过向量维度时 vec_chunks 才存在
+    //（ensureVectorTable 创建时写入 kv 维度记录，open 恢复该值）。
+    // vectorDimension()==0 ⇔ 表不存在——查询类操作（search/count/contains/
+    // get/remove）直接在此短路返回空值，避免 "no such table" 异常直达调用方
+    //（生产路径在索引建立前可能调用 search）。实现见 .cpp（SqliteStore 完整
+    // 类型仅在 .cpp 可用）。
+    bool vecTableReady() const;
+
     storage::SqliteStore& store_;
 };
 

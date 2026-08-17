@@ -272,6 +272,36 @@ void test_concurrent_read_write() {
     PASS();
 }
 
+void test_fresh_db_reads_safe() {
+    TEST("SqliteVectorStore — 新库未插入向量时查询安全（不抛异常）");
+    const std::string db_path = tmpPath("tmp_test_svvs_fresh.db");
+    cleanup(db_path);
+    Fixture fx(db_path);  // 打开库但从未插入任何向量 → vec_chunks 表不存在
+
+    CHECK(fx.store.search({0.1f, 0.1f}, 5).empty());
+    CHECK(fx.store.count() == 0);
+    CHECK(!fx.store.contains("x"));
+    CHECK(!fx.store.get("x").has_value());
+
+    fx.db.close();
+    cleanup(db_path);
+    PASS();
+}
+
+void test_not_open_reads_safe() {
+    TEST("SqliteVectorStore — 库未打开时查询安全（不抛异常）");
+    // 直接构造未 open 的 SqliteStore，绑定同一向量存储
+    storage::SqliteStore db;
+    retrieval::SqliteVectorStore store(db);
+
+    CHECK(store.search({0.1f, 0.1f}, 5).empty());
+    CHECK(store.count() == 0);
+    CHECK(!store.contains("x"));
+    CHECK(!store.get("x").has_value());
+
+    PASS();
+}
+
 int main() {
     std::cout << "=== test_sqlite_vector_store ===\n\n";
     test_insert_and_search();
@@ -284,6 +314,8 @@ int main() {
     test_search_metadata_roundtrip();
     test_dimension_mismatch_recreates();
     test_concurrent_read_write();
+    test_fresh_db_reads_safe();
+    test_not_open_reads_safe();
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;
 }

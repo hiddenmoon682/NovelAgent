@@ -39,12 +39,19 @@ EmbeddingVector parseEmbeddingJson(const std::string& s)
 
 } // namespace
 
+bool SqliteVectorStore::vecTableReady() const
+{
+    // 向量表与 kv 维度记录成对存在：ensureVectorTable 建表时写入维度，
+    // open 恢复该值；维度为 0 ⇔ 表不存在。
+    return store_.isOpen() && store_.vectorDimension() > 0;
+}
+
 void SqliteVectorStore::insert(
     const std::string& id,
     const EmbeddingVector& embedding,
     const nlohmann::json& metadata)
 {
-    if (!store_.isOpen() || embedding.empty()) return;
+    if (!store_.isOpen() || id.empty() || embedding.empty()) return;
     store_.inTransaction([&](storage::SqliteStore& s) {
         s.ensureVectorTable(static_cast<int>(embedding.size()));
         SQLite::Database& db = s.db();
@@ -55,13 +62,14 @@ void SqliteVectorStore::insert(
             del.bind(1, id);
             del.exec();
         }
+        const std::string vec_json = vecToJson(embedding);
         SQLite::Statement ins(db,
             "INSERT INTO vec_chunks(chunk_id, metadata, embedding_json, embedding) "
             "VALUES(?, ?, ?, ?)");
         ins.bind(1, id);
         ins.bind(2, metadata.dump());
-        ins.bind(3, vecToJson(embedding));
-        ins.bind(4, vecToJson(embedding));
+        ins.bind(3, vec_json);
+        ins.bind(4, vec_json);
         ins.exec();
     });
 }
@@ -71,7 +79,7 @@ void SqliteVectorStore::insertBatch(const std::vector<VectorEntry>& entries)
     if (!store_.isOpen() || entries.empty()) return;
     std::vector<VectorEntry> non_empty;
     for (const auto& e : entries) {
-        if (!e.embedding.empty()) non_empty.push_back(e);
+        if (!e.id.empty() && !e.embedding.empty()) non_empty.push_back(e);
     }
     if (non_empty.empty()) return;
 
@@ -84,13 +92,14 @@ void SqliteVectorStore::insertBatch(const std::vector<VectorEntry>& entries)
                 del.bind(1, entry.id);
                 del.exec();
             }
+            const std::string vec_json = vecToJson(entry.embedding);
             SQLite::Statement ins(db,
                 "INSERT INTO vec_chunks(chunk_id, metadata, embedding_json, embedding) "
                 "VALUES(?, ?, ?, ?)");
             ins.bind(1, entry.id);
             ins.bind(2, entry.metadata.dump());
-            ins.bind(3, vecToJson(entry.embedding));
-            ins.bind(4, vecToJson(entry.embedding));
+            ins.bind(3, vec_json);
+            ins.bind(4, vec_json);
             ins.exec();
         }
     });
@@ -99,7 +108,7 @@ void SqliteVectorStore::insertBatch(const std::vector<VectorEntry>& entries)
 
 bool SqliteVectorStore::remove(const std::string& id)
 {
-    if (!store_.isOpen()) return false;
+    if (!vecTableReady() || id.empty()) return false;
     return store_.inTransaction([&](storage::SqliteStore& s) -> bool {
         SQLite::Database& db = s.db();
         // 先确认存在再删（避免依赖 exec() 的变更计数返回值）
@@ -117,7 +126,7 @@ bool SqliteVectorStore::remove(const std::string& id)
 
 void SqliteVectorStore::update(const std::string& id, const EmbeddingVector& embedding)
 {
-    if (!store_.isOpen() || embedding.empty()) return;
+    if (!store_.isOpen() || id.empty() || embedding.empty()) return;
     store_.inTransaction([&](storage::SqliteStore& s) {
         s.ensureVectorTable(static_cast<int>(embedding.size()));
         SQLite::Database& db = s.db();
@@ -139,13 +148,14 @@ void SqliteVectorStore::update(const std::string& id, const EmbeddingVector& emb
             del.bind(1, id);
             del.exec();
         }
+        const std::string vec_json = vecToJson(embedding);
         SQLite::Statement ins(db,
             "INSERT INTO vec_chunks(chunk_id, metadata, embedding_json, embedding) "
             "VALUES(?, ?, ?, ?)");
         ins.bind(1, id);
         ins.bind(2, meta.dump());
-        ins.bind(3, vecToJson(embedding));
-        ins.bind(4, vecToJson(embedding));
+        ins.bind(3, vec_json);
+        ins.bind(4, vec_json);
         ins.exec();
     });
 }
@@ -154,7 +164,7 @@ std::vector<SearchResult> SqliteVectorStore::search(
     const EmbeddingVector& query_embedding,
     int top_k) const
 {
-    if (!store_.isOpen() || query_embedding.empty() || top_k <= 0) return {};
+    if (!vecTableReady() || query_embedding.empty() || top_k <= 0) return {};
     return store_.withLock([&](storage::SqliteStore& s) -> std::vector<SearchResult> {
         SQLite::Statement stmt(s.db(),
             "SELECT chunk_id, metadata, distance FROM vec_chunks "
@@ -181,7 +191,7 @@ std::vector<SearchResult> SqliteVectorStore::search(
 
 int SqliteVectorStore::count() const
 {
-    if (!store_.isOpen()) return 0;
+    if (!vecTableReady()) return 0;
     return store_.withLock([&](storage::SqliteStore& s) -> int {
         SQLite::Statement stmt(s.db(), "SELECT COUNT(*) FROM vec_chunks");
         stmt.executeStep();
@@ -191,7 +201,7 @@ int SqliteVectorStore::count() const
 
 bool SqliteVectorStore::contains(const std::string& id) const
 {
-    if (!store_.isOpen()) return false;
+    if (!vecTableReady() || id.empty()) return false;
     return store_.withLock([&](storage::SqliteStore& s) -> bool {
         SQLite::Statement stmt(s.db(),
             "SELECT 1 FROM vec_chunks WHERE chunk_id = ? LIMIT 1");
@@ -202,7 +212,7 @@ bool SqliteVectorStore::contains(const std::string& id) const
 
 std::optional<VectorEntry> SqliteVectorStore::get(const std::string& id) const
 {
-    if (!store_.isOpen()) return std::nullopt;
+    if (!vecTableReady() || id.empty()) return std::nullopt;
     return store_.withLock([&](storage::SqliteStore& s) -> std::optional<VectorEntry> {
         SQLite::Statement stmt(s.db(),
             "SELECT chunk_id, metadata, embedding_json FROM vec_chunks WHERE chunk_id = ?");
