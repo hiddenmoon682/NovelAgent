@@ -2,7 +2,6 @@
 
 #include "novelagent_qt/QmlBridge.h"
 
-#include "Bootstrap.h"
 #include "NovelAgentApp.h"
 #include "agent/index/IIndexService.h"
 #include "agent/session/SessionPersistence.h"
@@ -16,6 +15,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 
@@ -44,6 +44,7 @@ bool isPlaceholderKey(const std::string& key) {
 QmlBridge::QmlBridge(QObject* parent)
     : QObject(parent)
     , alive_(std::make_shared<std::atomic<bool>>(true))
+    , indexing_(std::make_shared<std::atomic<bool>>(false))
 {
     config_ = AppConfig::load();
 
@@ -72,17 +73,25 @@ QmlBridge::~QmlBridge() {
         // 回调在本对象与 app_ 仍存活时执行完毕，避免 use-after-free（成员逆序析构，
         // cancel_requested_ 先于 app_ 销毁，而 ThreadPool 深处 join 会执行残留回调）。
         app_->agent().shutdown();
-        bootstrap::g_cancel_flag.store(nullptr);
     }
     // 生命周期令牌复位：即使有超时残留任务，on_complete 的 weak_ptr lock() 也会失败并跳过，
     // 不再访问已进入析构的本对象（兜底 A 的 2s 超时窗口）。
     alive_->store(false);
+    // 有界等待自动索引退场：正常增量索引仅哈希比对（<1s）；嵌入中最多等 10s，
+    // 超时后依靠进度回调的 alive 检查中止，不再访问本对象成员。
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (indexing_ && indexing_->load()
+               && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
     joinWorker();
 }
 
 bool QmlBridge::busy() const {
-    // 聚合信号（D12/阶段 4）：索引重建中或任一会话运行即为 true。
-    return indexing_.load() || (app_ && app_->agent().anyRunning());
+    // 聚合信号（D12/阶段 4）：索引进行中或任一会话运行即为 true。
+    return (indexing_ && indexing_->load()) || (app_ && app_->agent().anyRunning());
 }
 
 void QmlBridge::joinWorker() {
@@ -111,8 +120,7 @@ bool QmlBridge::rebuildApp(const std::string& providerName,
 
     joinWorker();
 
-    // 先解除 SIGINT 对旧 Agent 取消标志的引用，再销毁旧实例
-    bootstrap::g_cancel_flag.store(nullptr);
+    // 先销毁旧实例，再构造新实例（同 provider 重建）
     app_.reset();
 
     try {
@@ -126,7 +134,6 @@ bool QmlBridge::rebuildApp(const std::string& providerName,
     }
 
     project_ = app_->project();
-    bootstrap::g_cancel_flag.store(app_->agent().cancelFlag());
 
     emit agentReadyChanged();
     emit projectChanged();
@@ -447,14 +454,16 @@ void QmlBridge::rebuildIndex() {
     }
 
     joinWorker();
-    indexing_.store(true);
+    // 捕获共享标志副本：worker 线程（含本对象析构后）写清标志仍安全
+    auto flag = indexing_;
+    flag->store(true);
     emit busyChanged();
     setStatus(QStringLiteral("正在重建索引..."));
 
-    worker_ = std::thread([this]() {
+    worker_ = std::thread([this, flag]() {
         runIndexUpdate(/*force=*/true);
-        QMetaObject::invokeMethod(this, [this]() {
-            indexing_.store(false);
+        QMetaObject::invokeMethod(this, [this, flag]() {
+            flag->store(false);
             emit busyChanged();
         }, Qt::QueuedConnection);
     });
@@ -618,8 +627,28 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
             // 无变更时开销仅为哈希比对，不产生嵌入请求）。取消时跳过。
             if (app_ && app_->projectAccess()
                 && !app_->projectAccess()->path().empty()
-                && !cancel_requested_.load())
-                runIndexUpdate(/*force=*/false);
+                && !cancel_requested_.load()
+                && alive.lock()) {
+                auto flag = indexing_;
+                flag->store(true);
+                QMetaObject::invokeMethod(this, [this]() { emit busyChanged(); },
+                                          Qt::QueuedConnection);
+                try {
+                    // 进度回调仅捕获 alive 弱引用（不触碰 this）：应用析构后
+                    // indexAll 在阶段检查点抛"已取消"，安全中止，不访问悬垂成员
+                    std::function<void(const std::string&)> cancel_progress =
+                        [alive](const std::string&) {
+                            if (!alive.lock())
+                                throw std::runtime_error("索引已取消：应用正在关闭");
+                        };
+                    app_->indexService()->indexAll(cancel_progress, /*force=*/false);
+                } catch (const std::exception& e) {
+                    spdlog::warn("[QmlBridge] 自动索引取消/失败: {}", e.what());
+                }
+                flag->store(false);
+                QMetaObject::invokeMethod(this, [this]() { emit busyChanged(); },
+                                          Qt::QueuedConnection);
+            }
 
             QString fullText = QString::fromStdString(response.content);
             QString finishReason = QString::fromStdString(response.finish_reason);

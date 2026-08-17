@@ -151,6 +151,10 @@ IndexResult ProjectIndexService::indexAll(
         if (progress) progress(msg);
     };
 
+    // 阶段检查点 1：进入索引流程即上报。进度回调可在此抛取消异常，
+    // 使 indexAll 在任何 SQLite/成员访问之前安全中止（应用析构时的退场通道）。
+    report("开始索引...");
+
     const std::string model = embedding_gen_.modelName();
     const int dim = embedding_gen_.dimension();
 
@@ -354,6 +358,10 @@ IndexResult ProjectIndexService::indexAll(
                      + " vs " + std::to_string(texts.size());
         return result;
     }
+
+    // 阶段检查点 2：嵌入成功后、触碰 sqlite_ 前的最后取消机会；
+    // 进度回调在此抛异常则本轮索引中止，不进入最终事务。
+    report("正在写入向量索引...");
 
     // ── 单事务提交：删旧向量 → 写清单 → 插新向量 → 写指纹 ──
     const int64_t now = nowEpochSeconds();

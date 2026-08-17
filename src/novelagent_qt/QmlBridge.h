@@ -91,7 +91,7 @@ public:
     // [{role: "user"|"assistant", content, reasoning}, ...]，跳过工具消息与空消息。
     Q_INVOKABLE QVariantList conversationHistory() const;
     Q_INVOKABLE void refreshProject();
-    // 强制全量重建向量索引（清空后重嵌入全部源），后台执行，走 indexing_ 独立互斥。
+    // 强制全量重建向量索引（清空后重嵌入全部源），后台执行，与自动索引共用 indexing_ 标志互斥。
     Q_INVOKABLE void rebuildIndex();
     // 章节列表（按 order 升序）：[{id, title, order, wordCount}, ...]；项目未打开返回空。
     Q_INVOKABLE QVariantList chapterList() const;
@@ -180,8 +180,9 @@ private:
     std::shared_ptr<std::atomic<bool>> alive_;
 
     QString status_text_;
-    // 索引重建进行中标志（rebuildIndex 独立互斥，供 busy() 聚合）。
-    std::atomic<bool> indexing_{false};
+    // 索引进行中标志（自动索引与手动重建共用，供 busy() 聚合）。
+    // shared_ptr 保活：池线程可在本对象析构后安全写/清标志，不触碰悬垂成员。
+    std::shared_ptr<std::atomic<bool>> indexing_;
     std::atomic<bool> cancel_requested_{false};
     std::thread worker_;
     QString current_session_id_;  // 多会话并行：当前查看会话 id（阶段 4）
