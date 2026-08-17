@@ -18,6 +18,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 static int tests_run = 0;
@@ -365,8 +366,14 @@ void test_index_tables_cascade() {
 // ── ProjectIndexService 回归：多 chunk 章节（Statement 循环复用需 reset）──
 
 // fake 嵌入生成器（固定 4 维向量，无网络依赖）。
+// 模型名支持构造注入与 setModel 更换：向量行数不变的前提下换模型名，
+// 用于验证 indexAll 的模型指纹失效重建路径（test_index_all_fingerprint_rebuild）。
 class FakeEmbeddingGenerator : public retrieval::IEmbeddingGenerator {
 public:
+    explicit FakeEmbeddingGenerator(std::string model = "fake-embedding")
+        : model_(std::move(model)) {}
+    void setModel(std::string model) { model_ = std::move(model); }
+
     retrieval::EmbeddingVector generateEmbedding(const std::string&) override {
         return retrieval::EmbeddingVector(4, 1.0f);
     }
@@ -376,7 +383,10 @@ public:
                                                        retrieval::EmbeddingVector(4, 1.0f));
     }
     int dimension() const override { return 4; }
-    std::string modelName() const override { return "fake-embedding"; }
+    std::string modelName() const override { return model_; }
+
+private:
+    std::string model_;
 };
 
 void test_index_all_multi_chunk() {
@@ -540,6 +550,176 @@ void test_index_all_dedup_direct_rows() {
     PASS();
 }
 
+// ── ProjectIndexService 回归：模型指纹失效整库重建 ──
+
+void test_index_all_fingerprint_rebuild() {
+    TEST("ProjectIndexService — 换模型名触发整库失效重建，向量行数不变（无重复）");
+    const std::string db_path = tmpPath("tmp_test_index_fingerprint.db");
+    cleanup(db_path);
+    const std::string proj_path =
+        (std::filesystem::temp_directory_path() / "tmp_index_fingerprint_project").string();
+    std::filesystem::remove_all(proj_path);
+    std::filesystem::create_directories(proj_path + "/chapters");
+
+    // 章节正文 >2000 字 → 必然切分为 ≥2 个 chunk
+    std::string content;
+    const std::string sentence =
+        "雨后的山路上，赶路人捡起一封没有署名的信，字迹被水洇得模糊，却依稀能认出自己的名字。";
+    for (int i = 0; i < 8; ++i) {
+        for (int k = 0; k < 6; ++k) content += sentence;
+        content += "\n\n";
+    }
+    ProjectIO::writeChapter(proj_path, "chapters/ch-001.md", content);
+
+    auto proj = std::make_shared<Project>();
+    proj->path = proj_path;
+    proj->title = "指纹重建回归测试";
+    Chapter ch;
+    ch.id = "ch-001";
+    ch.title = "第一章";
+    ch.file_path = "chapters/ch-001.md";
+    proj->outline.chapters.push_back(ch);
+
+    storage::SqliteStore store;
+    store.open(db_path);
+    FakeEmbeddingGenerator gen;
+    agent::ProjectIndexService svc(std::make_shared<ProjectAccess>(proj), store, gen);
+
+    // 首次索引：全量写入模型指纹
+    auto r1 = svc.indexAll();
+    CHECK(r1.ok());
+    CHECK(r1.updated_sources == 1);
+    CHECK(r1.total_chunks >= 2);
+    int vec_rows1 = -1;
+    store.withLock([&](storage::SqliteStore& s) {
+        SQLite::Statement c(s.db(), "SELECT COUNT(*) FROM vec_chunks");
+        c.executeStep();
+        vec_rows1 = c.getColumn(0).getInt();
+    });
+    CHECK(vec_rows1 == r1.total_chunks);
+
+    // 换模型名 → kv 指纹不匹配 → 整库失效重建：全部源重嵌
+    // （updated==源数、skipped==0）、向量行数仍等于 chunk 数（无重复累积），
+    // 指纹已更新为新模型
+    gen.setModel("fake-embedding-v2");
+    auto r2 = svc.indexAll();
+    CHECK(r2.ok());
+    CHECK(r2.updated_sources == 1);
+    CHECK(r2.skipped_sources == 0);
+    int vec_rows2 = -1;
+    store.withLock([&](storage::SqliteStore& s) {
+        SQLite::Statement c(s.db(), "SELECT COUNT(*) FROM vec_chunks");
+        c.executeStep();
+        vec_rows2 = c.getColumn(0).getInt();
+        CHECK(s.getKV("embedding_model") == "fake-embedding-v2");
+    });
+    CHECK(vec_rows2 == vec_rows1);
+
+    // 同模型再跑一次：全部跳过、行数不变（指纹已固化，不再触发重建）
+    auto r3 = svc.indexAll();
+    CHECK(r3.ok());
+    CHECK(r3.skipped_sources == 1);
+    CHECK(r3.updated_sources == 0);
+
+    store.close();
+    cleanup(db_path);
+    std::filesystem::remove_all(proj_path);
+    PASS();
+}
+
+// ── ProjectIndexService 回归：大纲移除章节后的孤儿向量清理 ──
+
+void test_index_all_orphan_cleanup() {
+    TEST("ProjectIndexService — 章节移出大纲后，下次索引清理其孤儿向量");
+    const std::string db_path = tmpPath("tmp_test_index_orphan.db");
+    cleanup(db_path);
+    const std::string proj_path =
+        (std::filesystem::temp_directory_path() / "tmp_index_orphan_project").string();
+    std::filesystem::remove_all(proj_path);
+    std::filesystem::create_directories(proj_path + "/chapters");
+
+    // 两章均 >2000 字 → 均为多 chunk；正文不同，避免 chunk_id 与哈希歧义
+    auto make_content = [&](const std::string& line) {
+        std::string content;
+        for (int i = 0; i < 8; ++i) {
+            for (int k = 0; k < 6; ++k) content += line;
+            content += "\n\n";
+        }
+        return content;
+    };
+    const std::string line1 = "暮色四合时，客栈的掌柜在柜台上点亮了油灯，把最后一位客人让进屋里。";
+    const std::string line2 = "清晨的码头，船工解开缆绳，货郎挑着担子挤进第一班渡船。";
+    const std::string content1 = make_content(line1);
+    ProjectIO::writeChapter(proj_path, "chapters/ch-001.md", content1);
+    ProjectIO::writeChapter(proj_path, "chapters/ch-002.md", make_content(line2));
+
+    auto proj = std::make_shared<Project>();
+    proj->path = proj_path;
+    proj->title = "孤儿清理回归测试";
+    Chapter ch1;
+    ch1.id = "ch-001"; ch1.title = "第一章"; ch1.file_path = "chapters/ch-001.md";
+    Chapter ch2;
+    ch2.id = "ch-002"; ch2.title = "第二章"; ch2.file_path = "chapters/ch-002.md";
+    proj->outline.chapters.push_back(ch1);
+    proj->outline.chapters.push_back(ch2);
+
+    storage::SqliteStore store;
+    store.open(db_path);
+    FakeEmbeddingGenerator gen;
+    agent::ProjectIndexService svc(std::make_shared<ProjectAccess>(proj), store, gen);
+
+    // 首次索引：两个章节源全部入库
+    auto r1 = svc.indexAll();
+    CHECK(r1.ok());
+    CHECK(r1.chapters == 2);
+    CHECK(r1.updated_sources == 2);
+    CHECK(r1.total_chunks >= 4);
+    int vec_rows1 = -1;
+    store.withLock([&](storage::SqliteStore& s) {
+        SQLite::Statement c(s.db(), "SELECT COUNT(*) FROM vec_chunks");
+        c.executeStep();
+        vec_rows1 = c.getColumn(0).getInt();
+    });
+    CHECK(vec_rows1 == r1.total_chunks);
+
+    // 从大纲移除 ch-002（索引源以 outline 为准，正文文件去留无关）
+    proj->outline.chapters.erase(
+        std::remove_if(proj->outline.chapters.begin(), proj->outline.chapters.end(),
+                       [](const Chapter& c) { return c.id == "ch-002"; }),
+        proj->outline.chapters.end());
+
+    // 下次索引：ch-002 清单在但源已删除 → 清理其向量与清单；ch-001 哈希未变则跳过
+    auto r2 = svc.indexAll();
+    CHECK(r2.ok());
+    CHECK(r2.removed_sources == 1);
+    CHECK(r2.skipped_sources == 1);
+    CHECK(r2.updated_sources == 0);
+
+    // 剩余向量数 == ch-001 单独切分的 chunk 数；ch-002 相关向量已不存在
+    retrieval::NovelChunker probe;
+    const size_t expect_ch001 = probe.chunkChapter(ch1, content1).size();
+    int vec_ch001 = -1, vec_ch002 = -1, src_count = -1;
+    store.withLock([&](storage::SqliteStore& s) {
+        SQLite::Statement c1(s.db(), "SELECT COUNT(*) FROM vec_chunks WHERE chunk_id LIKE 'ch-001-%'");
+        c1.executeStep();
+        vec_ch001 = c1.getColumn(0).getInt();
+        SQLite::Statement c2(s.db(), "SELECT COUNT(*) FROM vec_chunks WHERE chunk_id LIKE 'ch-002-%'");
+        c2.executeStep();
+        vec_ch002 = c2.getColumn(0).getInt();
+        SQLite::Statement c3(s.db(), "SELECT COUNT(*) FROM index_sources");
+        c3.executeStep();
+        src_count = c3.getColumn(0).getInt();
+    });
+    CHECK(vec_ch001 == static_cast<int>(expect_ch001));  // ch-001 向量完整保留
+    CHECK(vec_ch002 == 0);                               // ch-002 孤儿向量已清理
+    CHECK(src_count == 1);                               // 清单同样收敛到 1 个源
+
+    store.close();
+    cleanup(db_path);
+    std::filesystem::remove_all(proj_path);
+    PASS();
+}
+
 int main() {
     std::cout << "=== test_sqlite_store ===\n\n";
     test_open_close();
@@ -555,6 +735,8 @@ int main() {
     test_index_tables_cascade();
     test_index_all_multi_chunk();
     test_index_all_dedup_direct_rows();
+    test_index_all_fingerprint_rebuild();
+    test_index_all_orphan_cleanup();
     std::cout << "\n" << tests_passed << "/" << tests_run << " 测试通过\n";
     return (tests_passed == tests_run) ? 0 : 1;
 }
