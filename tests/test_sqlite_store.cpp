@@ -33,11 +33,14 @@ static void cleanup(const std::string& path) {
         const std::string p = path + suffix;
         if (utils::file::exists(p)) utils::file::removeFile(p);
     }
-    // 一并清理损坏自愈备份（<path>.corrupt-*），避免残留
+    // 一并清理损坏自愈备份（<基名>.corrupt-*），避免残留。
+    // corrupt 文件名格式为 <基名>.corrupt-<时间戳>；目录项 filename() 只含
+    // 文件名（不含目录），前缀必须用基名构造，不能用含目录的完整 path。
+    const std::string base = std::filesystem::path(path).filename().string();
     std::error_code ec;
     for (const auto& e : std::filesystem::directory_iterator(
              std::filesystem::temp_directory_path(), ec)) {
-        if (e.path().filename().string().rfind(path + ".corrupt-", 0) == 0)
+        if (e.path().filename().string().find(base + ".corrupt-") == 0)
             std::filesystem::remove(e.path(), ec);
     }
 }

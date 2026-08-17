@@ -89,7 +89,11 @@ void SqliteStore::open(const std::string& db_path)
             spdlog::warn("[SqliteStore] 库未销毁，保持未打开: {}", path_);
         }
     }
-    spdlog::info("[SqliteStore] 已打开数据库: {}", db_path);
+    // 仅真正打开成功（含自愈重建成功）时打印成功日志；失败路径的
+    // error/warn 日志已在上面记录，不要误报"已打开"。
+    if (db_) {
+        spdlog::info("[SqliteStore] 已打开数据库: {}", db_path);
+    }
 }
 
 void SqliteStore::close()
@@ -144,9 +148,11 @@ void SqliteStore::ensureVectorTable(int dimension)
         "  embedding float[" + std::to_string(dimension) + "] distance_metric=cosine"
         ")";
     db_->exec(ddl);
-    vector_dimension_ = dimension;
-    // 记录维度到 kv_store：重启后 open() 恢复缓存，同维度调用短路不 DROP 重建
+    // 记录维度到 kv_store：重启后 open() 恢复缓存，同维度调用短路不 DROP 重建。
+    // 先写 kv 成功再更新缓存：setKV 抛异常时保持缓存不变（异常向上传播，
+    // 调用方事务回滚表创建，状态自洽），避免缓存与 kv 失配导致重启后误 DROP。
     setKV("vector_dimension", std::to_string(dimension));
+    vector_dimension_ = dimension;
     spdlog::info("[SqliteStore] vec_chunks 已创建 (维度 {})", dimension);
 }
 
