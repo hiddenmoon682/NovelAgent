@@ -3,7 +3,7 @@
 // 全部会话能力转发给 SessionPool（会话池容器）；本文件仅保留构造/析构。
 
 #include "agent/core/Agent.h"
-#include "agent/core/SessionPool.h"
+#include "agent/session/SessionPool.h"
 
 namespace agent {
 

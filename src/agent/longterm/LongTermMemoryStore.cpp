@@ -1,6 +1,6 @@
 // LongTermMemoryStore 实现 — JSON 日志的加载/追加/保存。
 
-#include "agent/memory/LongTermMemoryStore.h"
+#include "agent/longterm/LongTermMemoryStore.h"
 
 #include "project/ProjectIO.h"
 #include "utils/FileUtils.h"

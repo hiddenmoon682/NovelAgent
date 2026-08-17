@@ -1,18 +1,24 @@
 # NovelAgent 审查状态总览
 
-> 最后更新：2026-08-03（新增 MULTI_SESSION_PARALLEL_REVIEW 架构评审）
+> 最后更新：2026-08-17（文档清理：大部分评审/计划原始文档已删除，仅保留本总览作为汇总记录）
 
 ---
 
 **当前审查状态**：所有已注册审查批次均已完成或确认无需修复。Serial Tool Call 路径两轮共 30 项发现已全部清零。
 
+> 注：截至 2026-08-17，本文件引用的各评审/计划原始文档（ARCHITECTURE_REVIEW、REVIEW_FALSE_POSITIVES、
+> CLI_REMOVAL_PLAN、BOOTSTRAP_SLIM_PLAN、SERIAL_TOOL_CALL_REVIEW_PHASE2、CONCURRENT_INPUT_HANDLING、
+> QUANTCLAW_REFERENCE_REVIEW、SIGINT_HANDLING_REVIEW、MULTI_SESSION_PARALLEL_REVIEW/REFERENCE 等）
+> 均已完成使命或在结论落地后删除，git 历史可完整追溯；此处仅保留各批次结论摘要。
+
 ---
 
-## 〇、多会话并行架构评审（MULTI_SESSION_PARALLEL_REVIEW_2026-08-03.md）— 待评审
+## 〇、多会话并行架构评审 — ✅ 已实施
 
 **目标**：支持「后台会话继续运行」，将单实例 Agent 重构为「每会话一个运行时」。
 
-**状态**：📋 待评审（用户确认演进方向后转入实施）。
+**状态**：✅ 已实施（2026-08 上旬落地：SessionRuntime 池 + 并发保护 + GUI 多会话，并完成
+析构 UAF / busy 聚合 / 并发上限原子化等修复；原评审文档与实施蓝图已删除）。
 
 **核心结论**：
 - 方向正确：须将「会话运行时状态」（memory/state/tools/client）从 Agent 单例拆出，改为每会话一份。
@@ -30,7 +36,7 @@
 | ✅ 已修复 | 20 |
 | 📋 延后（非 bug） | 1（Issue 12: 模型序列化分离，PCH 已覆盖编译开销） |
 | ❌ 不属实 | 1（Issue 20: A17 已修复） |
-| ~~误判/夸大~~ | 6（见 `REVIEW_FALSE_POSITIVES.md`） |
+| ~~误判/夸大~~ | 6（原始记录已删除，见顶部备注） |
 
 **结论**：无待修 bug。
 
@@ -118,7 +124,7 @@
 
 | 状态 | 说明 |
 |------|------|
-| 📋 待定 | 方案已设计，尚未执行。详见方案中的"是否执行的决策"章节 |
+| ✅ 已执行 | 方案 A（彻底删除）已落地，CLI 相关文件已移除；原方案文档已删除 |
 
 ### 方案概要
 - **A（彻底删除）**：删 12 文件，改 5 文件，失去 `-e` 和 `--cli` 能力
@@ -134,7 +140,7 @@
 
 | 状态 | 说明 |
 |------|------|
-| 📋 待定 | 方向已确认（激进方案），尚未执行 |
+| ✅ 已执行 | 激进方案落地：Bootstrap.h 瘦身为 SIGINT 注册 + 构造入口，配置/QML 初始化迁至 QmlBridge；原方案文档已删除 |
 
 ### 核心思想
 - Bootstrap.h 瘦到只剩构造 NovelAgentApp + SIGINT 注册
@@ -154,7 +160,7 @@
 
 | 状态 | 说明 |
 |------|------|
-| 📋 待定 | 当前实现可正常工作，改进优先级较低。建议在下次涉及 Windows 控制台行为修改时一并整改。 |
+| ✅ 已结案 | 当前实现可正常工作，原子标志 + 主循环轮询架构正确；平台 API 层面优化（SetConsoleCtrlHandler/sigaction）优先级低，未执行。原评审文档已删除 |
 
 ### 发现摘要
 1. `signal()` 跨平台行为不一致，Windows 上推荐 `SetConsoleCtrlHandler`，POSIX 上推荐 `sigaction`
@@ -245,7 +251,8 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 
 ### 待处理（3 项）
 
-见 `ARCHITECTURE_REVIEW_2026-06-30.md`：B2（无模板并行降级）、C1（硬编码超时）、C4（RewindTo 丢弃 pinned 消息）。
+B2（无模板并行降级）、C1（硬编码超时）、C4（RewindTo 丢弃 pinned 消息）——均为低优先级设计偏好，
+未构成本文件最终结论中的"待修 bug"（原始评审文档已删除，见顶部备注）。
 
 ---
 
@@ -424,7 +431,7 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 ## 十七、串行工具调用流程二次审查（SERIAL_TOOL_CALL_REVIEW_2026-07-19_PHASE2）— ✅ 已清零
 
 > 审查日期：2026-07-19 · 修复日期：2026-07-21
-> 详细报告：[SERIAL_TOOL_CALL_REVIEW_2026-07-19_PHASE2.md](SERIAL_TOOL_CALL_REVIEW_2026-07-19_PHASE2.md)
+> 详细报告：`SERIAL_TOOL_CALL_REVIEW_2026-07-19_PHASE2.md`（已删除，见顶部备注）
 
 | # | 问题 | 严重度 | 验证 | 修复方式 |
 |---|------|--------|------|----------|
@@ -446,11 +453,11 @@ AI 审查工具产生的 6 项误判/夸大（论述偏差、程度夸大、标�
 
 ---
 
-## 十八、Qt 并发输入处理参考（CONCURRENT_INPUT_HANDLING_2026-07-19）— 设计参考（CONCURRENT_INPUT_HANDLING_2026-07-19）— 设计参考
+## 十八、Qt 并发输入处理参考（CONCURRENT_INPUT_HANDLING_2026-07-19）— 设计参考
 
-> 记录日期：2026-07-19 · 非 Bug，为后续 Qt 前端的架构参考
+> 记录日期：2026-07-19 · 非 Bug，为 Qt 前端并发输入的架构参考（原文档已删除，见顶部备注）
 > 问题：上一条任务还在执行时用户输入了新指令，系统应如何处理
 
-详见：[CONCURRENT_INPUT_HANDLING_2026-07-19.md](CONCURRENT_INPUT_HANDLING_2026-07-19.md)
-
 **推荐方案**：取消当前任务（利用已有的 `cancelled_` 标志 + 终止记录），然后处理新输入。需要改造 BackendServer 的会话锁和 Agent 的状态守卫。
+
+**实际走向**：未采用方案 A（取消），最终以方案 C（多会话并行架构，见§〇）落地——每会话独立运行时并发执行，无需中断他会话任务。

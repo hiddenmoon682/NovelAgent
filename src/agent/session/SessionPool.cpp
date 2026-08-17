@@ -1,6 +1,6 @@
 // SessionPool 实现 — 会话池容器（D2 收敛）。
 
-#include "agent/core/SessionPool.h"
+#include "agent/session/SessionPool.h"
 #include "agent/session/SessionPersistence.h"
 #include "agent/tool/ThreadPool.h"
 #include "llm/LLMClientFactory.h"

@@ -115,9 +115,9 @@ CompactionResult Compactor::compact(
     std::vector<llm::Message> zone(messages.begin(), messages.begin() + compact_count);
     std::vector<llm::Message> recent(messages.begin() + compact_count, messages.end());
 
-    // WHY：pin（preserved）的产品语义是“压缩时优先保留”（见 Message.h 字段注释
-    // 与 docs/review/PIN_STALE_DATA_REVIEW_2026-07-19.md，ToolPipeline 会自动 pin
-    // 设定类工具结果），压缩区间内的 pinned 消息不能卷入摘要后删除。
+    // WHY：pin（preserved）的产品语义是“压缩时优先保留”（见 Message.h 字段注释；
+    // ToolPipeline 会自动 pin 设定类工具结果，Memory 以 kMaxAutoPinned 约束其数量），
+    // 压缩区间内的 pinned 消息不能卷入摘要后删除。
     // 同时 OpenAI 协议要求 assistant(tool_calls) 与其全部 tool 结果成组出现，
     // 若只保留 pinned 的单条 tool 结果（或单条 assistant）会产生孤儿 tool /
     // 未回应的 tool_call。因此按“工具组”为粒度划分：assistant(tool_calls)

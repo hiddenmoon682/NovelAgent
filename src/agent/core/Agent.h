@@ -1,8 +1,8 @@
 #pragma once
 
 #include "agent/core/AgentState.h"
-#include "agent/core/SessionPool.h"
-#include "agent/core/SessionRuntime.h"
+#include "agent/session/SessionPool.h"
+#include "agent/session/SessionRuntime.h"
 #include "agent/context/IMemory.h"
 #include "llm/ILLMClient.h"
 
@@ -142,7 +142,6 @@ public:
 
     // ── 取消支持（当前会话）──
     void requestCancel() { session_pool_.currentSession()->requestCancel(); }
-    std::atomic<bool>* cancelFlag() { return session_pool_.currentSession()->cancelFlag(); }
     void resetCancel() { session_pool_.currentSession()->resetCancel(); }
     // 优雅关闭：取消所有 in-flight 会话并等待其退场（退出/整体重建前调用，
     // 确保 on_complete 回调在 SessionPool 存活期间执行完毕，防析构 use-after-free）。

@@ -104,8 +104,6 @@ public:
 
     // 请求取消本会话（置 cancel_requested_）。
     void requestCancel() { cancel_requested_.store(true); }
-    // 取消标志指针（供 CoreLoop / 外部置位）。
-    std::atomic<bool>* cancelFlag() { return &cancel_requested_; }
     // 清除取消标志（每次 process 开始时自动调用）。
     void resetCancel() { cancel_requested_.store(false); }
     bool cancelled() const { return cancel_requested_.load(); }

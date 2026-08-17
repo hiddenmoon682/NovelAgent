@@ -1,6 +1,6 @@
 // SessionRuntime 实现 — 每会话独立运行时。
 
-#include "agent/core/SessionRuntime.h"
+#include "agent/session/SessionRuntime.h"
 #include "agent/core/CoreLoop.h"
 #include "agent/session/SessionPersistence.h"
 #include "llm/LLMClientFactory.h"

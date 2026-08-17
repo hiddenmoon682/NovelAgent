@@ -2,7 +2,7 @@
 
 #include "agent/tools/SaveMemoryTool.h"
 
-#include "agent/memory/LongTermMemoryStore.h"
+#include "agent/longterm/LongTermMemoryStore.h"
 #include "retrieval/IEmbeddingGenerator.h"
 #include "retrieval/IVectorStore.h"
 #include "utils/SchemaUtils.h"
