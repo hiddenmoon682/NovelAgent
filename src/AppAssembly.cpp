@@ -8,7 +8,6 @@
 #include "agent/tools/BuiltInTool.h"
 #include "agent/index/ProjectIndexService.h"
 #include "agent/skill/BuiltinSkills.h"
-#include "project/Models/Project.h"
 #include "utils/FileUtils.h"
 
 // 装配入口：依序调用各分段辅助函数完成 Agent 全部初始化。
@@ -84,17 +83,24 @@ void NovelAgentApp::setupContextAndTokenBudget()
     agent_.setModelLimit(client_.config().max_context_tokens);
 }
 
-// 启用会话持久化并初始化向量存储。
-// 两步均仅项目已打开时执行，避免空路径时写到盘符根目录 /.novelagent。
+// 启用会话持久化并初始化向量存储（Task 6 Step 1 提前接线：打开 SQLite 单库）。
+// 仅库可用时启用持久化，避免空路径时写到盘符根目录 /.novelagent；
+// 旧文件清理（removeLegacyStorageFiles）属 Task 6，此处不实现。
 // P8 懒物化：启动仅注入持久化层，不物化任何会话（不建 runtime/client）；
 // 历史会话由用户点开时经 materializeSession 恢复。
 void NovelAgentApp::setupPersistenceAndVectorStore()
 {
-    // 仅项目已打开时启用持久化（避免空路径时写到盘符根目录 /.novelagent）
     if (project_access_ && !project_access_->path().empty()) {
+        const std::string agent_dir = project_access_->path() + "/.novelagent";
+        sqlite_store_.open(agent_dir + "/novel.db");
+    }
+    // 仅库可用时启用持久化（避免空路径时写到盘符根目录 /.novelagent；
+    // sqlite_store_ 未 open 时持久化方法统一安全返回，不会崩溃）
+    if (sqlite_store_.isOpen()) {
         agent_.setPersistence(&persistence_);
     }
 
+    // 旧 JSON 向量库初始化保留不动（Task 6 随矢量库切换一并移除）
     if (project_access_ && !project_access_->path().empty()) {
         std::string vec_path = project_access_->path() + "/.novelagent/vectors.json";
         vector_store_.init(vec_path);

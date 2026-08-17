@@ -93,12 +93,19 @@ std::string deriveTitle(const std::vector<llm::Message>& messages)
 
 void SessionPersistence::save(const std::string& session_id, const llm::IMemory& memory)
 {
+    // 库未打开时的统一守卫：解引用空 db_ 必然崩溃（未 open 时直接安全返回）
+    if (!sqlite_.isOpen()) {
+        spdlog::warn("[SessionPersistence] 库未打开，跳过保存会话 {}", session_id);
+        return;
+    }
     sqlite_.inTransaction([&](storage::SqliteStore& s) {
         SQLite::Database& db = s.db();
         const std::string ts = storage_.nowTimestamp();
         const auto& msgs = memory.messages();
 
         // 1) 会话登记：upsert；已存在时仅刷新 updated_at 与空标题
+        // 取舍：upsert 刻意不重置 archived 列——归档是永久封存（数据保留、列表不可见），
+        // 归档后同 id 再 save() 不会复活该会话，与规格一致。
         {
             SQLite::Statement upsert(db,
                 "INSERT INTO sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?) "
@@ -135,6 +142,10 @@ void SessionPersistence::save(const std::string& session_id, const llm::IMemory&
 
 llm::Memory SessionPersistence::load(const std::string& session_id)
 {
+    if (!sqlite_.isOpen()) {
+        spdlog::warn("[SessionPersistence] 库未打开，加载会话 {} 失败（返回空）", session_id);
+        return {};
+    }
     llm::Memory mem;
     sqlite_.withLock([&](storage::SqliteStore& s) {
         SQLite::Statement stmt(s.db(),
@@ -154,6 +165,10 @@ llm::Memory SessionPersistence::load(const std::string& session_id)
 void SessionPersistence::appendHistory(const std::string& session_id,
                                        const std::vector<llm::Message>& messages)
 {
+    if (!sqlite_.isOpen()) {
+        spdlog::warn("[SessionPersistence] 库未打开，跳过历史追加 {}", session_id);
+        return;
+    }
     std::vector<const llm::Message*> targets;
     for (const auto& m : messages) {
         if (!isSystem(m)) targets.push_back(&m);
@@ -187,6 +202,10 @@ void SessionPersistence::appendHistory(const std::string& session_id,
 
 std::vector<llm::Message> SessionPersistence::loadHistory(const std::string& session_id)
 {
+    if (!sqlite_.isOpen()) {
+        spdlog::warn("[SessionPersistence] 库未打开，读取历史 {} 失败（返回空）", session_id);
+        return {};
+    }
     std::vector<llm::Message> result;
     sqlite_.withLock([&](storage::SqliteStore& s) {
         SQLite::Statement stmt(s.db(),
@@ -206,6 +225,10 @@ std::vector<llm::Message> SessionPersistence::loadHistory(const std::string& ses
 
 std::vector<SessionInfo> SessionPersistence::listSessions()
 {
+    if (!sqlite_.isOpen()) {
+        spdlog::warn("[SessionPersistence] 库未打开，会话列表为空");
+        return {};
+    }
     std::vector<SessionInfo> result;
     sqlite_.withLock([&](storage::SqliteStore& s) {
         SQLite::Statement stmt(s.db(),
@@ -225,24 +248,37 @@ std::vector<SessionInfo> SessionPersistence::listSessions()
 
 std::string SessionPersistence::createSession()
 {
-    return sqlite_.inTransaction([&](storage::SqliteStore& s) -> std::string {
+    // 库未打开时创建失败：返回空串（调用方按空串处理；SessionPool 的会话 id 自生成、
+    // 不依赖本方法，无断言风险。须在锁外守卫，否则解引用空 db_ 必然崩溃）
+    if (!sqlite_.isOpen()) {
+        spdlog::error("[SessionPersistence] 库未打开，创建会话失败");
+        return {};
+    }
+    const std::string id = sqlite_.inTransaction([&](storage::SqliteStore& s) -> std::string {
         const std::string ts = storage_.nowTimestamp();
-        const std::string id = makeSessionId(ts);
+        const std::string sid = makeSessionId(ts);
         SQLite::Statement ins(s.db(),
             "INSERT INTO sessions (id, title, created_at, updated_at, archived)"
             " VALUES (?, '', ?, ?, 0)");
-        ins.bind(1, id);
+        ins.bind(1, sid);
         ins.bind(2, ts);
         ins.bind(3, ts);
         ins.exec();
-        spdlog::info("[SessionPersistence] 新会话已创建: {}", id);
-        return id;
+        return sid;
     });
+    // 日志在事务回调外打印：先捕获返回的 id，锁内不落日志
+    spdlog::info("[SessionPersistence] 新会话已创建: {}", id);
+    return id;
 }
 
 bool SessionPersistence::deleteSession(const std::string& id)
 {
-    return sqlite_.inTransaction([&](storage::SqliteStore& s) -> bool {
+    // 库未打开时删除失败（锁外守卫，避免解引用空 db_ 崩溃）
+    if (!sqlite_.isOpen()) {
+        spdlog::warn("[SessionPersistence] 库未打开，删除会话 {} 失败", id);
+        return false;
+    }
+    const bool deleted = sqlite_.inTransaction([&](storage::SqliteStore& s) -> bool {
         SQLite::Database& db = s.db();
         // 先确认存在（未归档）再置归档，避免依赖 exec() 的变更计数返回值
         {
@@ -253,9 +289,11 @@ bool SessionPersistence::deleteSession(const std::string& id)
         SQLite::Statement upd(db, "UPDATE sessions SET archived = 1 WHERE id = ?");
         upd.bind(1, id);
         upd.exec();
-        spdlog::info("[SessionPersistence] 会话 {} 已删除（归档，数据保留）", id);
         return true;
     });
+    // 日志在事务回调外打印（仅成功归档时）
+    if (deleted) spdlog::info("[SessionPersistence] 会话 {} 已删除（归档，数据保留）", id);
+    return deleted;
 }
 
 std::string SessionPersistence::makeSessionId(const std::string& timestamp) const
