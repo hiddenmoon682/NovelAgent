@@ -39,9 +39,9 @@
 
 | 组件 | 内容 | 说明 |
 |---|---|---|
-| `third_party/sqlite/` | sqlite3 amalgamation（`sqlite3.c/.h`、`sqlite3ext.h`） | 编译时定义 `SQLITE_ENABLE_FTS5`（FTS5 源码随 amalgamation 自带，Phase 2 直接可用） |
-| `third_party/sqlite-vec/` | sqlite-vec amalgamation（`sqlite-vec.c/.h`，MIT） | 静态链接：`SQLITE_CORE` + 启动时 `sqlite3_vec_init()` 自动注册（`sqlite3_auto_extension`） |
-| `third_party/sqlitecpp/` | SQLiteCpp（header-only，RAII 封装） | 薄封装、异常安全，贴合项目现代 C++ 风格 |
+| `third_party/sqlite/` | sqlite3 amalgamation（`sqlite3.c/.h`、`sqlite3ext.h`） | 编译时定义 `SQLITE_ENABLE_FTS5`（FTS5 源码随 amalgamation 自带，Phase 2 直接可用）；**版本固定为 ≥3.46**（sqlite-vec 要求 SQLite ≥ 3.41） |
+| `third_party/sqlite-vec/` | sqlite-vec amalgamation（`sqlite-vec.c/.h`，MIT） | 静态链接：`SQLITE_CORE` + 启动时 `sqlite3_vec_init()` 自动注册（`sqlite3_auto_extension`）；`vec0` 虚拟表支持附加列（chunk_id/metadata）与元数据过滤 |
+| `third_party/sqlitecpp/` | SQLiteCpp（小型 C++ 库，约 10 个源文件：Database/Statement/Column/Transaction/Exception 等） | 薄 RAII 封装、异常安全，贴合项目现代 C++ 风格；随 `novelagent_sqlite` target 一并编译 |
 
 vendor 而非 pacman 包的理由：离线可构建、版本可控、FTS5 开关可控（MSYS2 包是否开启 FTS5 不可控）。
 
@@ -52,9 +52,12 @@ vendor 而非 pacman 包的理由：离线可构建、版本可控、FTS5 开关
 单一数据库连接管理，产品代码内唯一的 SQLite 入口。
 
 - 职责：打开 `<project>/.novelagent/novel.db`、建表迁移（`CREATE TABLE IF NOT EXISTS` + kv_store 记录 schema 版本）、WAL 模式、外键开启、注册 sqlite-vec 扩展。
+- **生命周期**：项目打开时创建（首次建库并执行旧文件清理 §3），项目关闭/应用退出时 `close()`（WAL checkpoint + 关闭连接）；连接未打开时所有操作安全 no-op。
 - 线程模型：**全库一把互斥锁串行化**（对应现状 VectorStore 的 shared_mutex + SessionPersistence 的 index_mutex 模式）；注释标注未来可优化为 thread_local 连接池（WAL 下读者不阻塞写者）。
+- **异常策略**：对上层接口一律**不抛异常**——捕获 SQLiteCpp 异常并 spdlog 记录，按操作语义返回失败状态（如 insert 失败记日志并跳过，与现状"写失败不致命"一致）；仅库打开失败属于灾难路径，走损坏自愈。
 - 错误处理：库打开失败/损坏 → spdlog 记录 → 重命名 `novel.db.corrupt-<时间戳>` → 重建空库，保证应用可用（无发布阶段可承受丢索引/会话）。
-- 事务：所有多表写操作提供 `BEGIN IMMEDIATE ... COMMIT` 事务包装；`SqliteStore::transaction(callback)` 便捷方法。
+- 事务：所有多表写操作提供 `BEGIN IMMEDIATE ... COMMIT` 事务包装；`SqliteStore::transaction(callback)` 便捷方法，回调抛异常自动 ROLLBACK。
+- **向量表生命周期**：`ensureVectorTable(dimension)` 在首次写入前确保 `vec_chunks` 存在（维度取 `IEmbeddingGenerator::dimension()`）；库中维度与当前不一致时 `DROP TABLE vec_chunks` 后重建（配合指纹失效 §7）。
 
 ## 6. 数据 Schema（`novel.db`）
 
@@ -141,24 +144,33 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
 
 ### 关键语义映射
 
-- **相似度**：sqlite-vec 返回 cosine distance（范围 [0,2]）；现有契约 similarity = (cos+1)/2 ∈ [0,1] 降序 → `similarity = 1 - distance/2`，`SqliteVectorStore::search` 内部换算，测试锁定。
+- **相似度**：sqlite-vec 返回 cosine distance（范围 [0,2]）；现有契约 similarity = (cos+1)/2 ∈ [0,1] 降序 → `similarity = 1 - distance/2`，`SqliteVectorStore::search` 内部换算，测试锁定。search 结果取（附加列）chunk_id + 解析 metadata 为 JSON，保持与现状相同的返回结构。
 - **模型/维度失配**：`DROP TABLE vec_chunks` + 清空 index_sources/index_chunks → 下次 indexAll 重建（等价现有"整库失效"）。
 - **消息序列化**：`Message` 的 tool_calls / reasoning_content / preserved / is_control 落独立 TEXT/INTEGER 列，load 时还原为 `llm::Message`（沿用 `SessionPersistence.cpp` 现有 serialize 逻辑改造）。
+- **seq 编号**：快照层 `save()` 事务内 DELETE + 按内存顺序重插（1..N）；历史层 `appendHistory()` 事务内从 `MAX(seq)+1` 起连续编号；`load()`/`loadHistory()` 均按 seq 升序恢复。
+- **会话列表**：`listSessions()` = `SELECT ... WHERE archived=0 ORDER BY updated_at DESC`（契约：最近使用在前）。
+- **检索过滤语义不变**：search 层不做元数据过滤（与现状一致，调用方自行过滤）；vec0 附加列仅用于携带 chunk_id/metadata 往返。
+- **sqlite-vec 能力核验**（实施计划首步）：vec0 附加列读写、`k` 参数、cosine 距离方向、事务内 DROP 重建，用一次性 spike 验证后锁定用法。
 
 ## 8. 构建与测试
 
 ### 构建
 
-- 新 CMake target `novelagent_sqlite`：sqlite3.c + sqlite-vec.c 编译为 C 静态库（`SQLITE_ENABLE_FTS5`、`SQLITE_CORE`），**不进 PCH**；`novelagent_core` 链接之。
+- 新 CMake target `novelagent_sqlite`：sqlite3.c + sqlite-vec.c（编译为 C，`SQLITE_ENABLE_FTS5`、`SQLITE_CORE`）+ SQLiteCpp 源文件（编译为 C++），**不进 PCH**；`novelagent_core` 链接之。
 - `cmake/Sources.cmake`：新增 `NOVELAGENT_STORAGE`（SqliteStore）；`NOVELAGENT_RETRIEVAL` 移除 `VectorStore.cpp` 换 `SqliteVectorStore`；`NOVELAGENT_AGENT` 移除 `IndexManifest`（若并入）。
 
 ### 测试
 
-- 新 `tests/test_sqlite_store.cpp`：建表迁移、WAL/外键、事务回滚、损坏自愈（.corrupt 重命名重建）。
-- 新 `tests/test_sqlite_vector_store.cpp`：IVectorStore 全语义对齐（insert 覆盖/remove/update/search 的 similarity 映射 [0,1] 降序/count/contains/insertBatch/并发读）。
-- 新 `tests/test_session_sqlite.cpp`：save/load 往返、appendHistory/loadHistory、listSessions 排序、deleteSession 归档、标题提取、preserved 传递。
+- 新 `tests/test_sqlite_store.cpp`：建表迁移、WAL/外键、事务回滚、损坏自愈（.corrupt 重命名重建）、连接未打开时 no-op 安全。
+- 新 `tests/test_sqlite_vector_store.cpp`：IVectorStore 全语义对齐（insert 覆盖/remove/update/search 的 similarity 映射 [0,1] 降序/count/contains/insertBatch/并发读）+ 维度失配 DROP 重建。
+- 新 `tests/test_session_sqlite.cpp`：save/load 往返（含 seq 顺序）、appendHistory/loadHistory（seq 续号）、listSessions 排序与 archived 过滤、deleteSession 归档、标题提取、preserved 传递。
 - 改造既有：`test_retrieval`（改用 SqliteVectorStore + 临时库文件）、`test_index_manifest`（改 SQL 版或并入索引服务流程）、`test_agent`/`test_search_memory_tools` 等依赖 IVectorStore 的照常运行。
 - 验证门：`./scripts/verify.sh test_sqlite_store test_sqlite_vector_store test_session_sqlite test_retrieval` 聚焦，交付前全量。
+
+### 配套更新
+
+- `IVectorStore.h` 顶部注释（JsonVectorStore → SqliteVectorStore）与 `VectorStore.h` 注释引用同步删除；涉及旧文件布局的注释（`SessionPersistence.h`、`FileStorageBackend.h`）一并更新。
+- 根目录 `CHANGELOG.md` 在实施提交时增量记录（AGENTS.md 约定）。
 
 ## 9. 执行阶段
 
