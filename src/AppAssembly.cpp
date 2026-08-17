@@ -10,6 +10,35 @@
 #include "agent/skill/BuiltinSkills.h"
 #include "utils/FileUtils.h"
 
+#include <spdlog/spdlog.h>
+
+#include <filesystem>
+#include <system_error>
+
+namespace {
+
+// 清理旧 JSON 文件布局（vectors.json/index_manifest.json/sessions/archive）。
+// 程序尚未发布，无兼容要求；存在即删除并记日志。
+void removeLegacyStorageFiles(const std::string& agent_dir)
+{
+    namespace fs = std::filesystem;
+    auto remove_if_exists = [](const fs::path& p) {
+        std::error_code ec;
+        fs::remove_all(p, ec);
+        if (ec) {
+            spdlog::warn("[NovelAgentApp] 清理旧存储文件失败: {} ({})",
+                         p.string(), ec.message());
+        }
+    };
+    const fs::path dir(agent_dir);
+    remove_if_exists(dir / "vectors.json");
+    remove_if_exists(dir / "index_manifest.json");
+    remove_if_exists(dir / "sessions");
+    remove_if_exists(dir / "archive");
+}
+
+} // namespace
+
 // 装配入口：依序调用各分段辅助函数完成 Agent 全部初始化。
 // 调用顺序即装配顺序，各段依赖关系：记忆/技能先就绪 → 工具注册 →
 // prompt → 上下文/预算 → 持久化/向量库 → 摘要/索引。
@@ -83,27 +112,24 @@ void NovelAgentApp::setupContextAndTokenBudget()
     agent_.setModelLimit(client_.config().max_context_tokens);
 }
 
-// 启用会话持久化并初始化向量存储（Task 6 Step 1 提前接线：打开 SQLite 单库）。
-// 仅库可用时启用持久化，避免空路径时写到盘符根目录 /.novelagent；
-// 旧文件清理（removeLegacyStorageFiles）属 Task 6，此处不实现。
+// 启用会话持久化并初始化向量存储（仅项目已打开时执行）。
+// 打开 SQLite 单库前先清理旧 JSON 文件布局（无兼容要求，直接删除）；
+// 仅库可用时启用持久化，避免空路径时写到盘符根目录 /.novelagent。
 // P8 懒物化：启动仅注入持久化层，不物化任何会话（不建 runtime/client）；
 // 历史会话由用户点开时经 materializeSession 恢复。
 void NovelAgentApp::setupPersistenceAndVectorStore()
 {
     if (project_access_ && !project_access_->path().empty()) {
         const std::string agent_dir = project_access_->path() + "/.novelagent";
+        // 旧文件布局清理（无兼容要求：全新库，旧内容直接删除）
+        removeLegacyStorageFiles(agent_dir);
         sqlite_store_.open(agent_dir + "/novel.db");
     }
+
     // 仅库可用时启用持久化（避免空路径时写到盘符根目录 /.novelagent；
     // sqlite_store_ 未 open 时持久化方法统一安全返回，不会崩溃）
     if (sqlite_store_.isOpen()) {
         agent_.setPersistence(&persistence_);
-    }
-
-    // 旧 JSON 向量库初始化保留不动（Task 6 随矢量库切换一并移除）
-    if (project_access_ && !project_access_->path().empty()) {
-        std::string vec_path = project_access_->path() + "/.novelagent/vectors.json";
-        vector_store_.init(vec_path);
     }
 }
 

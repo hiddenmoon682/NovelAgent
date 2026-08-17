@@ -1,5 +1,6 @@
-#include "retrieval/VectorStore.h"
+#include "retrieval/SqliteVectorStore.h"
 #include "retrieval/NovelChunker.h"
+#include "storage/SqliteStore.h"
 #include "project/Models.h"
 #include "utils/FileUtils.h"
 
@@ -32,10 +33,13 @@ static std::vector<float> makeVec(int dim, float val) {
     return std::vector<float>(dim, val);
 }
 
-// 清理临时文件
+// 清理临时库及相关 WAL/SHM 附属文件
 static void cleanup(const std::string& path) {
-    if (utils::file::exists(path)) {
-        utils::file::removeFile(path);
+    for (const auto& suffix : {"", "-wal", "-shm"}) {
+        const std::string p = path + suffix;
+        if (utils::file::exists(p)) {
+            utils::file::removeFile(p);
+        }
     }
 }
 
@@ -45,20 +49,26 @@ static std::string tmpPath(const std::string& name) {
     return (std::filesystem::temp_directory_path() / name).string();
 }
 
+// 打开临时 SQLite 库并绑定 SqliteVectorStore。
+struct VectorFixture {
+    storage::SqliteStore db;
+    retrieval::SqliteVectorStore store;
+    explicit VectorFixture(const std::string& path) : store(db) { db.open(path); }
+};
+
 // =========================================================================
 // VectorStore 测试
 // =========================================================================
 
 void test_vector_store_init_empty() {
-    TEST("VectorStore::init — 新文件从空开始");
+    TEST("VectorStore — 新建库从空开始");
 
-    const std::string db_path = tmpPath("tmp_test_vs_empty.json");
+    const std::string db_path = tmpPath("tmp_test_vs_empty.db");
     cleanup(db_path);
 
-    retrieval::VectorStore store;
-    store.init(db_path);
-    CHECK(store.count() == 0);
-    store.close();
+    VectorFixture fx(db_path);
+    CHECK(fx.store.count() == 0);
+    fx.db.close();
 
     cleanup(db_path);
     PASS();
@@ -67,29 +77,28 @@ void test_vector_store_init_empty() {
 void test_vector_store_insert_and_search() {
     TEST("VectorStore — 插入和搜索");
 
-    const std::string db_path = tmpPath("tmp_test_vs_search.json");
+    const std::string db_path = tmpPath("tmp_test_vs_search.db");
     cleanup(db_path);
 
-    retrieval::VectorStore store;
-    store.init(db_path);
+    VectorFixture fx(db_path);
 
     // 插入 3 条向量
     auto v1 = makeVec(4, 1.0f);  // [1,1,1,1]
     auto v2 = makeVec(4, -1.0f); // [-1,-1,-1,-1]
     auto v3 = makeVec(4, 0.5f);  // [0.5,0.5,0.5,0.5]
 
-    store.insert("id-1", v1, {{"label", "positive"}});
-    store.insert("id-2", v2, {{"label", "negative"}});
-    store.insert("id-3", v3, {{"label", "neutral"}});
+    fx.store.insert("id-1", v1, {{"label", "positive"}});
+    fx.store.insert("id-2", v2, {{"label", "negative"}});
+    fx.store.insert("id-3", v3, {{"label", "neutral"}});
 
-    CHECK(store.count() == 3);
-    CHECK(store.contains("id-1"));
-    CHECK(store.contains("id-2"));
-    CHECK(!store.contains("id-nonexistent"));
+    CHECK(fx.store.count() == 3);
+    CHECK(fx.store.contains("id-1"));
+    CHECK(fx.store.contains("id-2"));
+    CHECK(!fx.store.contains("id-nonexistent"));
 
     // 搜索：查询 [1,1,1,1] 应该最接近 id-1
     auto query = makeVec(4, 1.0f);
-    auto results = store.search(query, 3);
+    auto results = fx.store.search(query, 3);
 
     CHECK(results.size() == 3);
     // id-1 与 id-3 方向相同，余弦相似度并列最高（≈1.0）；排序对并列元素无稳定性承诺，不能断言两者先后
@@ -102,7 +111,7 @@ void test_vector_store_insert_and_search() {
     CHECK(results[2].id == "id-2");
     CHECK(results[1].similarity > results[2].similarity);
 
-    store.close();
+    fx.db.close();
     cleanup(db_path);
     PASS();
 }
@@ -110,32 +119,30 @@ void test_vector_store_insert_and_search() {
 void test_vector_store_persistence() {
     TEST("VectorStore — 持久化往返");
 
-    const std::string db_path = tmpPath("tmp_test_vs_persist.json");
+    const std::string db_path = tmpPath("tmp_test_vs_persist.db");
     cleanup(db_path);
 
-    // 创建并写入
+    // 创建并写入（事务即持久化：close 后数据即时落库）
     {
-        retrieval::VectorStore store;
-        store.init(db_path);
-        store.insert("persist-1", {0.1f, 0.2f, 0.3f}, {{"key", "value1"}});
-        store.insert("persist-2", {0.4f, 0.5f, 0.6f}, {{"key", "value2"}});
-        store.close();  // 自动保存
+        VectorFixture fx(db_path);
+        fx.store.insert("persist-1", {0.1f, 0.2f, 0.3f}, {{"key", "value1"}});
+        fx.store.insert("persist-2", {0.4f, 0.5f, 0.6f}, {{"key", "value2"}});
+        fx.db.close();
     }
 
     // 重新打开并读取
     {
-        retrieval::VectorStore store;
-        store.init(db_path);
-        CHECK(store.count() == 2);
-        CHECK(store.contains("persist-1"));
-        CHECK(store.contains("persist-2"));
+        VectorFixture fx(db_path);
+        CHECK(fx.store.count() == 2);
+        CHECK(fx.store.contains("persist-1"));
+        CHECK(fx.store.contains("persist-2"));
 
-        auto entry = store.get("persist-1");
+        auto entry = fx.store.get("persist-1");
         CHECK(entry.has_value());
         CHECK(entry->embedding.size() == 3);
         CHECK(std::abs(entry->embedding[0] - 0.1f) < 0.001f);
 
-        store.close();
+        fx.db.close();
     }
 
     cleanup(db_path);
@@ -145,25 +152,24 @@ void test_vector_store_persistence() {
 void test_vector_store_remove() {
     TEST("VectorStore — 删除向量");
 
-    const std::string db_path = tmpPath("tmp_test_vs_remove.json");
+    const std::string db_path = tmpPath("tmp_test_vs_remove.db");
     cleanup(db_path);
 
-    retrieval::VectorStore store;
-    store.init(db_path);
-    store.insert("rm-1", {1.0f, 2.0f}, {});
-    store.insert("rm-2", {3.0f, 4.0f}, {});
+    VectorFixture fx(db_path);
+    fx.store.insert("rm-1", {1.0f, 2.0f}, {});
+    fx.store.insert("rm-2", {3.0f, 4.0f}, {});
 
-    CHECK(store.count() == 2);
+    CHECK(fx.store.count() == 2);
 
-    bool removed = store.remove("rm-1");
+    bool removed = fx.store.remove("rm-1");
     CHECK(removed);
-    CHECK(store.count() == 1);
-    CHECK(!store.contains("rm-1"));
+    CHECK(fx.store.count() == 1);
+    CHECK(!fx.store.contains("rm-1"));
 
-    bool not_found = store.remove("rm-nonexistent");
+    bool not_found = fx.store.remove("rm-nonexistent");
     CHECK(!not_found);
 
-    store.close();
+    fx.db.close();
     cleanup(db_path);
     PASS();
 }
@@ -171,25 +177,24 @@ void test_vector_store_remove() {
 void test_vector_store_update() {
     TEST("VectorStore — 更新向量");
 
-    const std::string db_path = tmpPath("tmp_test_vs_update.json");
+    const std::string db_path = tmpPath("tmp_test_vs_update.db");
     cleanup(db_path);
 
-    retrieval::VectorStore store;
-    store.init(db_path);
-    store.insert("up-1", {0.1f, 0.2f}, {});
+    VectorFixture fx(db_path);
+    fx.store.insert("up-1", {0.1f, 0.2f}, {});
 
     // 更新
-    store.update("up-1", {0.9f, 0.8f});
+    fx.store.update("up-1", {0.9f, 0.8f});
 
-    auto entry = store.get("up-1");
+    auto entry = fx.store.get("up-1");
     CHECK(entry.has_value());
     CHECK(std::abs(entry->embedding[0] - 0.9f) < 0.001f);
 
     // 更新不存在的 id → 等同于 insert
-    store.update("up-2", {0.5f, 0.5f});
-    CHECK(store.count() == 2);
+    fx.store.update("up-2", {0.5f, 0.5f});
+    CHECK(fx.store.count() == 2);
 
-    store.close();
+    fx.db.close();
     cleanup(db_path);
     PASS();
 }
@@ -197,11 +202,10 @@ void test_vector_store_update() {
 void test_vector_store_batch_insert() {
     TEST("VectorStore — 批量插入");
 
-    const std::string db_path = tmpPath("tmp_test_vs_batch.json");
+    const std::string db_path = tmpPath("tmp_test_vs_batch.db");
     cleanup(db_path);
 
-    retrieval::VectorStore store;
-    store.init(db_path);
+    VectorFixture fx(db_path);
 
     std::vector<retrieval::VectorEntry> entries;
     for (int i = 0; i < 10; ++i) {
@@ -212,10 +216,10 @@ void test_vector_store_batch_insert() {
         });
     }
 
-    store.insertBatch(entries);
-    CHECK(store.count() == 10);
+    fx.store.insertBatch(entries);
+    CHECK(fx.store.count() == 10);
 
-    store.close();
+    fx.db.close();
     cleanup(db_path);
     PASS();
 }
@@ -224,98 +228,84 @@ void test_cosine_similarity_basic() {
     TEST("余弦相似度 — 通过搜索间接测试");
 
     // 用 search 间接测试余弦相似度
-    const std::string db_path = tmpPath("tmp_test_vs_cosine.json");
+    const std::string db_path = tmpPath("tmp_test_vs_cosine.db");
     cleanup(db_path);
 
-    retrieval::VectorStore store;
-    store.init(db_path);
+    VectorFixture fx(db_path);
 
     auto v1 = makeVec(4, 0.5f);
-    store.insert("same", v1, {});
+    fx.store.insert("same", v1, {});
 
-    auto res = store.search(v1, 1);
+    auto res = fx.store.search(v1, 1);
     CHECK(res.size() == 1);
     CHECK(res[0].similarity > 0.99);  // 自身相似度应为 1.0
 
     // 正交向量：v_orth 与自身相似度应最高
     auto v_orth = std::vector<float>{1.0f, 0.0f, 0.0f, 0.0f};
     auto v_orth2 = std::vector<float>{0.0f, 1.0f, 0.0f, 0.0f};
-    store.insert("orth1", v_orth, {});
-    store.insert("orth2", v_orth2, {});
+    fx.store.insert("orth1", v_orth, {});
+    fx.store.insert("orth2", v_orth2, {});
     (void)v_orth2; // 用于数据多样性，不需要单独使用
 
-    auto res2 = store.search(v_orth, 3);
+    auto res2 = fx.store.search(v_orth, 3);
     // v_orth 应最接近自身
     CHECK(res2[0].id == "orth1" || res2[0].id == "same");
 
-    store.close();
+    fx.db.close();
     cleanup(db_path);
     PASS();
 }
 
-// 验证 flush() 不经 close() 即可持久化全部向量。
-//
-// 回归背景：saveToFile/flush 此前无锁且为 const，无法清除脏标记；
-// 修复后 flush 内部加写锁并在成功后清脏，行为上应保持落盘即时可读。
+// 验证持久化语义：事务即持久化——insert 后无需 flush，close 重开库数据仍在。
 void test_vector_store_flush_persists() {
-    TEST("VectorStore::flush — 不经 close 即持久化");
+    TEST("VectorStore — 事务即持久化（close 重开仍在）");
 
-    const std::string db_path = tmpPath("tmp_test_vs_flush.json");
+    const std::string db_path = tmpPath("tmp_test_vs_flush.db");
     cleanup(db_path);
 
-    retrieval::VectorStore store;
-    store.init(db_path);
-    store.insert("flush-1", {0.1f, 0.2f}, {{"k", "v"}});
-    store.flush();
+    {
+        VectorFixture fx(db_path);
+        fx.store.insert("flush-1", {0.1f, 0.2f}, {{"k", "v"}});
+        fx.db.close();
+    }
 
-    // 未 close，另一实例从同一文件加载应能读到已落盘的向量
-    retrieval::VectorStore reader;
-    reader.init(db_path);
-    CHECK(reader.count() == 1);
-    CHECK(reader.contains("flush-1"));
-    reader.close();
+    // 重开库应能读到已提交的数据
+    VectorFixture fx2(db_path);
+    CHECK(fx2.store.count() == 1);
+    CHECK(fx2.store.contains("flush-1"));
+    fx2.db.close();
 
-    store.close();
     cleanup(db_path);
     PASS();
 }
 
-// 验证 flush() 成功后清除脏标记：close() 不再重复落盘。
-//
-// 观察手段：flush 后删除磁盘文件再 close，若 dirty_ 已清除则 close 不会
-// 重建文件；修复前 dirty_ 无法被 const saveToFile 清除，close 会多写一次。
-void test_vector_store_flush_clears_dirty() {
-    TEST("VectorStore::flush — 成功后清除脏标记");
+// flush() 在 SQLite 后端为兼容接口的 no-op（事务即持久化），调用不应抛异常。
+void test_vector_store_flush_noop() {
+    TEST("VectorStore::flush — no-op 不抛异常（事务即持久化）");
 
-    const std::string db_path = tmpPath("tmp_test_vs_dirty.json");
+    const std::string db_path = tmpPath("tmp_test_vs_flushnoop.db");
     cleanup(db_path);
-
-    retrieval::VectorStore store;
-    store.init(db_path);
-    store.insert("dirty-1", {0.5f, 0.5f}, {});
-    store.flush();
-    CHECK(utils::file::exists(db_path));
-
-    cleanup(db_path);  // 外部删除文件
-    store.close();     // 脏标记已清除，close 不应重新落盘
-    CHECK(!utils::file::exists(db_path));
-
+    VectorFixture fx(db_path);
+    fx.store.insert("flush-1", {0.1f, 0.2f}, {{"k", "v"}});
+    fx.store.flush();
+    CHECK(fx.store.count() == 1);
+    fx.db.close();
     cleanup(db_path);
     PASS();
 }
 
 // 并发冗余测试：多线程 insert 与 flush/search 交错执行不应崩溃且数据完整。
 //
-// 回归背景：修复前 flush 无锁读 entries_，与并发 insert 的 vector 扩容
-// 构成数据竞争（悬空迭代器/撞裂读）；修复后各操作均持锁，结果确定。
+// 回归背景：旧 JSON VectorStore 的 flush 无锁读 entries_，与并发 insert 的
+// vector 扩容构成数据竞争；SQLite 后端经由 SqliteStore 全库锁串行化，
+// flush 为 no-op，结果确定。
 void test_vector_store_concurrent_flush() {
     TEST("VectorStore — 并发 insert/flush/search 无竞争");
 
-    const std::string db_path = tmpPath("tmp_test_vs_conc.json");
+    const std::string db_path = tmpPath("tmp_test_vs_conc.db");
     cleanup(db_path);
 
-    retrieval::VectorStore store;
-    store.init(db_path);
+    VectorFixture fx(db_path);
 
     constexpr int kWriters = 2;
     constexpr int kPerWriter = 50;
@@ -323,24 +313,24 @@ void test_vector_store_concurrent_flush() {
     std::vector<std::thread> threads;
     // 写线程：各自插入不重叠的 id
     for (int w = 0; w < kWriters; ++w) {
-        threads.emplace_back([&store, w]() {
+        threads.emplace_back([&fx, w]() {
             for (int i = 0; i < kPerWriter; ++i) {
-                store.insert("conc-" + std::to_string(w) + "-" + std::to_string(i),
-                             {static_cast<float>(w), static_cast<float>(i)}, {});
+                fx.store.insert("conc-" + std::to_string(w) + "-" + std::to_string(i),
+                                {static_cast<float>(w), static_cast<float>(i)}, {});
             }
         });
     }
-    // flush 线程：与写入交错落盘
-    threads.emplace_back([&store]() {
+    // flush 线程：与写入交错调用（no-op）
+    threads.emplace_back([&fx]() {
         for (int i = 0; i < 10; ++i) {
-            store.flush();
+            fx.store.flush();
         }
     });
-    // 读线程：与写入/落盘交错搜索
-    threads.emplace_back([&store]() {
+    // 读线程：与写入交错搜索
+    threads.emplace_back([&fx]() {
         for (int i = 0; i < 20; ++i) {
-            (void)store.search({1.0f, 1.0f}, 5);
-            (void)store.count();
+            (void)fx.store.search({1.0f, 1.0f}, 5);
+            (void)fx.store.count();
         }
     });
 
@@ -348,16 +338,14 @@ void test_vector_store_concurrent_flush() {
         t.join();
     }
 
-    CHECK(store.count() == kWriters * kPerWriter);
+    CHECK(fx.store.count() == kWriters * kPerWriter);
 
-    // 最终落盘后重新加载，验证文件内容完整
-    store.flush();
-    retrieval::VectorStore reader;
-    reader.init(db_path);
-    CHECK(reader.count() == kWriters * kPerWriter);
-    reader.close();
+    // 最终重开库验证数据完整
+    fx.db.close();
+    VectorFixture fx2(db_path);
+    CHECK(fx2.store.count() == kWriters * kPerWriter);
+    fx2.db.close();
 
-    store.close();
     cleanup(db_path);
     PASS();
 }
@@ -542,31 +530,30 @@ void test_text_chunk_factories() {
 void test_hybrid_search_dedup() {
     TEST("混合检索 — VectorStore 搜索去重");
 
-    const std::string db_path = tmpPath("tmp_test_hybrid.json");
+    const std::string db_path = tmpPath("tmp_test_hybrid.db");
     cleanup(db_path);
 
-    retrieval::VectorStore store;
-    store.init(db_path);
+    VectorFixture fx(db_path);
 
     // 插入多种类型的内容
-    store.insert("ch-001-0", {0.8f, 0.6f, 0.1f, 0.1f},
-                 {{"type", "chapter"}, {"chapter_id", "ch-001"}});
-    store.insert("ch-001-1", {0.7f, 0.5f, 0.2f, 0.1f},
-                 {{"type", "chapter"}, {"chapter_id", "ch-001"}});
-    store.insert("char-protagonist", {0.5f, 0.8f, 0.1f, 0.1f},
-                 {{"type", "character"}, {"character_id", "char-001"}});
-    store.insert("setting-cave", {0.3f, 0.3f, 0.9f, 0.2f},
-                 {{"type", "setting"}, {"setting_id", "set-001"}});
+    fx.store.insert("ch-001-0", {0.8f, 0.6f, 0.1f, 0.1f},
+                    {{"type", "chapter"}, {"chapter_id", "ch-001"}});
+    fx.store.insert("ch-001-1", {0.7f, 0.5f, 0.2f, 0.1f},
+                    {{"type", "chapter"}, {"chapter_id", "ch-001"}});
+    fx.store.insert("char-protagonist", {0.5f, 0.8f, 0.1f, 0.1f},
+                    {{"type", "character"}, {"character_id", "char-001"}});
+    fx.store.insert("setting-cave", {0.3f, 0.3f, 0.9f, 0.2f},
+                    {{"type", "setting"}, {"setting_id", "set-001"}});
 
     // 搜索接近章节内容的查询
     auto query = std::vector<float>{0.8f, 0.6f, 0.1f, 0.1f};
-    auto results = store.search(query, 3);
+    auto results = fx.store.search(query, 3);
 
     CHECK(results.size() == 3);
     // 章节 chunk 应该排在前面
     CHECK(results[0].similarity > 0.9);
 
-    store.close();
+    fx.db.close();
     cleanup(db_path);
     PASS();
 }
@@ -574,18 +561,17 @@ void test_hybrid_search_dedup() {
 void test_hybrid_search_metadata_filter() {
     TEST("混合检索 — 元数据过滤");
 
-    const std::string db_path = tmpPath("tmp_test_hybrid2.json");
+    const std::string db_path = tmpPath("tmp_test_hybrid2.db");
     cleanup(db_path);
 
-    retrieval::VectorStore store;
-    store.init(db_path);
+    VectorFixture fx(db_path);
 
-    store.insert("ch-001", {0.9f, 0.1f}, {{"type", "chapter"}, {"chapter_id", "ch-001"}});
-    store.insert("ch-002", {0.1f, 0.9f}, {{"type", "chapter"}, {"chapter_id", "ch-002"}});
-    store.insert("char-001", {0.5f, 0.5f}, {{"type", "character"}});
+    fx.store.insert("ch-001", {0.9f, 0.1f}, {{"type", "chapter"}, {"chapter_id", "ch-001"}});
+    fx.store.insert("ch-002", {0.1f, 0.9f}, {{"type", "chapter"}, {"chapter_id", "ch-002"}});
+    fx.store.insert("char-001", {0.5f, 0.5f}, {{"type", "character"}});
 
     // 搜索所有，然后按类型过滤
-    auto all_results = store.search({0.9f, 0.1f}, 10);
+    auto all_results = fx.store.search({0.9f, 0.1f}, 10);
     CHECK(all_results.size() == 3);
 
     // 验证按类型过滤（在结果中手动过滤）
@@ -598,7 +584,7 @@ void test_hybrid_search_metadata_filter() {
     CHECK(chapter_count == 2);
     CHECK(character_count == 1);
 
-    store.close();
+    fx.db.close();
     cleanup(db_path);
     PASS();
 }
@@ -617,7 +603,7 @@ int main() {
     test_vector_store_batch_insert();
     test_cosine_similarity_basic();
     test_vector_store_flush_persists();
-    test_vector_store_flush_clears_dirty();
+    test_vector_store_flush_noop();
     test_vector_store_concurrent_flush();
 
     // NovelChunker 测试

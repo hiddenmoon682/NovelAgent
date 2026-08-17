@@ -8,7 +8,8 @@
 //   4. 嵌入生成异常时的错误包装
 
 #include "agent/tools/SearchMemoryTools.h"
-#include "retrieval/VectorStore.h"
+#include "retrieval/SqliteVectorStore.h"
+#include "storage/SqliteStore.h"
 #include "retrieval/IEmbeddingGenerator.h"
 #include "utils/FileUtils.h"
 
@@ -69,10 +70,13 @@ public:
     std::string modelName() const override { return "throwing-embedding"; }
 };
 
-// 清理临时文件
+// 清理临时库及相关 WAL/SHM 附属文件
 static void cleanup(const std::string& path) {
-    if (utils::file::exists(path)) {
-        utils::file::removeFile(path);
+    for (const auto& suffix : {"", "-wal", "-shm"}) {
+        const std::string p = path + suffix;
+        if (utils::file::exists(p)) {
+            utils::file::removeFile(p);
+        }
     }
 }
 
@@ -96,7 +100,9 @@ void test_backend_not_ready() {
 void test_backend_partial_ready() {
     TEST("search_memory — 仅注入 vector_store 仍视为未就绪");
 
-    retrieval::VectorStore store;
+    // 未打开的 SQLite 库 + SqliteVectorStore：查询类操作安全返回空集，无需真实文件
+    storage::SqliteStore db;
+    retrieval::SqliteVectorStore store(db);
     agent::ToolDependencies deps;
     deps.vector_store = &store;   // embedding_gen 缺失
     agent::SearchMemoryTool tool(deps);
@@ -114,7 +120,8 @@ void test_backend_partial_ready() {
 void test_empty_query() {
     TEST("search_memory — 空查询返回 error");
 
-    retrieval::VectorStore store;
+    storage::SqliteStore db;
+    retrieval::SqliteVectorStore store(db);
     FakeEmbeddingGenerator gen;
     agent::ToolDependencies deps;
     deps.vector_store = &store;
@@ -135,13 +142,14 @@ void test_empty_query() {
 void test_execute_with_injected_backend() {
     TEST("search_memory — 注入依赖后端到端检索");
 
-    // 临时向量库放到系统临时目录，避免硬编码仓库绝对路径导致盘符绑定
+    // 临时 SQLite 库放到系统临时目录，避免硬编码仓库绝对路径导致盘符绑定
     const std::string db_path =
-        (std::filesystem::temp_directory_path() / "tmp_test_search_memory.json").string();
+        (std::filesystem::temp_directory_path() / "tmp_test_search_memory.db").string();
     cleanup(db_path);
 
-    retrieval::VectorStore store;
-    store.init(db_path);
+    storage::SqliteStore db;
+    retrieval::SqliteVectorStore store(db);
+    db.open(db_path);
     // 与 FakeEmbeddingGenerator 的方向约定一致：正向量匹配、负向量不匹配
     store.insert("vec-pos", retrieval::EmbeddingVector(4, 1.0f),
                  {{"text", "主角在雨夜遇见神秘老人"}, {"type", "chapter"},
@@ -164,7 +172,7 @@ void test_execute_with_injected_backend() {
     CHECK(r["results"][0]["chapter_id"] == "ch-001");
     CHECK(r["query"] == "雨夜的神秘老人");
 
-    store.close();
+    db.close();
     cleanup(db_path);
     PASS();
 }
@@ -172,7 +180,8 @@ void test_execute_with_injected_backend() {
 void test_top_k_clamped() {
     TEST("search_memory — top_k 越界时被钳制到 [1,20]");
 
-    retrieval::VectorStore store;
+    storage::SqliteStore db;
+    retrieval::SqliteVectorStore store(db);
     FakeEmbeddingGenerator gen;
     agent::ToolDependencies deps;
     deps.vector_store = &store;
@@ -198,7 +207,8 @@ void test_top_k_clamped() {
 void test_embedding_exception_wrapped() {
     TEST("search_memory — 嵌入生成异常被包装为 error");
 
-    retrieval::VectorStore store;
+    storage::SqliteStore db;
+    retrieval::SqliteVectorStore store(db);
     ThrowingEmbeddingGenerator gen;
     agent::ToolDependencies deps;
     deps.vector_store = &store;

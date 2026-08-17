@@ -1,5 +1,16 @@
 # Changelog
 
+## [2026-08-17] 存储层迁入 SQLite 单库（Phase 1：会话/向量/索引清单）
+
+### 重构 — SQLite 集成
+- 新增 `third_party/`：sqlite3 amalgamation（3.46.1，开 FTS5）+ sqlite-vec v0.1.6 + SQLiteCpp 3.3.3，全部 vendor 随仓库构建。
+- 新增 `src/storage/SqliteStore`：`<项目>/.novelagent/novel.db` 唯一入口（建表迁移/WAL/事务/损坏自愈/全库互斥锁）。
+- `VectorStore`（JSON 暴力扫描）删除 → `SqliteVectorStore`（sqlite-vec vec0），`IVectorStore` 接口不变。
+- `IndexManifest` 删除 → 清单表 `index_sources/index_chunks/kv_store`，`ProjectIndexService` 直连 SQL、`indexAll` 单事务提交。
+- `SessionPersistence` 公开接口不变，内部改 `sessions/messages/message_history` 表；删除会话置 `archived=1`（原 archive/ 归档语义）。
+- 旧文件布局（vectors.json/index_manifest.json/sessions/archive）启动时清理，不做数据迁移（未发布）。
+- NovelAgentApp 装配整体切换：向量库/持久化/索引服务共用 novel.db 单连接；`test_retrieval.cpp` 用例全部迁到 SqliteVectorStore。
+
 ## [2026-08-05] 修复 createPoolSession 未同步池焦点（取消按钮失效回归）
 
 ### 修复 — 取消按钮失效

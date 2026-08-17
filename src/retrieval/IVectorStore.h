@@ -2,8 +2,7 @@
 
 // 向量存储抽象接口 — 解耦语义搜索与具体存储后端。
 //
-// 当前实现：JsonVectorStore（JSON 文件 + 暴力余弦相似度）
-// 未来可选：SqliteVectorStore（sqlite-vec ANN 搜索）
+// 当前实现：SqliteVectorStore（SQLite + sqlite-vec vec0 虚拟表）
 //
 // 所有依赖向量搜索的模块均通过此接口交互，替换后端不影响上层代码。
 //

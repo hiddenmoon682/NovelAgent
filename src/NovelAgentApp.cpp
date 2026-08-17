@@ -22,7 +22,7 @@ NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
 
 NovelAgentApp::~NovelAgentApp()
 {
-    // SQLite 单库生命周期收尾（未 open 时为 no-op；open 装配在 Task 6）
+    // SQLite 单库生命周期收尾（未 open 时为 no-op）
     sqlite_store_.close();
 }
 

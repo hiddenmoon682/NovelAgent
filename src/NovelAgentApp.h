@@ -10,7 +10,7 @@
 #include "project/FileStorageBackend.h"
 #include "project/ProjectAccess.h"
 #include "storage/SqliteStore.h"
-#include "retrieval/VectorStore.h"
+#include "retrieval/SqliteVectorStore.h"
 #include "retrieval/EmbeddingGenerator.h"
 #include "agent/longterm/LongTermMemoryStore.h"
 #include "agent/prompt/RulesProvider.h"
@@ -53,10 +53,10 @@ private:
     std::shared_ptr<ProjectAccess> project_access_; // 项目受控访问层（P2/P3：工具/索引/GUI 唯一入口）
     llm::TokenCounter calibrator_;                  // Token 计量/校准器
     FileStorageBackend storage_;                    // 文件存储后端（绑定项目路径）
-    // SQLite 单库（会话/索引/向量共用；open 装配在 Task 6 完成，此处仅保证编译）
+    // SQLite 单库（会话/索引/向量共用；由 setupPersistenceAndVectorStore 打开）
     storage::SqliteStore sqlite_store_;
+    retrieval::SqliteVectorStore vector_store_{sqlite_store_};  // 向量存储（SQLite 后端）
     agent::SessionPersistence persistence_{sqlite_store_, storage_};  // 会话持久化（基于 sqlite_store_）
-    retrieval::VectorStore vector_store_;           // 向量存储（检索用）
     retrieval::EmbeddingGenerator embedding_gen_;   // 嵌入向量生成器
     agent::LongTermMemoryStore ltm_store_;          // 长期记忆日志
     std::unique_ptr<agent::ProjectIndexService> index_service_;  // 项目索引服务
