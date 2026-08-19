@@ -1,5 +1,6 @@
 # Build output
 build/
+build-test/
 cmake-build-*/
 
 # CTest 输出（测试日志不含源代码）

@@ -73,9 +73,14 @@ void SqliteStore::open(const std::string& db_path)
     }
 
     try {
+        // 打开 SQLite 库：READWRITE 读写方式；CREATE 库文件不存在时自动创建；
+        // FULLMUTEX 开启全线程串行模式，允许同一连接被多线程交替调用。
         db_ = std::make_unique<SQLite::Database>(
             db_path, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX);
+        // 建表迁移：设置 WAL/外键 PRAGMA，按需创建 sessions/messages/kv_store 等表。
         ensureSchema();
+        // 从 kv_store 恢复向量维度缓存：重启后同维度调用 ensureVectorTable 短路不 DROP；
+        // 新库或自愈重建时 kv 缺失 → 恢复为 0，保持按需建表。
         restoreVectorDimension();
     } catch (const std::exception& e) {
         spdlog::error("[SqliteStore] 打开库失败: {} - {}", db_path, e.what());
@@ -171,10 +176,21 @@ void SqliteStore::resetVectorTable()
 
 void SqliteStore::ensureSchema()
 {
+    // 以下 DDL 全部幂等（IF NOT EXISTS），open() 与损坏自愈重建共用本函数。
+
+    // WAL 日志模式：读写互不阻塞、崩溃后自动恢复；该属性为库级持久设置，
+    // 每次打开连接显式设置一次，可覆盖旧库可能残留的非 WAL 状态。
     db_->exec("PRAGMA journal_mode=WAL");
+    // SQLite 外键约束默认关闭且“每连接”生效，必须显式开启；
+    // 否则删除 sessions 时，messages/index_chunks 的 CASCADE 清理不会触发。
     db_->exec("PRAGMA foreign_keys=ON");
 
-    // 会话（archived=1 为归档态：数据保留、列表不可见）
+    // 会话主表：每条会话一行，messages/message_history 均以 session_id 外键关联到此表。
+    //   id         会话唯一 ID（主键）
+    //   title      会话标题：首次保存时从首条 user 消息自动提取，空串 = 未命名
+    //   created_at 创建时间（UTC 时间戳文本）
+    //   updated_at 最后更新时间，会话列表按此倒序排列
+    //   archived   归档标记：1=永久封存（数据保留、列表不可见），save() 刻意不复活
     db_->exec(
         "CREATE TABLE IF NOT EXISTS sessions ("
         " id TEXT PRIMARY KEY,"
@@ -184,7 +200,16 @@ void SqliteStore::ensureSchema()
         " archived INTEGER NOT NULL DEFAULT 0"
         ")");
 
-    // 快照层：save() 事务内 DELETE + 重插（对应原 <id>.json）
+    // 快照层：save() 事务内 DELETE + 重插全量覆盖（对应原 <id>.json），始终是最新会话状态。
+    //   session_id        所属会话（外键 → sessions.id，会话删除时级联清理）
+    //   seq               会话内序号：从 1 递增，与 session_id 组成主键，回放按此排序
+    //   role              角色：user/assistant/tool（system 不入库，启动时重新组装）
+    //   content           消息正文
+    //   tool_calls        assistant 消息携带的工具调用 JSON 数组（无则 NULL）
+    //   tool_call_id      工具结果消息关联的调用 ID（仅 tool 角色，用于结果↔调用配对）
+    //   reasoning_content DeepSeek thinking 的推理过程（仅工具调用循环内回显）
+    //   preserved         pin 标记：压缩/截断时优先保留（自动 pin 上限 12 条，手动 pin 不受限）
+    //   is_control        控制消息占位（如取消提示）：非真实对话，UI 据此过滤/特殊渲染
     db_->exec(
         "CREATE TABLE IF NOT EXISTS messages ("
         " session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,"
@@ -199,7 +224,8 @@ void SqliteStore::ensureSchema()
         " PRIMARY KEY (session_id, seq)"
         ")");
 
-    // 完整历史层：append-only（对应原 <id>.history）
+    // 完整历史层：append-only（对应原 <id>.history），每轮消息以 MAX(seq)+1 续号追加、
+    // 只增不改，与快照层“重插覆盖”互补，保留完整消息序列供回滚与溯源；字段同 messages 表。
     db_->exec(
         "CREATE TABLE IF NOT EXISTS message_history ("
         " session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,"
@@ -214,7 +240,14 @@ void SqliteStore::ensureSchema()
         " PRIMARY KEY (session_id, seq)"
         ")");
 
-    // 索引清单（对应原 index_manifest.json）
+    // 检索索引来源清单（对应原 index_manifest.json）：
+    // index_sources —— 每个被索引的来源文件一行：
+    //   source_key   来源文件标识（主键）
+    //   content_hash 文件内容哈希：哈希变 ⇔ 内容过期，需重建索引
+    //   updated_at   索引更新时间（unix 秒）
+    // index_chunks —— 来源切分出的块清单，来源删除时经外键 CASCADE 一并清理：
+    //   source_key   所属来源（外键 → index_sources）
+    //   chunk_id     向量块 ID（与 vec_chunks.chunk_id 对应）
     db_->exec(
         "CREATE TABLE IF NOT EXISTS index_sources ("
         " source_key TEXT PRIMARY KEY,"
@@ -228,7 +261,9 @@ void SqliteStore::ensureSchema()
         " PRIMARY KEY (source_key, chunk_id)"
         ")");
 
-    // 单行 KV（模型指纹、schema 版本等）
+    // 单行 KV 表：模型指纹、schema 版本、向量维度等键值项，覆盖写语义。
+    //   key    项名称（主键）
+    //   value  项值（任意文本）
     db_->exec(
         "CREATE TABLE IF NOT EXISTS kv_store ("
         " key TEXT PRIMARY KEY,"
