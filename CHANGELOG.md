@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-08-19] NovelChunker 纯文本分块改造：删除 markdown 场景切分
+
+### 重构 — 检索分块
+- `chunkByScenes` 与其 `## Scene` 正则彻底删除：小说正文是纯文本大段文字（.txt），不存在 markdown 场景标记，不再假设正文含 markdown 结构。
+- `chunkChapter` 统一走纯文本段落切分；`chunkByParagraphs` 新增超长段落兜底：单段超过上限（如整章无空行）时按中英文句末标点切成句子再聚合，修复"整章一段产出巨型 chunk"的问题；无句末标点的极端超长段按 UTF-8 字符边界硬切兜底（A11 思路）。
+- 新增私有 `splitSentences`（句末标点：。！？….!?，切点位于标点之后）；聚合与重叠逻辑不变；`configure` 对 max_chunk_size 增加下限钳制。
+- 新增测试：无空行整章一段、markdown 场景标记不再特殊切分、全部切点位于段落/句子边界、无标点超长段硬切（tests/ 本地保留）。
+
 ## [2026-08-17] 存储层清理：移除 vec_chunks 的 embedding_json 冗余列
 
 ### 清理 — 存储瘦身
