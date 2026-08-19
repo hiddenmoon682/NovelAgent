@@ -3,14 +3,28 @@
   "configurePresets": [
     {
       "name": "default",
-      "description": "Ninja + GCC (MinGW-w64), MSYS2 提供 OpenSSL/FTXUI",
+      "description": "Ninja + GCC (MinGW-w64), MSYS2 提供 OpenSSL/FTXUI；仅构建项目，不含测试",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "OPENSSL_ROOT_DIR": "D:/SoftWare/msys2/mingw64",
-        "CMAKE_PREFIX_PATH": "D:/SoftWare/msys2/mingw64"
+        "CMAKE_PREFIX_PATH": "D:/SoftWare/msys2/mingw64",
+        "BUILD_TESTING": "OFF"
+      }
+    },
+    {
+      "name": "test",
+      "description": "项目 + 测试构建（BUILD_TESTING=ON，独立目录 build-test，供 verify.sh 使用）",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-test",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "OPENSSL_ROOT_DIR": "D:/SoftWare/msys2/mingw64",
+        "CMAKE_PREFIX_PATH": "D:/SoftWare/msys2/mingw64",
+        "BUILD_TESTING": "ON"
       }
     }
   ],
@@ -20,13 +34,31 @@
       "description": "显式 jobs=26，文档化 Ninja 默认并行度（逻辑核心数+2，本机 24 核 → 26）",
       "configurePreset": "default",
       "jobs": 26
+    },
+    {
+      "name": "test",
+      "description": "测试构建（与 default 同并行度）",
+      "configurePreset": "test",
+      "jobs": 26
     }
   ],
   "testPresets": [
     {
-      "name": "default",
+      "name": "test",
       "description": "并行跑 ctest（jobs=24，本机逻辑核心数），失败不中断其余用例，仅失败时输出详情",
-      "configurePreset": "default",
+      "configurePreset": "test",
+      "execution": {
+        "jobs": 24,
+        "stopOnFailure": false
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "default",
+      "description": "兼容别名：测试构建（即 test 预设；default 配置预设本身不含测试）",
+      "configurePreset": "test",
       "execution": {
         "jobs": 24,
         "stopOnFailure": false

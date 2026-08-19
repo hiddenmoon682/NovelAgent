@@ -107,31 +107,6 @@ target_include_directories(novelagent_tools PUBLIC src)
 target_link_libraries(novelagent_tools PUBLIC novelagent_core)
 target_precompile_headers(novelagent_tools REUSE_FROM novelagent_core)
 
-# ── 测试专用预链接 STATIC 库 ──
-# 29 个测试原先各自把 core/tools 的全部对象文件重新链接一遍；
-# 预先归档成 .a 后，链接器按需拉取归档成员（core 无静态初始化副作用，
-# 可安全惰性链接），显著缩短测试链接耗时。
-# 注意：主程序目标（app/qt/gui）不受影响，仍直接链接 OBJECT 库。
-# 使用要求（include/defs/依赖）需手动复制自 novelagent_core ——
-# 由 $<TARGET_OBJECTS> 构造的 STATIC 库不继承源 OBJECT 库的 INTERFACE 属性。
-add_library(novelagent_core_prelinked STATIC $<TARGET_OBJECTS:novelagent_core>)
-target_include_directories(novelagent_core_prelinked PUBLIC src)
-target_compile_definitions(novelagent_core_prelinked PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
-if(WIN32)
-    target_compile_definitions(novelagent_core_prelinked PUBLIC UNICODE _UNICODE)
-endif()
-target_link_libraries(novelagent_core_prelinked PUBLIC ${COMMON_LIBS} novelagent_sqlite)
-
-# tools 预链接库：仅含 tools 对象，core 依赖经 core_prelinked 传递。
-# 重要：tools 对象靠 REGISTER_TOOL 的文件级静态初始化自注册，
-# 普通归档链接会丢弃未被直接引用的成员 → 工具注册消失。
-# 整体包含由 tests/CMakeLists.txt 的 TOOLS_PRELINKED 用显式的
-# --whole-archive/--no-whole-archive 标志对实现（不用
-# $<LINK_LIBRARY:WHOLE_ARCHIVE,...>，它在 MinGW-GNU 上展开为
-# --push-state/--pop-state，本工具链的 lld MinGW 前端不识别）。
-add_library(novelagent_tools_prelinked STATIC $<TARGET_OBJECTS:novelagent_tools>)
-target_link_libraries(novelagent_tools_prelinked PUBLIC novelagent_core_prelinked)
-
 set(APP_SOURCES ${NOVELAGENT_APP})  # 定义于 cmake/Sources.cmake（集中登记）
 
 add_library(novelagent_app OBJECT ${APP_SOURCES})
@@ -141,6 +116,7 @@ target_precompile_headers(novelagent_app REUSE_FROM novelagent_core)
 
 # ── 构建选项 ──
 option(BUILD_GUI "Build Qt QML GUI executable" ON)
+option(BUILD_TESTING "构建并注册测试（主构建默认关闭，测试经 test 预设启用）" OFF)
 
 # ── Qt6 QML GUI 前端 ──
 if(BUILD_GUI)
@@ -212,5 +188,35 @@ if(WIN32 AND EXISTS "D:/SoftWare/msys2/mingw64/bin")
     endif()
 endif()
 
-enable_testing()
-add_subdirectory(tests)
+# ── 测试构建（独立开关）──
+# 主构建（default 预设）不编译任何测试；测试构建用 test 预设，配置项
+# BUILD_TESTING=ON 后才会创建预链接库、启用 ctest 并纳入 tests/ 目录。
+if(BUILD_TESTING)
+    # ── 测试预链接 STATIC 库 ──
+    # 29 个测试原先各自把 core/tools 的全部对象文件重新链接一遍；
+    # 预先归档成 .a 后，链接器按需拉取归档成员（core 无静态初始化副作用，
+    # 可安全惰性链接），显著缩短测试链接耗时。
+    # 注意：主程序目标（app/qt/gui）不受影响，仍直接链接 OBJECT 库。
+    # 使用要求（include/defs/依赖）需手动复制自 novelagent_core ——
+    # 由 $<TARGET_OBJECTS> 构造的 STATIC 库不继承源 OBJECT 库的 INTERFACE 属性。
+    add_library(novelagent_core_prelinked STATIC $<TARGET_OBJECTS:novelagent_core>)
+    target_include_directories(novelagent_core_prelinked PUBLIC src)
+    target_compile_definitions(novelagent_core_prelinked PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
+    if(WIN32)
+        target_compile_definitions(novelagent_core_prelinked PUBLIC UNICODE _UNICODE)
+    endif()
+    target_link_libraries(novelagent_core_prelinked PUBLIC ${COMMON_LIBS} novelagent_sqlite)
+
+    # tools 预链接库：仅含 tools 对象，core 依赖经 core_prelinked 传递。
+    # 重要：tools 对象靠 REGISTER_TOOL 的文件级静态初始化自注册，
+    # 普通归档链接会丢弃未被直接引用的成员 → 工具注册消失。
+    # 整体包含由 tests/CMakeLists.txt 的 TOOLS_PRELINKED 用显式的
+    # --whole-archive/--no-whole-archive 标志对实现（不用
+    # $<LINK_LIBRARY:WHOLE_ARCHIVE,...>，它在 MinGW-GNU 上展开为
+    # --push-state/--pop-state，本工具链的 lld MinGW 前端不识别）。
+    add_library(novelagent_tools_prelinked STATIC $<TARGET_OBJECTS:novelagent_tools>)
+    target_link_libraries(novelagent_tools_prelinked PUBLIC novelagent_core_prelinked)
+
+    enable_testing()
+    add_subdirectory(tests)
+endif()
