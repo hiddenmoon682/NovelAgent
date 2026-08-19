@@ -80,3 +80,7 @@ review/
 
 # 遗留仓库内技能目录（运行时实际读取 ~/.novelagent/skills 与 <小说项目>/skills）
 skills/
+
+# 单人开发规范（本地使用，不公开）
+AGENTS.md
+CLAUDE.md
