@@ -7,7 +7,7 @@
 
 - **语言/标准**：C++20，CMake 构建（Ninja），MSYS2 MinGW-w64。
 - **核心依赖**：`nlohmann/json`、`spdlog`、`cpp-httplib`、OpenSSL、FTXUI。
-- **结构**：`src/`（agent/llm/project/retrieval/utils/novelagent_qt）、`tests/`（`test_<module>.cpp`）、`docs/`（设计/规划/审查）、`skills/`（小说创作技能）。
+- **结构**：`src/`（agent/llm/project/retrieval/utils/novelagent_qt）、`tests/`（`test_<module>.cpp`）、`docs/`（设计/规划/审查）、`cmake/`、`scripts/`。
 - **详细规范**：完整开发规范见 [CLAUDE.md](CLAUDE.md) 与 [docs/DEV_GUIDE.md](docs/DEV_GUIDE.md)。
 
 ## 构建与验证命令

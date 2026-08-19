@@ -45,6 +45,9 @@ opencode.json
 # Claude skills (local skills not tracked)
 .claude/skills/
 
+# Claude Code 本地工具配置（个人环境相关，不跟踪）
+.claude/settings.json
+
 # Tauri GUI
 gui/node_modules/
 gui/dist/
@@ -62,3 +65,18 @@ _ref/
 
 # Git worktrees
 .worktrees/
+
+# 遗留 UI 原型（非项目代码）
+preview.html
+
+# 测试报告产物
+tests/e2e_test_report.md
+
+# 过程性文档（计划/规格，完成即归档，不跟踪）
+docs/superpowers/
+
+# 遗留顶层评审文档（正式评审在 docs/review/）
+review/
+
+# 遗留仓库内技能目录（运行时实际读取 ~/.novelagent/skills 与 <小说项目>/skills）
+skills/
