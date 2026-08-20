@@ -4,17 +4,19 @@
 //
 // 职责：将长篇小说内容切分为适合嵌入的文本块（chunk）。
 // 切分策略：
-//   - 章节正文：按段落边界切分（纯文本），无空行或超长段落时按句子边界兜底
-//   - 每个 chunk 500-2000 字
-//   - 相邻 chunk 保留 10-20% 重叠（维持语义连贯性）
+//   - 章节正文：按换行切分段落（纯文本）：单换行一行一段，空行合并；超长段落按句子边界兜底
+//   - 每个 chunk 约 600-1800 字节（≈200-600 字，按 期望字数×3 换算；中文 1 字 3 字节）
+//   - 相邻 chunk 保留重叠（默认 15%，可配置 0-30%）
 //   - 角色/设定/世界规则：拼接核心信息为单条可嵌入文本
+//   - 内部统一以 UTF-32（码点）处理中文字符，输入输出均为 UTF-8
 //
 // 使用示例:
 //   NovelChunker chunker;
-//   auto chunks = chunker.chunkChapter(chapter, markdown_content);
+//   auto chunks = chunker.chunkChapter(chapter, content);
 //   auto char_text = chunker.chunkCharacter(character);
 //   auto setting_text = chunker.chunkSetting(setting);
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -24,6 +26,14 @@ struct Setting;
 struct WorldRule;
 
 namespace retrieval {
+
+// 章节上下文（id → 名字 字典），供块头注入使用。
+// Chapter::pov_characters / focus_characters / location_id 存的是实体 id，
+// 索引时由 ProjectIndexService 从项目数据解析为名字填入后传入。
+struct ChapterContext {
+    std::map<std::string, std::string> character_names;  // 角色 id → 名字
+    std::map<std::string, std::string> setting_names;    // 设定 id → 名字
+};
 
 // 文本块结构。
 struct TextChunk {
@@ -77,32 +87,37 @@ public:
 
     // 配置切分参数。
     //
-    // min_chunk_size 最小 chunk 大小（字符数），默认 500。
-    // max_chunk_size 最大 chunk 大小（字符数），默认 2000。
+    // min_chunk_size 最小 chunk 大小（字节数，按 UTF-8 字节计量，中文 1 字 3 字节）。
+    //                 默认 600（≈200 字）；可用"期望字数 × 3"换算调整。
+    // max_chunk_size 最大 chunk 大小（字节数）。默认 1800（≈600 字）。
     // overlap_ratio  相邻 chunk 重叠比例，默认 0.15 (15%)。
-    void configure(int min_chunk_size = 500,
-                   int max_chunk_size = 2000,
+    void configure(int min_chunk_size = 600,
+                   int max_chunk_size = 1800,
                    double overlap_ratio = 0.15);
 
     // ── 章节切分 ──
 
-    // 将章节 Markdown 正文切分为文本块列表。
+    // 将章节正文（纯文本）切分为文本块列表。
     //
-    // 一律按纯文本处理：段落边界切分，超长段落按句子边界兜底，不依赖 markdown 结构。
+    // 一律按纯文本处理：按换行切分段落（单换行一行一段、空行合并），
+    // 超长段落按句子边界兜底，不依赖 markdown 结构
+    // （真实小说以 .txt/.docx 纯文本形式存储，正文不含 markdown 标记）。
     //
-    // chapter          章节元数据（含 scenes[]）。
-    // markdown_content 章节 Markdown 全文。
+    // chapter  源章节（取 id 生成块 ID）。
+    // content  章节正文全文（纯文本）。
+    // ctx      章节上下文（实体 id → 名字），非空时向每个块注入精简头。
     // @return 文本块列表（按章节顺序排列）。
     std::vector<TextChunk> chunkChapter(
         const Chapter& chapter,
-        const std::string& markdown_content) const;
+        const std::string& content,
+        const ChapterContext& ctx = {}) const;
 
     // ── 实体嵌入文本生成 ──
 
     // 拼接角色核心信息为单条可嵌入文本。
     //
-    // 包含：name, role, goal, motivation, personality, traits,
-    //       internal_conflict, external_conflict, speaking_style, arc
+    // 委托 Character::toEmbeddingText()；字段清单与文案由模型自身维护，
+    // 调整角色字段时无需修改本类。
     //
     // character 源角色对象。
     // @return 拼接后的可嵌入文本。
@@ -110,7 +125,8 @@ public:
 
     // 拼接设定核心信息为单条可嵌入文本。
     //
-    // 包含：name, category, description, story_function, sensory_profile
+    // 委托 Setting::toEmbeddingText()；字段清单与文案由模型自身维护，
+    // 调整设定字段时无需修改本类。
     //
     // setting 源设定对象。
     // @return 拼接后的可嵌入文本。
@@ -118,34 +134,41 @@ public:
 
     // 拼接世界规则核心信息为单条可嵌入文本。
     //
-    // 包含：name, summary, limitations, costs, exceptions
+    // 委托 WorldRule::toEmbeddingText()；字段清单与文案由模型自身维护，
+    // 调整世界规则字段时无需修改本类。
     //
     // rule 源世界规则对象。
     // @return 拼接后的可嵌入文本。
     static std::string chunkWorldRule(const WorldRule& rule);
 
 private:
-    int min_chunk_size_ = 500;
-    int max_chunk_size_ = 2000;
+    int min_chunk_size_ = 600;   // 默认下限 ≈200 字（中文 1 字 3 字节）
+    int max_chunk_size_ = 1800;  // 默认上限 ≈600 字
     double overlap_ratio_ = 0.15;
 
     // 将长文本按段落边界切分为 chunk 列表。
     //
-    // text      输入文本。
+    // 内部统一以 UTF-32（码点）处理：切段/找标点/硬切都按"字"进行，
+    // 切点天然落在字符边界；块尺寸按 UTF-8 字节口径记账（与配置一致），
+    // 输出时转回 UTF-8 字节串。
+    //
+    // text      输入文本（UTF-8）。
     // source_id 来源 ID（用于生成 chunk id）。
     // @return 文本块列表。
     std::vector<TextChunk> chunkByParagraphs(
         const std::string& text,
         const std::string& source_id) const;
 
-    // 将文本切分为段落列表（按空行或单换行）。
-    static std::vector<std::string> splitParagraphs(const std::string& text);
+    // 将文本切分为段落列表（按换行：单个换行即段落边界（一行一段），
+    // 连续换行/空白行合并为一个分隔符）。
+    static std::vector<std::u32string> splitParagraphs(const std::u32string& text);
 
     // 按中英文句末标点将文本切分为句子列表（切点位于标点之后，标点保留）。
-    std::vector<std::string> splitSentences(const std::string& text) const;
+    std::vector<std::u32string> splitSentences(const std::u32string& text) const;
 
-    // 生成 chunk 重叠文本（从上一块的末尾取 overlap_ratio 比例的内容）。
-    std::string overlapFromPrevious(const std::string& prev_chunk_text) const;
+    // 生成 chunk 重叠文本（按字节比例取上一块末尾，优先在句子边界截断；
+    // 码点级操作，截断天然落在字符边界）。
+    std::u32string overlapFromPrevious(const std::u32string& prev_chunk_text) const;
 };
 
 } // namespace retrieval
