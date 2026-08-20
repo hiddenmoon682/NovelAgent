@@ -84,6 +84,17 @@ target_include_directories(novelagent_sqlite PUBLIC
 )
 target_compile_definitions(novelagent_sqlite PUBLIC SQLITE_CORE SQLITE_ENABLE_FTS5)
 
+# ── simdutf：UTF-8/UTF-16/UTF-32 转码（单文件 amalgamation，运行时指令分派）──
+# 显式打开 AVX2/FMA/BMI2 内核可让分派器在运行时选择最快实现；
+# 要求 CPU 支持 AVX2（2013 年后 x64 均具备），不启用则不编译 SIMD 内核。
+add_library(novelagent_simdutf STATIC
+    third_party/simdutf/simdutf.cpp
+)
+target_include_directories(novelagent_simdutf PUBLIC third_party/simdutf)
+if(NOT MSVC AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    target_compile_options(novelagent_simdutf PRIVATE -O3 -mavx2 -mfma -mbmi2 -mpopcnt)
+endif()
+
 add_library(novelagent_core OBJECT ${CORE_SOURCES})
 target_include_directories(novelagent_core PUBLIC src)
 target_compile_definitions(novelagent_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
@@ -95,7 +106,7 @@ if(WIN32)
     # 此定义不改变任何运行时行为，仅修复 PCH 命中。
     target_compile_definitions(novelagent_core PUBLIC UNICODE _UNICODE)
 endif()
-target_link_libraries(novelagent_core PUBLIC ${COMMON_LIBS} novelagent_sqlite)
+target_link_libraries(novelagent_core PUBLIC ${COMMON_LIBS} novelagent_sqlite novelagent_simdutf)
 target_precompile_headers(novelagent_core PRIVATE
     <string> <vector> <map> <algorithm> <sstream>
     <functional> <optional>
@@ -205,7 +216,7 @@ if(BUILD_TESTING)
     if(WIN32)
         target_compile_definitions(novelagent_core_prelinked PUBLIC UNICODE _UNICODE)
     endif()
-    target_link_libraries(novelagent_core_prelinked PUBLIC ${COMMON_LIBS} novelagent_sqlite)
+    target_link_libraries(novelagent_core_prelinked PUBLIC ${COMMON_LIBS} novelagent_sqlite novelagent_simdutf)
 
     # tools 预链接库：仅含 tools 对象，core 依赖经 core_prelinked 传递。
     # 重要：tools 对象靠 REGISTER_TOOL 的文件级静态初始化自注册，

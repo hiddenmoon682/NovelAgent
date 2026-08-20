@@ -1,0 +1,5 @@
+# Qt Creator clangd/clang-tidy 配置
+# 静音 clang-analyzer 的"不安全缓冲区 API"检查：其建议的 memset_s/memcpy_s
+# （C11 Annex K）在本项目 MSYS2 MinGW 工具链不可用（__STDC_LIB_EXT1__ 未定义），
+# 且对 sqlite-vec.c 等第三方 C 代码属于纯噪音。其余 clang-analyzer 检查保持开启。
+Checks: '-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling'

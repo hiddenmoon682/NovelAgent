@@ -6,6 +6,7 @@
 
 #include <nlohmann/json.hpp>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,36 @@ struct WorldRule {
     int precedence = 0;
     std::vector<std::string> contradicts_with;
     std::map<std::string, nlohmann::json> metadata;
+
+    // 生成用于向量检索嵌入的世界规则描述文本。
+    //
+    // 字段清单即嵌入内容（precedence/contradicts_with/related_settings 等
+    // 一致性检测用结构字段不进入嵌入）：新增字段若需进入检索，在此补充即可；
+    // 调用方（NovelChunker::chunkWorldRule）无需同步修改。
+    std::string toEmbeddingText() const
+    {
+        std::ostringstream ss;
+
+        ss << "世界规则: " << name << "\n";
+
+        if (!summary.empty()) {
+            ss << "概要: " << summary << "\n";
+        }
+        if (!limitations.empty()) {
+            ss << "限制: " << limitations << "\n";
+        }
+        if (!costs.empty()) {
+            ss << "代价: " << costs << "\n";
+        }
+        if (!exceptions.empty()) {
+            ss << "例外: " << exceptions << "\n";
+        }
+        if (!known_by.empty()) {
+            ss << "知晓范围: " << known_by << "\n";
+        }
+
+        return ss.str();
+    }
 };
 
 inline void to_json(nlohmann::json& j, const WorldRule& r) {

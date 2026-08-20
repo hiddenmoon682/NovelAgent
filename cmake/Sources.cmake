@@ -10,6 +10,7 @@ set(NOVELAGENT_UTILS
     src/utils/FileUtils.h src/utils/FileUtils.cpp
     src/utils/IdUtils.h src/utils/IdUtils.cpp
     src/utils/StringUtils.h src/utils/JsonUtils.h src/utils/SchemaUtils.h
+    src/utils/Utf8Utils.h
 )
 
 set(NOVELAGENT_PROJECT

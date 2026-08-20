@@ -6,6 +6,7 @@
 
 #include <nlohmann/json.hpp>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,33 @@ struct Setting {
     std::string id, name, category = "location", description, story_function, sensory_profile, notes;
     std::vector<std::string> related_characters, related_plot_threads, related_rule_ids;
     std::map<std::string, nlohmann::json> metadata;
+
+    // 生成用于向量检索嵌入的设定描述文本。
+    //
+    // 字段清单即嵌入内容（notes/关联列表等创作元数据不进入嵌入）：
+    // 新增字段若需进入检索，在此补充即可；调用方（NovelChunker::chunkSetting）无需同步修改。
+    std::string toEmbeddingText() const
+    {
+        std::ostringstream ss;
+
+        ss << "设定: " << name;
+        if (!category.empty()) {
+            ss << " [" << category << "]";
+        }
+        ss << "\n";
+
+        if (!description.empty()) {
+            ss << "描述: " << description << "\n";
+        }
+        if (!story_function.empty()) {
+            ss << "叙事功能: " << story_function << "\n";
+        }
+        if (!sensory_profile.empty()) {
+            ss << "感官印象: " << sensory_profile << "\n";
+        }
+
+        return ss.str();
+    }
 };
 
 inline void to_json(nlohmann::json& j, const Setting& s) {

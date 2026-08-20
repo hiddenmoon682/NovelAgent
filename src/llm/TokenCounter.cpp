@@ -1,67 +1,11 @@
 #include "llm/TokenCounter.h"
+#include "utils/Utf8Utils.h"
 #include <algorithm>
 #include <cstdint>
 #include <cctype>
 #include <cmath>
 
 namespace llm {
-
-// ---------------------------------------------------------------------------
-// UTF-8 解码 — 从当前字节位置解码一个 Unicode 码点，并推进迭代器
-//
-// 解析逻辑：UTF-8 的首字节高位编码了序列总长度——0xxxxxxx 为单字节
-// ASCII，110xxxxx/1110xxxx/11110xxx 分别引导 2/3/4 字节序列，后续字节
-// 均为 10xxxxxx。先从首字节取出有效低位，再逐个将后续字节的低 6 位
-// 左移拼接进码点。
-//
-// WHY 自写而非引入库：这里只需“数码点 + 判断 CJK”，不需要完整的
-// Unicode 处理；遇非法首字节/非法后续字节/截断序列时返回 U+FFFD
-// 替换字符并继续前进（而非报错中断），因为 token 估算是启发式的，
-// 容忍少量乱码比拒绝整段文本更合理。
-// 迭代器 it 以引用传入并在函数内推进，调用方循环无需自行计算字节长度。
-// ---------------------------------------------------------------------------
-static uint32_t decodeUtf8(const char*& it, const char* end)
-{
-    unsigned char c = static_cast<unsigned char>(*it);
-    uint32_t codepoint = 0;
-    int remaining = 0;
-
-    if ((c & 0x80) == 0) {
-        // 单字节 ASCII: 0xxxxxxx
-        ++it;
-        return c;
-    }
-    if ((c & 0xE0) == 0xC0) {
-        codepoint = c & 0x1F;
-        remaining = 1;
-    } else if ((c & 0xF0) == 0xE0) {
-        codepoint = c & 0x0F;
-        remaining = 2;
-    } else if ((c & 0xF8) == 0xF0) {
-        codepoint = c & 0x07;
-        remaining = 3;
-    } else {
-        // 非法首字节，跳过
-        ++it;
-        return 0xFFFD; // Unicode 替换字符
-    }
-
-    ++it;
-    while (remaining > 0 && it < end) {
-        c = static_cast<unsigned char>(*it);
-        if ((c & 0xC0) != 0x80) break; // 非法的后续字节
-        codepoint = (codepoint << 6) | (c & 0x3F);
-        ++it;
-        --remaining;
-    }
-
-    // 截断序列（字符串在码点中间结束）或非法后续字节
-    if (remaining > 0) {
-        return 0xFFFD; // Unicode 替换字符
-    }
-
-    return codepoint;
-}
 
 // ---------------------------------------------------------------------------
 // 判断码点是否属于 CJK 统一表意文字范围
@@ -86,22 +30,14 @@ static bool isCJK(uint32_t cp)
 
 int TokenCounter::estimateChineseChars(const std::string& text)
 {
+    // 整串转 UTF-32（simdutf 校验 + SIMD 转换）后按码点统计，避免手写逐字节解析
+    const std::u32string u = utils::utf8::utf8ToU32(text);
     int count = 0;
-    const char* it = text.data();
-    const char* end = it + text.size();
-
-    while (it < end) {
-        unsigned char c = static_cast<unsigned char>(*it);
-        if ((c & 0x80) == 0) {
-            ++it; // ASCII，跳过
-        } else {
-            uint32_t cp = decodeUtf8(it, end);
-            if (isCJK(cp)) {
-                ++count;
-            }
+    for (char32_t cp : u) {
+        if (isCJK(cp)) {
+            ++count;
         }
     }
-
     return count;
 }
 
@@ -126,30 +62,24 @@ int TokenCounter::estimateEnglishWords(const std::string& text)
 
 int TokenCounter::countTokens(const std::string& text)
 {
-    // 单次遍历同时统计中文和英文，避免双重扫描
+    // 单次 UTF-32 转换后统计中文和英文，避免双重扫描
     int chineseChars = 0;
     int englishWords = 0;
     bool inWord = false;
 
-    const char* it = text.data();
-    const char* end = it + text.size();
-
-    while (it < end) {
-        unsigned char c = static_cast<unsigned char>(*it);
-        if ((c & 0x80) == 0) {
+    const std::u32string u = utils::utf8::utf8ToU32(text);
+    for (char32_t c : u) {
+        if (c < 0x80) {
             // ASCII
-            if (std::isalpha(c)) {
+            if (std::isalpha(static_cast<unsigned char>(c))) {
                 if (!inWord) { ++englishWords; inWord = true; }
             } else {
                 inWord = false;
             }
-            ++it;
-        } else {
-            // 多字节 UTF-8 → 解码并判断 CJK
-            uint32_t cp = decodeUtf8(it, end);
-            if (isCJK(cp)) {
-                ++chineseChars;
-            }
+        }
+        // 多字节字符不打断单词计数（与旧实现逐字节分支行为一致）
+        if (isCJK(c)) {
+            ++chineseChars;
         }
     }
 

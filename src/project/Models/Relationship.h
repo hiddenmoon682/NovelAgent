@@ -10,10 +10,20 @@
 #include <vector>
 
 struct Relationship {
-    std::string target_character_id, type, description, public_status, private_feeling;
-    std::string status = "active";
-    int tension = 0;
-    std::map<std::string, nlohmann::json> metadata;
+    // 关系主体
+    std::string target_character_id;             // 关系指向的目标角色 ID（目标角色删除时本条关系被级联移除）
+    std::string type;                            // 关系类型（如师徒、仇敌、恋人）
+    std::string description;                     // 关系描述（相处方式与过往历史）
+
+    // 公开面与私下面
+    std::string public_status;                   // 外界眼中的关系状态（公开面）
+    std::string private_feeling;                 // 角色私下的真实感受，与公开面形成反差（戏剧张力来源）
+
+    // 状态与张力
+    std::string status = "active";               // 关系存续状态（默认 active）
+    int tension = 0;                             // 关系张力（数值越大冲突越强，默认 0）
+
+    std::map<std::string, nlohmann::json> metadata; // 扩展元数据：未知 JSON 字段兜底收纳，保持前后向兼容
 };
 
 inline void to_json(nlohmann::json& j, const Relationship& r) {

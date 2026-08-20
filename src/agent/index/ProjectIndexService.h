@@ -8,7 +8,7 @@
 //   - 模型指纹：嵌入模型/维度变化时整库失效重建（DROP vec_chunks + 清空清单）
 //
 // 索引源（source_key 前缀）：
-//   chapter:<id>  章节 Markdown 正文（NovelChunker 切分为多 chunk）
+//   chapter:<id>  章节正文纯文本（NovelChunker 切分为多 chunk）
 //   char:<id>     角色核心信息（单 chunk）
 //   setting:<id>  设定核心信息（单 chunk）
 //   rule:<id>     世界规则核心信息（单 chunk）

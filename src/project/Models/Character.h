@@ -7,19 +7,98 @@
 
 #include <nlohmann/json.hpp>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
 struct Character {
-    std::string id, name, role = "supporting", age, appearance, personality;
-    std::string background, goal, motivation, internal_conflict, external_conflict;
-    std::string secret, fear, misbelief, speaking_style;
-    std::vector<std::string> traits, core_values, taboos;
-    std::vector<Relationship> relationships;
-    std::vector<std::string> chapter_appearances;
-    std::string arc, notes;
-    std::vector<CharacterDevelopment> development;
-    std::map<std::string, nlohmann::json> metadata;
+    // 基础身份信息
+    std::string id;                              // 角色唯一标识（如 char-001），项目内引用与向量索引均以此为准
+    std::string name;                            // 角色名
+    std::string role = "supporting";             // 角色定位（默认 supporting 配角，如 protagonist 主角）
+    std::string age;                             // 年龄（文本描述，允许模糊表达如"二十出头"）
+    std::string appearance;                      // 外貌描写
+    std::string personality;                     // 性格特征
+    std::string background;                      // 身世背景
+
+    // 叙事驱动要素
+    std::string goal;                            // 角色当前故事线中追求的目标
+    std::string motivation;                      // 驱动目标的内在动机（为何要达成目标）
+    std::string internal_conflict;               // 内在冲突：欲望与信念的自我拉扯
+    std::string external_conflict;               // 外在冲突：与其他人、势力或环境的对抗
+    std::string secret;                          // 隐瞒的秘密（可作伏笔或爆点）
+    std::string fear;                            // 恐惧（制造弱点的来源）
+    std::string misbelief;                       // 错误信念（阻碍角色成长的执念）
+    std::string speaking_style;                  // 说话风格（口癖、用词与语气习惯）
+
+    // 特质与价值观
+    std::vector<std::string> traits;             // 特征标签列表（如"左腕疤""黑布蒙面"）
+    std::vector<std::string> core_values;        // 核心价值观列表（不可动摇的底线）
+    std::vector<std::string> taboos;             // 禁忌列表（角色绝不触碰的红线）
+
+    // 关系与登场
+    std::vector<Relationship> relationships;     // 与其他角色的关系网（见 Relationship）
+    std::vector<std::string> chapter_appearances; // 登场章节 ID 列表（章节删除时级联清理）
+
+    // 成长轨迹
+    std::string arc;                             // 角色弧光：整体成长变化的概述
+    std::string notes;                           // 备注：创作笔记与设定补充
+    std::vector<CharacterDevelopment> development; // 分章节发展记录（见 CharacterDevelopment）
+
+    std::map<std::string, nlohmann::json> metadata; // 扩展元数据：未知 JSON 字段兜底收纳，保持前后向兼容
+
+    // 生成用于向量检索嵌入的角色描述文本。
+    //
+    // 字段清单即嵌入内容：新增字段若需进入检索，在此补充即可；
+    // 调用方（NovelChunker::chunkCharacter）不感知字段清单，无需同步修改。
+    std::string toEmbeddingText() const
+    {
+        std::ostringstream ss;
+
+        ss << "角色: " << name;
+        if (!role.empty()) {
+            ss << " (" << role << ")";
+        }
+        ss << "\n";
+
+        if (!goal.empty()) {
+            ss << "目标: " << goal << "\n";
+        }
+        if (!motivation.empty()) {
+            ss << "动机: " << motivation << "\n";
+        }
+        if (!personality.empty()) {
+            ss << "性格: " << personality << "\n";
+        }
+        if (!internal_conflict.empty()) {
+            ss << "内在冲突: " << internal_conflict << "\n";
+        }
+        if (!external_conflict.empty()) {
+            ss << "外在冲突: " << external_conflict << "\n";
+        }
+        if (!speaking_style.empty()) {
+            ss << "说话风格: " << speaking_style << "\n";
+        }
+        if (!arc.empty()) {
+            ss << "角色弧光: " << arc << "\n";
+        }
+        if (!traits.empty()) {
+            ss << "特征: ";
+            for (size_t i = 0; i < traits.size(); ++i) {
+                if (i > 0) ss << "、";
+                ss << traits[i];
+            }
+            ss << "\n";
+        }
+        if (!fear.empty()) {
+            ss << "恐惧: " << fear << "\n";
+        }
+        if (!misbelief.empty()) {
+            ss << "错误信念: " << misbelief << "\n";
+        }
+
+        return ss.str();
+    }
 };
 
 inline void to_json(nlohmann::json& j, const Character& c) {
