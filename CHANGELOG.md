@@ -1,5 +1,32 @@
 # Changelog
 
+## [2026-08-20] 章节块精简头注入，提升向量检索质量
+
+### 增强 — 检索
+- `NovelChunker::chunkChapter` 新增可选 `ChapterContext`（角色/设定 id→名字 字典）：切分完成后给每个章节块 prepend 精简头（`第{order}章 {title}` + 人物 ≤6 + 地点 + 时间，单值行超 20 字按码点截断），嵌入文本与检索展示文本统一（`metadata["text"]` 同步），header 不计入块大小预算；全空章节不注入，行为与旧版一致。
+- `ProjectIndexService` 索引时从项目实体构造 id→名字 字典传入；新增 `context_version` 指纹（kv_store，当前 "v1"），块头格式升级时强制整库重嵌，规避正文 hash 不变导致增量跳过的失效问题（旧库首迁自动触发一次全量重嵌，wipe 时与模型指纹对称清空）。
+- 新增 `scripts/eval_retrieval.py`：零人工标注的检索质量评测（自动抽样章节并构造"标题/概要/人物"三类查询，Recall@5 + MRR@5，支持新旧库 baseline 对比），复用库中现成向量、仅查询侧调 embedding API，纯标准库。
+
+## [2026-08-20] 实体嵌入文本拼接下沉到模型层（toEmbeddingText）
+
+### 重构 — 模型与检索解耦
+- `Character`/`Setting`/`WorldRule` 各新增 `toEmbeddingText()` 内联成员（模型头文件内实现），承接原 `NovelChunker::chunkCharacter/chunkSetting/chunkWorldRule` 的字段拼接逻辑，输出文本与之前逐字节一致。
+- `NovelChunker` 三个静态方法退化为一行委托，头文件注释不再手写字段清单（原 chunkWorldRule 注释缺 `known_by` 的陈旧问题一并消除）：以后调整模型字段只改模型自身，检索层无需感知。
+- 字段清单以注释形式驻留各模型头文件（含"哪些字段有意不进嵌入"的说明，如 `Setting::notes`、`WorldRule::precedence/contradicts_with`）。
+
+## [2026-08-20] NovelChunker 内部改为 UTF-32 码点处理中文
+
+### 重构 — 检索分块
+- `chunkByParagraphs`/`splitParagraphs`/`splitSentences`/`overlapFromPrevious` 内部统一转换为 `std::u32string`（UTF-32 码点）后处理：下标/切分按"字"进行，切点天然落在字符边界，删除全部 UTF-8 续字节回退逻辑（硬切、重叠截断、句末标点字节序列匹配）。输入输出仍为 UTF-8，块尺寸仍按 UTF-8 字节口径记账，行为与既有测试完全一致。
+- 新增匿名域工具：`utf8ToU32`/`u32ToUtf8` 双向转换（非法字节以 U+FFFD 容错）、`utf8ByteLength`/`utf8ByteCount` 字节折算、码点级句末标点判断 `isEndPunct`（。！？….!?）、`lastSentenceEnd`、`tailByBytes`。
+- 句末标点表由 UTF-8 字节序列向量改为 `char32_t` 常量，删除 `<regex>` 依赖（段落切分改手写扫描，语义与旧正则 `\n(?:\s*\n)*` 等价）。
+- 修复旧实现极端路径隐患：`max` 小于单个字符字节数时旧代码硬切会切在多字节字符中间（破坏 UTF-8），新实现整体保留该字符。
+- 默认切块尺寸由 500-2000 字节调整为 600-1800 字节（≈200-600 字，按"期望字数 × 3"换算；中文 1 字 3 字节），`configure` 默认值与成员初值、注释同步。
+- UTF-8 ⇄ UTF-32 转换与字节折算工具迁入 `src/utils/Utf8Utils.h`（`utils::utf8`，header-only 内联），NovelChunker 侧只保留句子标点/重叠截断等切分域逻辑。
+- `llm/TokenCounter` 的本地 UTF-8 解码器删除，统一改用 `utils::utf8::decodeUtf8CodePoint`（`utf8ToU32` 亦基于它实现，两套入口行为一致）；解码新增 overlong/代理区/越界码点校验，非法输入一律返回 U+FFFD。
+- 编码转换整体切换到 **simdutf v9.1.0**（vendor 进 `third_party/simdutf/`，单文件 amalgamation，新增 `novelagent_simdutf` 库目标并接入 core/core_prelinked；AVX2/FMA/BMI2 内核在支持 CPU 上自动启用）。`utils::utf8::utf8ToU32/u32ToUtf8` 改为 simdutf 校验 + SIMD 转换（合法输入路径），非法输入仅走标量 U+FFFD 兜底；`TokenCounter` 改为整串转换后统计，删除手写流式解码器 `decodeUtf8CodePoint`。
+- 全量回归基线（本机）：`./scripts/verify.sh` 重建 118 个编译/链接步骤 + 32 项 ctest 全绿，总耗时约 47s（构建约 25s + 测试 21.5s）。
+
 ## [2026-08-19] NovelChunker 纯文本分块改造：删除 markdown 场景切分
 
 ### 重构 — 检索分块
@@ -7,6 +34,8 @@
 - `chunkChapter` 统一走纯文本段落切分；`chunkByParagraphs` 新增超长段落兜底：单段超过上限（如整章无空行）时按中英文句末标点切成句子再聚合，修复"整章一段产出巨型 chunk"的问题；无句末标点的极端超长段按 UTF-8 字符边界硬切兜底（A11 思路）。
 - 新增私有 `splitSentences`（句末标点：。！？….!?，切点位于标点之后）；聚合与重叠逻辑不变；`configure` 对 max_chunk_size 增加下限钳制。
 - 新增测试：无空行整章一段、markdown 场景标记不再特殊切分、全部切点位于段落/句子边界、无标点超长段硬切（tests/ 本地保留）。
+- `chunkChapter` 参数 `markdown_content` 更名为 `content`，注释更正为纯文本语义（正文非 markdown）。
+- 复审修正：`configure` 增加 min 上限钳制（min>max 时封块条件永不满足、块无限增长）；`overlapFromPrevious` 改用 UTF-8 字节序列匹配句末标点（原 `find_last_of` 单字节匹配会把多字节字符内部续字节误判为标点，重叠从字符中间截断产生坏 UTF-8）；段落切分明确为"单个换行即段落边界（一行一段），连续换行/空白行合并"并补齐对应回归测试；尺寸单位注释统一为字节。
 
 ## [2026-08-17] 存储层清理：移除 vec_chunks 的 embedding_json 冗余列
 
