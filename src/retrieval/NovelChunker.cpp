@@ -97,12 +97,16 @@ std::string buildChapterHeader(const Chapter& ch, const retrieval::ChapterContex
         ss << "\n";
     }
 
-    // 单值行（地点/时间）：非空才拼，超 20 字截断加省略号
+    // 单值行（地点/时间）：非空才拼，超过 20 字（码点）截断加省略号；
+    // 码点级截断保证不切破多字节字符（与全文 UTF-8 处理口径一致）
     auto appendValueLine = [&](const std::string& label, const std::string& v) {
         if (v.empty()) return;
-        std::string s = v;
-        if (s.size() > 20) s = s.substr(0, 20) + "…";
-        ss << label << s << "\n";
+        const std::u32string u32 = utf8ToU32(v);
+        if (u32.size() > 20) {
+            ss << label << u32ToUtf8(u32.substr(0, 20)) << "…\n";
+        } else {
+            ss << label << v << "\n";
+        }
     };
     const auto lit = ctx.setting_names.find(ch.location_id);
     if (lit != ctx.setting_names.end()) appendValueLine("地点：", lit->second);
