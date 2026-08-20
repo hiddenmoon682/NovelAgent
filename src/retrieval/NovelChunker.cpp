@@ -57,7 +57,7 @@ std::u32string tailByBytes(const std::u32string& text, size_t byte_budget)
     return text.substr(start);
 }
 
-// 构造章节精简头（≤80 字节左右）：仅拼有值的行，全空返回空串。
+// 构造章节精简头：仅拼有值的行，全空返回空串（调用处据此跳过注入）。
 // 行序固定：定位行 → 人物行 → 地点行 → 时间行。
 // 注：Chapter 为全局前向声明，ChapterContext 在 retrieval 命名空间内，
 // 匿名域（文件作用域）中需显式限定，无法 unqualified 引用。
