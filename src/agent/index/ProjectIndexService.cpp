@@ -219,14 +219,24 @@ IndexResult ProjectIndexService::indexAll(
         world_rules = p.world_rules;
     });
 
+    // 章节块头注入用 id→名字 字典：Chapter 存的是实体 id，需解析为名字才有语义。
+    // 查不到名字（词典缺失）的 id 在 buildChapterHeader 中被跳过。
+    retrieval::ChapterContext chapter_ctx;
+    for (const auto& c : chars) {
+        if (!c.name.empty()) chapter_ctx.character_names[c.id] = c.name;
+    }
+    for (const auto& s : settings) {
+        if (!s.name.empty()) chapter_ctx.setting_names[s.id] = s.name;
+    }
+
     for (const auto& ch : chapters) {
         if (ch.file_path.empty()) continue;
-        std::string md = ProjectIO::readChapter(project_path, ch.file_path);
-        if (md.empty()) continue;
+        std::string chapter_text = ProjectIO::readChapter(project_path, ch.file_path);
+        if (chapter_text.empty()) continue;
         ++result.chapters;
 
         const std::string key = "chapter:" + ch.id;
-        const std::string hash = hashContent(md);
+        const std::string hash = hashContent(chapter_text);
         const auto it = prevs.find(key);
         if (it != prevs.end() && it->second.content_hash == hash) {
             unchanged_keys.push_back(key);
@@ -234,7 +244,7 @@ IndexResult ProjectIndexService::indexAll(
         }
         PendingSource ps;
         ps.content_hash = hash;
-        ps.chunks = chunker.chunkChapter(ch, md);
+        ps.chunks = chunker.chunkChapter(ch, chapter_text, chapter_ctx);
         desired[key] = std::move(ps);
     }
 
