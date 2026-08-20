@@ -202,6 +202,7 @@ IndexResult ProjectIndexService::indexAll(
             s.db().exec("DELETE FROM index_sources");  // 级联清空 index_chunks
             s.setKV("embedding_model", "");
             s.setKV("embedding_dimension", "");
+            s.setKV("context_version", "");  // 与模型指纹对称清空，防非 wipe 路径遗留旧版本号
             wiped = true;
         }
     });
