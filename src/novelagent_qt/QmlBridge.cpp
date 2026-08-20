@@ -354,15 +354,9 @@ QVariantList QmlBridge::sessionList() const {
         }
     }
 
-    // 未落盘的新会话占位（ID 留空，标题"新会话"，置顶并标 active）
-    if (app_->agent().pendingNewSession()) {
-        QVariantMap m;
-        m.insert(QStringLiteral("id"), QStringLiteral(""));
-        m.insert(QStringLiteral("title"), QStringLiteral("新会话"));
-        m.insert(QStringLiteral("active"), true);
-        m.insert(QStringLiteral("updatedAt"), QStringLiteral(""));
-        list.insert(0, m);
-    }
+    // 未落盘的新会话（persisted==false）已在池会话区按真实 id 展示，不再插入
+    // 空 id 占位：旧逻辑同时显示"占位 + 真实会话"两项，删除占位会经
+    // discardPendingNewSession 连真实会话一起删掉（用户感知"删一个丢两个"）。
     return list;
 }
 

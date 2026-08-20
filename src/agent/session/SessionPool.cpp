@@ -178,6 +178,16 @@ std::string SessionPool::currentSessionId() {
     return current_session_id_;
 }
 
+std::string SessionPool::deferredToolsStub() {
+    // 仅读已存在会话，绝不自动创建：SessionRuntime 构造期间的 provider 回调
+    // 会走到这里，若当前焦点悬空且池为空，自动创建将再次触发构造 → 无限递归。
+    if (auto it = pool_.find(current_session_id_); it != pool_.end())
+        return it->second->deferredToolsStub();
+    if (!pool_.empty())
+        return pool_.begin()->second->deferredToolsStub();
+    return "";
+}
+
 std::vector<std::string> SessionPool::sessionIds() const {
     std::vector<std::string> ids;
     ids.reserve(pool_.size());

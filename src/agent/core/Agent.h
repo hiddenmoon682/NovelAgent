@@ -35,7 +35,8 @@ public:
     // 设置 system prompt（D11 共享源：写入全部会话）。
     void setSystemPrompt(std::string prompt) { session_pool_.setSystemPrompt(std::move(prompt)); }
     // 返回延迟工具存根（静态文本，供 setup 时注入 system prompt）。
-    std::string deferredToolsStub() { return session_pool_.currentSession()->deferredToolsStub(); }
+    // 经 SessionPool 无副作用获取：池空时不自动创建会话（避免 provider 构造期间递归）。
+    std::string deferredToolsStub() { return session_pool_.deferredToolsStub(); }
     // 设置/读取执行配置（工具轮数上限等）。
     void setExecutionConfig(AgentExecutionConfig config) { session_pool_.setExecutionConfig(std::move(config)); }
     const AgentExecutionConfig& executionConfig() const { return session_pool_.executionConfig(); }

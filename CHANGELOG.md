@@ -1,5 +1,12 @@
 # Changelog
 
+## [2026-08-20] 修复会话管理两个严重 Bug（连带删除 / 空池新建卡死）
+
+### 修复 — 会话管理
+- **空池新建会话卡死（严重）**：`Agent::deferredToolsStub()` 原经 `currentSession()` 获取存根，而 `currentSession()` 在池空时会自动创建会话；`SessionRuntime` 构造期间回调 `system_prompt_provider`（`buildSystemPrompt` 拼接延迟工具存根）→ 触发自动创建 → 再次构造 → 无限递归。删除全部会话后点"新建"（或发消息）即卡死。修复：新增 `SessionPool::deferredToolsStub()` 无副作用获取（当前会话 → 任一会话 → 空串，绝不自动创建），`Agent` 转发之；池空时首个新会话暂缺延迟工具存根（仅影响工具提示，不影响核心工具与 tool_search）。
+- **启动"双会话"与连带删除**：启动装配时 `buildSystemPrompt` 自动创建未落盘会话 A；`QmlBridge::sessionList()` 又因 `pendingNewSession()==true` 插入空 id 的"新会话"占位，同一会话显示两项；删除占位会经 `discardPendingNewSession` 把真实会话 A 一并 erase（删一个丢两个）。修复：删除占位插入，未落盘会话统一以真实 id 展示，删除走池删除只删自身；`deleteSession("")` 分支保留为防御。
+- 回归测试 `test_empty_pool_new_session_no_recursion`（test_agent）：空池 + provider 依赖 `deferredToolsStub` 时 `newSession`/`createSession` 均不递归、池状态正确；全量回归 32/32 通过。
+
 ## [2026-08-20] 章节块精简头注入，提升向量检索质量
 
 ### 增强 — 检索

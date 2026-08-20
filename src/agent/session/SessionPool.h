@@ -72,6 +72,10 @@ public:
     SessionRuntime* currentSession();
     // 当前会话 id（无则自动创建后返回）。
     std::string currentSessionId();
+    // 延迟工具存根（无副作用版）：取当前/任一已存在会话的存根；无会话返回空串。
+    // 不触发 currentSession() 的自动创建——该函数可能在 SessionRuntime 构造期间的
+    // system_prompt_provider 回调中被调用，自动创建会构成无限递归（空池新建会话卡死）。
+    std::string deferredToolsStub();
     // 已建 runtime 的会话 id 列表。
     std::vector<std::string> sessionIds() const;
     // 是否存在任一运行中的会话（全局 busy 聚合信号，D12/阶段 4）。
