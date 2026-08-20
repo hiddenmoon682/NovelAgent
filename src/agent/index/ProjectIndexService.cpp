@@ -70,6 +70,7 @@ int parseInt(const std::string& s)
 
 // 块头注入格式版本：调整 buildChapterHeader 输出格式（影响嵌入文本）时必须升版本，
 // 否则正文 hash 未变的库会被增量索引跳过，新格式永不生效。
+// 同理：角色/设定改名会改变块头内解析出的名字（嵌入文本变化），改名后也应升此版本触发重嵌。
 constexpr const char* kContextVersion = "v1";
 
 } // namespace
