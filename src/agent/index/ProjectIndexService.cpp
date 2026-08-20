@@ -68,6 +68,10 @@ int parseInt(const std::string& s)
     }
 }
 
+// 块头注入格式版本：调整 buildChapterHeader 输出格式（影响嵌入文本）时必须升版本，
+// 否则正文 hash 未变的库会被增量索引跳过，新格式永不生效。
+constexpr const char* kContextVersion = "v1";
+
 } // namespace
 
 ProjectIndexService::ProjectIndexService(
@@ -127,6 +131,7 @@ void writeFingerprint(storage::SqliteStore& s, const std::string& model, int dim
     }
     s.setKV("embedding_model", model);
     s.setKV("embedding_dimension", std::to_string(final_dim));
+    s.setKV("context_version", kContextVersion);
 }
 
 } // namespace
@@ -166,6 +171,7 @@ IndexResult ProjectIndexService::indexAll(
     sqlite_.inTransaction([&](storage::SqliteStore& s) {
         const std::string saved_model = s.getKV("embedding_model");
         const int saved_dim = parseInt(s.getKV("embedding_dimension"));
+        const std::string saved_ctx_version = s.getKV("context_version");
         std::map<std::string, PrevEntry> prevs = loadAllPrevEntries(s.db());
         const bool has_sources = !prevs.empty();
 
@@ -176,11 +182,19 @@ IndexResult ProjectIndexService::indexAll(
         const bool orphan_fingerprint =
             saved_model.empty() && has_sources;  // 有源但无指纹（异常态）
 
+        // 块头格式版本不符（含旧库无 key 的空串）且库中已有源 → 整库重建；
+        // 全新空库不触发（has_sources 限定），避免首启误报重建
+        const bool ctx_version_changed =
+            has_sources && saved_ctx_version != kContextVersion;
+
         if (force && has_sources) {
             wipe_reason = "强制全量重建索引...";
         } else if (incompatible || dim_changed || orphan_fingerprint) {
             wipe_reason = "嵌入模型已变更 (" + saved_model + " → "
                         + model + ")，整库重建...";
+        } else if (ctx_version_changed) {
+            wipe_reason = "上下文增强版本已变更 (" + (saved_ctx_version.empty() ? "旧版" : saved_ctx_version)
+                        + " → " + kContextVersion + ")，整库重建...";
         }
 
         if (!wipe_reason.empty()) {
