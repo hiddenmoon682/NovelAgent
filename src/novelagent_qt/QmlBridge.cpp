@@ -835,6 +835,7 @@ bool QmlBridge::openProject(const QString& path) {
         return false;
     }
     config_.last_project_path = dir;
+    config_.recordRecentProject(dir);
     config_.save();
     return true;
 }
@@ -859,8 +860,34 @@ bool QmlBridge::createProject(const QString& dirPath, const QString& title) {
         return false;
     }
     config_.last_project_path = dir;
+    config_.recordRecentProject(dir);
     config_.save();
     return true;
+}
+
+QVariantList QmlBridge::recentProjects() const {
+    QVariantList result;
+    const QString current = projectPath();
+    for (const auto& dir : config_.recent_projects) {
+        const QString path = QString::fromStdString(dir);
+        const std::string title = ProjectIO::peekTitle(dir);
+        QVariantMap item;
+        item.insert(QStringLiteral("title"),
+                    title.empty() ? QVariant(path)
+                                  : QVariant(QString::fromStdString(title)));
+        item.insert(QStringLiteral("path"), path);
+        item.insert(QStringLiteral("isCurrent"), path == current);
+        result.append(item);
+    }
+    return result;
+}
+
+bool QmlBridge::removeRecentProject(const QString& path) {
+    const bool hit = config_.removeRecentProject(toLocalPath(path));
+    if (hit) {
+        config_.save();
+    }
+    return hit;
 }
 
 QString QmlBridge::lastProjectPath() const {

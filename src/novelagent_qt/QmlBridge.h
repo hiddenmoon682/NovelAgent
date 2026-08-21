@@ -116,6 +116,12 @@ public:
     Q_INVOKABLE QString validateProjectDir(const QString& path) const;
     Q_INVOKABLE bool openProject(const QString& path);
     Q_INVOKABLE bool createProject(const QString& dirPath, const QString& title);
+    // 最近项目列表，按最近优先：[{title, path, isCurrent}]；
+    // title 来自项目 novel.json，读取失败回退显示路径本身。
+    Q_INVOKABLE QVariantList recentProjects() const;
+
+    // 从最近项目列表移除一条记录；命中返回 true（不影响已打开的项目）。
+    Q_INVOKABLE bool removeRecentProject(const QString& path);
     Q_INVOKABLE QString lastProjectPath() const;
 
     // ── 技能管理 ──
