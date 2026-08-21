@@ -142,6 +142,12 @@ std::optional<json> ProjectIO::loadJsonFile(const std::string& path) {
     }
 }
 
+std::string ProjectIO::peekTitle(const std::string& path) {
+    auto j = loadJsonFile(fu::joinPath(path, kNovelJson));
+    if (!j) return {};
+    return utils::json::getOrDefault(*j, "title", std::string{});
+}
+
 // 将 JSON 数据以两空格缩进格式写入文件。
 // 父目录不存在时自动创建。
 void ProjectIO::saveJsonFile(const std::string& path, const json& data) {
