@@ -228,6 +228,7 @@ Rectangle {
             MouseArea {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 32
+                visible: projModel.count > 0
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: { root.projectListOpen = false; root.projectRequested() }
