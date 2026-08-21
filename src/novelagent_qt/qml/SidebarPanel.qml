@@ -9,52 +9,241 @@ Rectangle {
 
     // 点击设置齿轮时发射，由 MainWindow 打开设置对话框
     signal settingsRequested()
+    // 点击当前项目卡片时发射，定位到设置对话框的项目页
+    signal projectRequested()
+
+    // 最近项目列表展开态（手风琴）：点击卡片切换，选中项目后自动收起
+    property bool projectListOpen: false
+
+    // 展开时刷新：每次从 bridge 重新拉取，避免过期数据与已删除记录残留
+    function reloadProjects() {
+        projModel.clear()
+        var list = bridge.recentProjects()
+        for (var i = 0; i < list.length; ++i) {
+            projModel.append({ title: list[i].title, path: list[i].path,
+                               isCurrent: list[i].isCurrent })
+        }
+    }
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // ── 应用标题 ──
-        Label {
-            Layout.leftMargin: Theme.gapLg
-            Layout.topMargin: Theme.gapLg
-            Layout.bottomMargin: Theme.gapMd
-            text: "墨染"
-            font.family: Theme.fontDisplay
-            font.pixelSize: Theme.sizeDisplay
-            font.weight: Font.Bold
-            color: Theme.textPrimary
-        }
-
-        // ── 当前项目卡片 ──
+        // ── 当前项目卡片（可点击：跳转项目设置）──
         Rectangle {
             Layout.fillWidth: true
             Layout.leftMargin: Theme.gapSm
             Layout.rightMargin: Theme.gapSm
+            Layout.topMargin: Theme.gapMd
             Layout.bottomMargin: Theme.gapMd
             height: 56
             radius: Theme.radiusMd
-            color: Theme.bgElevated
+            color: projectMa.containsMouse ? Theme.bgHover : Theme.bgElevated
             border.width: 1
             border.color: Theme.divider
+            Behavior on color { ColorAnimation { duration: Theme.animFast } }
+
+            MouseArea {
+                id: projectMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    root.projectListOpen = !root.projectListOpen
+                    if (root.projectListOpen)
+                        root.reloadProjects()
+                }
+            }
 
             ColumnLayout {
-                anchors { fill: parent; leftMargin: Theme.gapMd; rightMargin: Theme.gapMd }
-                spacing: 2
-                Label {
-                    text: "当前项目"
-                    font.family: Theme.fontUi
-                    font.pixelSize: Theme.sizeCaption
-                    color: Theme.textFaint
+                // 文本块垂直居中；不撑满卡片高度，避免行盒内边距被放大
+                anchors {
+                    left: parent.left; right: parent.right
+                    verticalCenter: parent.verticalCenter
+                    leftMargin: Theme.gapMd; rightMargin: Theme.gapMd
+                }
+                spacing: 1
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.gapSm
+                    Label {
+                        text: "当前项目"
+                        font.family: Theme.fontUi
+                        font.pixelSize: Theme.sizeNote
+                        // 13px 级字体的行盒上下各含约 3px 内边距，两行叠放视觉间隙
+                        // 偏大；0.9 行高压掉冗余后与 1px 间距叠加约 3px
+                        lineHeight: 0.9
+                        color: Theme.textFaint
+                        Layout.fillWidth: true
+                    }
+                    // ▾ 展开箭头：随展开态旋转 180°
+                    Label {
+                        text: "\uE70D"  // Segoe MDL2 Assets ChevronDown
+                        font.family: "Segoe MDL2 Assets"
+                        font.pixelSize: 10
+                        color: Theme.textFaint
+                        rotation: root.projectListOpen ? 180 : 0
+                        Behavior on rotation { NumberAnimation { duration: Theme.animFast } }
+                    }
                 }
                 Label {
                     text: bridge.projectName
                     font.family: Theme.fontDisplay
                     font.pixelSize: Theme.sizeUi
                     font.weight: Font.DemiBold
+                    lineHeight: 0.9
                     color: Theme.textPrimary
                     elide: Text.ElideRight
                     Layout.fillWidth: true
+                }
+            }
+        }
+
+        // ── 最近项目展开面板（手风琴；行样式与会话列表一致）──
+        ColumnLayout {
+            id: projPanel
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.gapSm
+            Layout.rightMargin: Theme.gapSm
+            Layout.topMargin: Theme.gapXs
+            visible: root.projectListOpen
+            spacing: 2
+
+            ListView {
+                id: projList
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(contentHeight, 260)
+                clip: true
+
+                model: ListModel { id: projModel }
+
+                // 细滚动条：4px 圆角 thumb，主题色，不占视觉宽度
+                ScrollBar.vertical: ScrollBar {
+                    width: 4
+                    policy: ScrollBar.AsNeeded
+                    background: Rectangle { color: "transparent" }
+                    contentItem: Rectangle {
+                        radius: 2
+                        color: parent.pressed || parent.hovered ? Theme.textFaint : Theme.divider
+                    }
+                }
+
+                delegate: Rectangle {
+                    required property string title
+                    required property string path
+                    required property bool isCurrent
+                    width: projList.width
+                    height: 36
+                    radius: Theme.radiusSm
+                    color: projRowHover.hovered ? Theme.bgHover : "transparent"
+
+                    // 当前项目：左侧朱砂标条
+                    Rectangle {
+                        visible: isCurrent
+                        anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
+                        width: 2.5
+                        radius: 1.25
+                        color: Theme.accent
+                    }
+
+                    HoverHandler { id: projRowHover }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (isCurrent) {
+                                root.projectListOpen = false
+                                return
+                            }
+                            if (bridge.openProject(path))
+                                root.projectListOpen = false
+                        }
+                    }
+
+                    RowLayout {
+                        anchors { fill: parent; leftMargin: Theme.gapMd; rightMargin: Theme.gapSm }
+                        spacing: Theme.gapSm
+                        Label {
+                            text: title
+                            font.family: Theme.fontUi
+                            font.pixelSize: Theme.sizeUi
+                            color: isCurrent ? Theme.accent : Theme.textPrimary
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                        // 垃圾桶：悬停行时出现（Segoe MDL2 Assets U+E74D Delete）
+                        Label {
+                            text: "\uE74D"
+                            visible: projRowHover.hovered
+                            font.family: "Segoe MDL2 Assets"
+                            font.pixelSize: 12
+                            color: delMa.containsMouse ? Theme.warning : Theme.textFaint
+                            MouseArea {
+                                id: delMa
+                                anchors.fill: parent
+                                anchors.margins: -6
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (bridge.removeRecentProject(path))
+                                        root.reloadProjects()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 空态：没有任何历史项目
+            MouseArea {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 32
+                visible: projModel.count === 0
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: { root.projectListOpen = false; root.projectRequested() }
+                Rectangle {
+                    anchors.fill: parent
+                    radius: Theme.radiusSm
+                    color: parent.containsMouse ? Theme.bgHover : "transparent"
+                    Label {
+                        anchors.centerIn: parent
+                        text: "打开或创建项目…"
+                        font.family: Theme.fontUi
+                        font.pixelSize: Theme.sizeUi
+                        color: Theme.textSecondary
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 1
+                visible: projModel.count > 0
+                color: Theme.divider
+            }
+
+            // 常驻入口：打开其他项目（原卡片点击行为 → 设置页项目选项卡）
+            MouseArea {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 32
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: { root.projectListOpen = false; root.projectRequested() }
+                Rectangle {
+                    anchors.fill: parent
+                    radius: Theme.radiusSm
+                    color: parent.containsMouse ? Theme.bgHover : "transparent"
+                    RowLayout {
+                        anchors { fill: parent; leftMargin: Theme.gapMd }
+                        Label {
+                            text: "打开其他项目…"
+                            font.family: Theme.fontUi
+                            font.pixelSize: Theme.sizeUi
+                            color: Theme.textSecondary
+                        }
+                    }
                 }
             }
         }
@@ -106,6 +295,18 @@ Rectangle {
             spacing: 2
 
             model: ListModel { id: sessionsModel }
+
+            // 空状态占位：无会话时给出引导，避免大片空白
+            Label {
+                anchors.centerIn: parent
+                visible: sessionsModel.count === 0
+                text: "暂无会话\n点击右上角「+ 新建」开始创作"
+                horizontalAlignment: Text.AlignHCenter
+                font.family: Theme.fontUi
+                font.pixelSize: Theme.sizeUi
+                lineHeight: 1.7
+                color: Theme.textFaint
+            }
 
             function reload() {
                 sessionsModel.clear()
@@ -180,11 +381,20 @@ Rectangle {
 
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
 
-        // ── 底部工具栏：重建索引 + 设置入口 ──
+        // ── 底部工具栏：版本号 + 重建索引 + 设置入口 ──
         Rectangle {
             Layout.fillWidth: true
             height: 44
             color: "transparent"
+
+            // 左侧利用空位弱化展示版本号
+            Label {
+                anchors { left: parent.left; leftMargin: Theme.gapLg; verticalCenter: parent.verticalCenter }
+                text: "v" + Qt.application.version
+                font.family: Theme.fontUi
+                font.pixelSize: Theme.sizeCaption
+                color: Theme.textFaint
+            }
 
             // 重建索引：强制全量重嵌入（索引损坏/换嵌入模型后的自愈入口）
             Rectangle {
@@ -228,7 +438,7 @@ Rectangle {
 
                 Label {
                     anchors.centerIn: parent
-                    text: "\u2699"
+                    text: "\u2699\uFE0E"
                     font.pixelSize: 18
                     color: settingsMa.containsMouse ? Theme.textPrimary : Theme.textSecondary
                 }
