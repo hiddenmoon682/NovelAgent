@@ -32,19 +32,8 @@ AppConfig AppConfig::loadFromFile(const std::string& path) {
 
         config.default_provider = utils::json::getOrDefault(j, "default_provider", std::string("deepseek"));
         config.last_project_path = utils::json::getOrDefault(j, "last_project_path", std::string{});
-        // 旧配置可能没有 recent_projects 键：缺失时保持空列表，向后兼容。
-        if (j.contains("recent_projects") && j["recent_projects"].is_array()) {
-            // 逐元素过滤：数组中出现非字符串元素时跳过，避免整份配置解析失败
-            config.recent_projects.clear();
-            for (const auto& item : j["recent_projects"]) {
-                if (item.is_string()) {
-                    const std::string s = item.get<std::string>();
-                    if (!s.empty()) {
-                        config.recent_projects.push_back(s);
-                    }
-                }
-            }
-        }
+        // 键缺失或为 null 时取空列表（首次加载尚未写入该键的文件不报错）
+        config.recent_projects = utils::json::getOrDefault(j, "recent_projects", std::vector<std::string>{});
         config.verbose           = utils::json::getOrDefault(j, "verbose", false);
 
         if (j.contains("providers") && j["providers"].is_object()) {
