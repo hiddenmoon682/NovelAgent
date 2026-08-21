@@ -16,6 +16,8 @@
 
 #include <string>
 #include <map>
+#include <vector>
+#include <algorithm>
 #include <nlohmann/json.hpp>
 
 struct ProviderConfig {
@@ -77,6 +79,7 @@ struct AppConfig {
 
     // ── GUI 持久化字段 ──
     std::string last_project_path;  // 上次打开的项目目录，启动时自动恢复
+    std::vector<std::string> recent_projects;  // 最近打开过的项目目录（最近在前、去重、不设上限）
     bool verbose = false;           // 调试日志开关
 
     // 运行时记录本配置的加载来源文件，不参与序列化。
@@ -138,6 +141,12 @@ struct AppConfig {
     // @param name   provider 名称（作为 providers 映射的键）。
     // @param config 完整的 provider 配置，按值拷贝存入。
     void addProvider(const std::string& name, const ProviderConfig& config);
+
+    // 记录一次项目打开：去重后置顶；空路径忽略。调用方负责 save()。
+    void recordRecentProject(const std::string& path);
+
+    // 从最近列表中移除项目目录；命中返回 true。调用方负责 save()。
+    bool removeRecentProject(const std::string& path);
 
     static constexpr const char* kDefaultConfigFile = "config.json";
 };

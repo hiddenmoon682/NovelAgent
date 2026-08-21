@@ -32,6 +32,10 @@ AppConfig AppConfig::loadFromFile(const std::string& path) {
 
         config.default_provider = utils::json::getOrDefault(j, "default_provider", std::string("deepseek"));
         config.last_project_path = utils::json::getOrDefault(j, "last_project_path", std::string{});
+        // 旧配置可能没有 recent_projects 键：缺失时保持空列表，向后兼容。
+        if (j.contains("recent_projects") && j["recent_projects"].is_array()) {
+            config.recent_projects = j["recent_projects"].get<std::vector<std::string>>();
+        }
         config.verbose           = utils::json::getOrDefault(j, "verbose", false);
 
         if (j.contains("providers") && j["providers"].is_object()) {
@@ -51,6 +55,7 @@ void AppConfig::save(const std::string& path) const {
     json j;
     j["default_provider"] = default_provider;
     j["last_project_path"] = last_project_path;
+    j["recent_projects"] = recent_projects;
     j["verbose"] = verbose;
     j["providers"] = json::object();
     for (const auto& [name, provider] : providers) {
@@ -101,4 +106,22 @@ void AppConfig::ensureDefaultProviders() {
     ensure("deepseek", "https://api.deepseek.com", "deepseek-v4-flash");
     ensure("kimi", "https://api.moonshot.cn/v1", "kimi-k2-turbo-preview");
     ensure("claude", "https://api.anthropic.com", "claude-sonnet-4-20250514");
+}
+
+// 记录一次项目打开：去重后置顶；空路径忽略。
+void AppConfig::recordRecentProject(const std::string& path) {
+    if (path.empty()) return;
+    auto it = std::find(recent_projects.begin(), recent_projects.end(), path);
+    if (it != recent_projects.end()) {
+        recent_projects.erase(it);
+    }
+    recent_projects.insert(recent_projects.begin(), path);
+}
+
+// 从最近列表中移除项目目录；命中返回 true。
+bool AppConfig::removeRecentProject(const std::string& path) {
+    auto it = std::find(recent_projects.begin(), recent_projects.end(), path);
+    if (it == recent_projects.end()) return false;
+    recent_projects.erase(it);
+    return true;
 }
