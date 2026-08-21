@@ -1,5 +1,64 @@
 # Changelog
 
+## [2026-08-21] 侧边栏最近项目下拉列表
+
+### 增强 — GUI
+- "当前项目"卡片改造为手风琴式最近项目列表：点击卡片展开/收起（▾ 箭头旋转），展开时展示全部历史打开过的项目（去重置顶、不设上限），点击某条立即切换并自动收起，当前项目行朱砂色 + 左侧标条高亮；行内不显示路径。
+- 悬停条目右侧出现垃圾桶图标（Segoe MDL2 U+E74D），点击从最近列表移除该记录；列表内部 4px 细滚动条，空数据时显示"打开或创建项目…"入口，底部常驻"打开其他项目…"（保持原卡片跳设置项目页行为）。
+- 持久化：`config.json` 新增 `recent_projects` 数组（旧配置缺键自动兼容为空），`openProject`/`createProject` 成功后记录；`ProjectIO::peekTitle` 轻量读取项目标题用于展示。
+
+## [2026-08-21] 侧边栏"当前项目"卡片排版调整
+
+### 变更 — GUI
+- 标题栏底部补 1px 分割线：标题栏与侧边栏同底色（`bgSidebar`），左上区域无边界线，"卡片距标题栏"的间隙无可参照边界、感知上大于实际；补线后标题栏线→卡片(12px)与卡片→分割线(12px)有对称边界参照。
+- 卡片上下边距统一为 `gapMd`(12px)：原上边距 `gapLg`(16px) 大于下边距，改为一致，且与分割线下方"会话"区(12px)保持统一节奏。
+- "当前项目"标签字号 `sizeCaption`(11px)→ 新增 `sizeNote`(12px)：11px 过小、13px 时雅黑字面比下方 13px 衬线项目名还显大，12px 与下方项目名(13px 衬线 DemiBold)形成正确层级。
+- 卡片内两行文字收紧行距：13px 级字体行盒上下各含约 3px 内边距，两行叠放视觉间隙偏大；行高 0.9 + 间距 1px 后视觉间隙约 3px，且文本块垂直居中。
+
+## [2026-08-21] 修复启动时窗口按上次"满屏几何"恢复的问题
+
+### 修复 — GUI
+- 症状：窗口几何持久化会将最大化/近满屏状态退出时的整屏尺寸写回普通几何，下次启动直接按整屏尺寸恢复（实测注册表残留 `windowX=-52, windowY=24, windowWidth=1707, windowHeight=1019`），表现为"默认启动宽高占满整个屏幕"；Qt 不会自动将越界几何夹回屏内。
+- 根因：`MainWindow.qml` 的 `Settings` 用别名直绑 `window.x/y/width/height`，Qt 文档明确别名绑定"值一变即写回持久化"——最大化时被持久化的就是整屏几何，且没有独立记录"是否最大化"。
+- 修复：改为显式 `savedX/savedY/savedWidth/savedHeight/savedMaximized` 属性，`onClosing` 时保存（最大化退出只记标记、不覆盖普通几何），`Component.onCompleted` 时恢复（合并进已有的启动策略 `onCompleted`，避免重复赋值同一属性导致 QML 加载失败）。恢复前做屏内校验：尺寸越界（残留整屏/分辨率变化/首启缺省）回落默认 1400×900，位置不在当前屏内（负坐标哨兵/多屏摘除）回落居中；键名重命名使旧键残留值一次性作废。恢复逻辑在窗口映射前执行，无可见跳动。
+
+## [2026-08-21] 修复任务栏点击无法最小化无边框窗口
+
+### 修复 — GUI
+- 前台运行时点击任务栏按钮可正常最小化/恢复。根因：Qt 把 `FramelessWindowHint` 窗口创建为纯弹出式窗口（`GWL_STYLE` 实测仅 `WS_POPUP`，无 `WS_CAPTION`/`WS_SYSMENU`/`WS_MINIMIZEBOX`），Shell 依据这些样式位决定是否投递任务栏点击最小化等交互，因此消息从未到达窗口，拦截 `WM_SYSCOMMAND` 无效。
+- 采用 Electron/VSCode 同款方案：`WinFrameResizeFilter` 重构为 `WinFrameBehaviorFilter`，新增 `fixupFramelessWindowStyle()` 在窗口创建后补回 `WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX`（清除 `WS_POPUP`）；配合拦截 `WM_NCCALCSIZE` 零化非客户区（最大化时客户区收敛到显示器工作区，避免外溢边框裁切顶部内容），视觉保持无边框。补样式后最小化/恢复/系统菜单均由 `DefWindowProc` 原生处理，不再拦截 `WM_SYSCOMMAND`（拦截会因 Qt visibility 与原生状态不同步造成状态混乱）。仅 Windows 生效。
+
+## [2026-08-21] 品牌标识上移标题栏，侧边栏释放顶部空间
+
+### 变更 — GUI
+- 标题栏高度 32px → 40px，左侧弱化小字展示「墨染 · AI 小说创作助手」作窗口定位；拖拽区更充裕。
+- 移除侧边栏顶部大号「墨染」标题：避免与标题栏品牌重复，同时释放约 70px 纵向空间给项目卡片/会话列表（项目卡片补 `topMargin` 保持间距）。
+- 窗口控制按钮改用 Windows 系统图标字体 `Segoe MDL2 Assets`（最小化 U+E921 / 最大化 U+E922 / 还原 U+E923 / 关闭 U+E8BB）：三枚图标同源等大，替换原文本符号「─ □ ✕」所致的大小不一；最大化按钮图标随窗口状态双向切换；按钮宽 46px（对齐 Windows 原生窗口按钮宽度）、高度占满标题栏、贴窗口右缘无间距，悬浮高亮为直角全高背景。
+- 修复窗口按钮悬浮高亮上下留 6px 间隙：Qt 6.8 Material Button 样式自带 `topInset/bottomInset=6`，使 `background` 布局内缩；按钮组件显式归零 inset 后高亮铺满按钮矩形（经像素采样验证）。
+
+## [2026-08-21] 移除内嵌 Noto Serif SC 字体
+
+### 变更 — GUI
+- 移除内嵌的 `NotoSerifSC-VF.ttf`（24MB）、CMake `font_resources` 资源注册与 `MainWindow.qml` 的 `FontLoader`。原因：开发机已安装该字体，内嵌前后渲染无差异；而 rcc C++ 生成模式不支持压缩，内嵌使仓库与包体各多 24MB，收益仅限“未装该字体的分发目标机”。标题/阅读区继续使用系统 `Noto Serif SC`（`Theme.fontDisplay` 不变）；若未来需分发到无字体环境，改用 exe 旁 `fonts/` 目录 + `QFontDatabase::addApplicationFont()` 松散部署。
+
+## [2026-08-20] GUI 三轮：无边框窗口边缘缩放 / 内嵌 Noto Serif SC / 清理过时原型
+
+### 增强 — GUI
+- **无边框窗口边缘拖拽缩放**：新增 `WinFrameResizeFilter` 原生事件过滤器（拦截 `WM_NCHITTEST`，窗口边缘/角部 8px 命中区返回系统命中值，最大化时跳过），补回 `FramelessWindowHint` 后缺失的边缘缩放能力；仅 Windows 生效，其他平台空实现。
+- **内嵌 Noto Serif SC 可变字体**（`src/novelagent_qt/fonts/NotoSerifSC-VF.ttf`，OFL 授权）：启动经 `FontLoader` 加载，family 名与 `Theme.fontDisplay` 对齐；Windows 默认不附带该字体，标题/阅读区不再回退宋体。rcc 的 C++ 生成模式不支持压缩，字体原样 24MB 嵌入（包体换字体一致性）。
+- 删除根目录与现实现不符的过时浅色原型 `preview.html`。
+- 补设 `organizationName`：修复 QML `Settings`（窗口位置持久化）因缺组织标识初始化失败、位置从未落盘的问题。
+- 二轮细节一致性：思考过程 💭 改纯文本（该码点无法单色呈现）；章节选择弹窗补进出场动画；侧栏底部工具栏左侧空位展示版本号。
+
+## [2026-08-20] QML 前端视觉细节优化（主题化控件 / 对话框溢出 / 深色遮罩）
+
+### 增强 — GUI
+- 新增四个主题化控件组件 `ThemedButton`/`ThemedField`/`ThemedCombo`/`ThemedSwitch`（扁平圆角、无 Material 抬升阴影），设置对话框与首启向导全量换肤；消除 API Key 输入框「顶部标签 + Material 浮动标签」双标签、胶囊按钮与暗色主题的风格冲突。
+- 修复设置对话框「模型」页内容超出固定高度、导致「保存/保存并启用」按钮绘制到面板外的问题（换用紧凑主题控件后内容回落至 540px 内）；选项卡改为左对齐紧凑下划线；新增右上角关闭按钮；对话框/向导/技能弹窗统一淡入淡出进出场动画。
+- 模态遮罩由 Material 默认浅色改为深色半透明（`Overlay.modal: #99000000`），与暖墨暗色主题一致。
+- 侧栏设置齿轮与工具卡片运行图标 `⚙` 追加 `\uFE0E` 强制单色文本呈现，修复 Windows 下渲染为彩色 Emoji。
+- 细节打磨：会话列表空状态引导文案；当前项目卡片可点击跳转项目设置；阅读区空状态垂直居中、无内容时隐藏底部字数条、无章节时收起下拉箭头；输入框 placeholder 聚焦不再消失；禁用态发送按钮改透明弱化（可用时朱砂点亮）；建议卡 hover 箭头右移微动画；SplitView 分隔线扩命中区并 hover 高亮；标题栏左侧展示窗口标题；状态栏上下文进度轨道改用更可见的分割线色。
+
 ## [2026-08-20] 修复会话管理两个严重 Bug（连带删除 / 空池新建卡死）
 
 ### 修复 — 会话管理
