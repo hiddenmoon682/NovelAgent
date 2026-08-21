@@ -2,6 +2,7 @@
 #include "ProjectIO.h"
 
 #include "utils/FileUtils.h"
+#include "utils/JsonUtils.h"
 
 #include <ctime>
 #include <iomanip>
@@ -145,7 +146,12 @@ std::optional<json> ProjectIO::loadJsonFile(const std::string& path) {
 std::string ProjectIO::peekTitle(const std::string& path) {
     auto j = loadJsonFile(fu::joinPath(path, kNovelJson));
     if (!j) return {};
-    return utils::json::getOrDefault(*j, "title", std::string{});
+    try {
+        return utils::json::getOrDefault(*j, "title", std::string{});
+    } catch (const nlohmann::json::type_error&) {
+        // title 字段类型异常（如非字符串）时按缺失处理，不向上抛
+        return {};
+    }
 }
 
 // 将 JSON 数据以两空格缩进格式写入文件。
