@@ -34,7 +34,13 @@ AppConfig AppConfig::loadFromFile(const std::string& path) {
         config.last_project_path = utils::json::getOrDefault(j, "last_project_path", std::string{});
         // 旧配置可能没有 recent_projects 键：缺失时保持空列表，向后兼容。
         if (j.contains("recent_projects") && j["recent_projects"].is_array()) {
-            config.recent_projects = j["recent_projects"].get<std::vector<std::string>>();
+            // 逐元素过滤：数组中出现非字符串元素时跳过，避免整份配置解析失败
+            config.recent_projects.clear();
+            for (const auto& item : j["recent_projects"]) {
+                if (item.is_string()) {
+                    config.recent_projects.push_back(item.get<std::string>());
+                }
+            }
         }
         config.verbose           = utils::json::getOrDefault(j, "verbose", false);
 
@@ -120,6 +126,7 @@ void AppConfig::recordRecentProject(const std::string& path) {
 
 // 从最近列表中移除项目目录；命中返回 true。
 bool AppConfig::removeRecentProject(const std::string& path) {
+    if (path.empty()) return false;
     auto it = std::find(recent_projects.begin(), recent_projects.end(), path);
     if (it == recent_projects.end()) return false;
     recent_projects.erase(it);
