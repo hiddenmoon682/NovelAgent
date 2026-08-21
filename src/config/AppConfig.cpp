@@ -38,7 +38,10 @@ AppConfig AppConfig::loadFromFile(const std::string& path) {
             config.recent_projects.clear();
             for (const auto& item : j["recent_projects"]) {
                 if (item.is_string()) {
-                    config.recent_projects.push_back(item.get<std::string>());
+                    const std::string s = item.get<std::string>();
+                    if (!s.empty()) {
+                        config.recent_projects.push_back(s);
+                    }
                 }
             }
         }

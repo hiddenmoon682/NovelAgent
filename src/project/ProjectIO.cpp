@@ -144,12 +144,12 @@ std::optional<json> ProjectIO::loadJsonFile(const std::string& path) {
 }
 
 std::string ProjectIO::peekTitle(const std::string& path) {
-    auto j = loadJsonFile(fu::joinPath(path, kNovelJson));
-    if (!j) return {};
     try {
+        auto j = loadJsonFile(fu::joinPath(path, kNovelJson));
+        if (!j) return {};
         return utils::json::getOrDefault(*j, "title", std::string{});
-    } catch (const nlohmann::json::type_error&) {
-        // title 字段类型异常（如非字符串）时按缺失处理，不向上抛
+    } catch (const std::exception&) {
+        // 畸形路径/异常 JSON 均按"无标题"处理，绝不让异常穿透到 QML 边界
         return {};
     }
 }
