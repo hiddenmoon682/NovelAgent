@@ -30,7 +30,8 @@ Item {
 
             Label {
                 id: icon
-                text: root.status === "running" ? "\u2699"
+                // \uFE0E 强制文本呈现，避免 Windows 把 ⚙ 渲染成彩色 Emoji
+                text: root.status === "running" ? "\u2699\uFE0E"
                     : root.status === "ok" ? "\u2713" : "\u2715"
                 font.pixelSize: Theme.sizeUi
                 color: root.status === "error" ? Theme.danger : Theme.agentTint

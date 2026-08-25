@@ -107,9 +107,14 @@ public:
     // ── Provider 配置 ──
     Q_INVOKABLE QStringList listProviders() const;
     Q_INVOKABLE QVariantMap providerInfo(const QString& name) const;
+    // 保存 provider 配置；values 含 "rename_to" 时执行改名（目标已存在则失败）。
     Q_INVOKABLE bool saveProvider(const QString& name, const QVariantMap& values);
     Q_INVOKABLE QString defaultProvider() const;
     Q_INVOKABLE bool hasUsableApiKey(const QString& name) const;
+    // 新增一个空模板 provider 条目（自动生成唯一名"未命名"/"未命名-2"...），返回新名。
+    Q_INVOKABLE QString addProvider();
+    // 删除 provider；默认 provider 或当前运行中的 provider 拒绝删除。
+    Q_INVOKABLE bool deleteProvider(const QString& name);
 
     // ── 项目操作 ──
     // 校验目录状态："valid"（可打开）/ "new"（空目录可新建）/ "occupied"（非空且无项目）。
@@ -123,6 +128,19 @@ public:
     // 从最近项目列表移除一条记录；命中返回 true（不影响已打开的项目）。
     Q_INVOKABLE bool removeRecentProject(const QString& path);
     Q_INVOKABLE QString lastProjectPath() const;
+
+    // ── 固定目录项目管理（对齐原型）──
+    // 固定项目根目录（~/.novelagent/projects），仅返回路径、不创建。
+    Q_INVOKABLE QString projectsDir() const;
+    // 在固定目录下创建项目并进入。返回状态码：
+    // "ok" | "invalid_title" | "invalid_chars" | "duplicate" | "failed"。
+    Q_INVOKABLE QString createProjectAt(const QString& title, const QString& description);
+    // 全部项目列表（固定目录枚举 − 软删目录）：
+    // [{title, path, isCurrent}]，按最近使用排序（不在 recent 的排最后）。
+    Q_INVOKABLE QVariantList allProjects() const;
+    // 软删项目：目录重命名为"原名（已删除）"并从 recent 移除；
+    // 删除的是当前项目时 Agent 重建为无项目状态。磁盘内容保留。
+    Q_INVOKABLE bool deleteProject(const QString& path);
 
     // ── 技能管理 ──
     // 技能列表：[{name, description, always, enabled}, ...]；未初始化返回空。

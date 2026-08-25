@@ -159,7 +159,7 @@ Rectangle {
                     text: "你的 AI 小说创作伙伴 — 构思、写作、管理设定"
                     font.family: Theme.fontUi
                     font.pixelSize: Theme.sizeUi
-                    color: Theme.textFaint
+                    color: Theme.textSecondary
                 }
 
                 Column {
@@ -189,10 +189,14 @@ Rectangle {
                                 color: Theme.textPrimary
                             }
                             Label {
-                                anchors { right: parent.right; rightMargin: Theme.gapMd; verticalCenter: parent.verticalCenter }
-                                text: "\u2192"
+                                anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                                // hover 时箭头右移 4px 的微动画，提示可点击
+                                anchors.rightMargin: cardMa.containsMouse ? Theme.gapMd + 4 : Theme.gapMd
+                                text: "→"
                                 font.pixelSize: Theme.sizeUi
-                                color: Theme.textFaint
+                                color: cardMa.containsMouse ? Theme.accent : Theme.textFaint
+                                Behavior on anchors.rightMargin { NumberAnimation { duration: Theme.animFast } }
+                                Behavior on color { ColorAnimation { duration: Theme.animFast } }
                             }
                             MouseArea {
                                 id: cardMa
@@ -265,7 +269,7 @@ Rectangle {
                     top: inputField.top
                     topMargin: inputField.topPadding
                 }
-                visible: inputField.text.length === 0 && !inputField.activeFocus
+                visible: inputField.text.length === 0
                 text: bridge.agentReady ? "输入指令或问题..." : "请先完成模型配置（左下角设置）"
                 font.family: Theme.fontUi
                 font.pixelSize: Theme.sizeBody
@@ -345,8 +349,9 @@ Rectangle {
 
                 Item { Layout.fillWidth: true }
 
-                Button {
+                ThemedButton {
                     id: sendBtn
+                    kind: bridge.sessionBusy ? "danger" : "primary"
                     text: bridge.sessionBusy ? "取消" : "发送"
                     enabled: bridge.agentReady && (bridge.sessionBusy || inputField.text.trim().length > 0)
                     onClicked: {
@@ -355,24 +360,6 @@ Rectangle {
                         } else {
                             root.sendCurrentMessage()
                         }
-                    }
-
-                    contentItem: Text {
-                        text: sendBtn.text
-                        font.family: Theme.fontUi
-                        font.pixelSize: Theme.sizeUi
-                        color: sendBtn.enabled ? "#f5efe2" : Theme.textFaint
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    background: Rectangle {
-                        implicitWidth: 64
-                        implicitHeight: 32
-                        radius: Theme.radiusSm
-                        color: bridge.sessionBusy ? Theme.danger
-                             : sendBtn.enabled ? Theme.accent
-                             : Theme.bgHover
-                        Behavior on color { ColorAnimation { duration: Theme.animFast } }
                     }
                 }
             }

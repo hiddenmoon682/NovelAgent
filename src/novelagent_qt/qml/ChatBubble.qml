@@ -64,7 +64,8 @@ ColumnLayout {
             anchors.centerIn: parent
             spacing: Theme.gapXs
             Label {
-                text: "\ud83d\udcad 思考过程"
+                // 纯文本标题：💭 是仅 Emoji 呈现的码点，无法单色化，与暖墨单色主题冲突
+                text: "思考过程"
                 font.family: Theme.fontUi
                 font.pixelSize: Theme.sizeCaption
                 color: Theme.textFaint

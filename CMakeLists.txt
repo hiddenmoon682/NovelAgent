@@ -137,6 +137,7 @@ if(BUILD_GUI)
     set(NOVELAGENT_QT_SOURCES
         src/novelagent_qt/QmlBridge.h src/novelagent_qt/QmlBridge.cpp
         src/novelagent_qt/QmlApp.h src/novelagent_qt/QmlApp.cpp
+        src/novelagent_qt/WinFrameBehavior.h src/novelagent_qt/WinFrameBehavior.cpp
     )
 
     set(NOVELAGENT_QML_FILES
@@ -150,6 +151,13 @@ if(BUILD_GUI)
         src/novelagent_qt/qml/SettingsDialog.qml
         src/novelagent_qt/qml/SkillPopup.qml
         src/novelagent_qt/qml/WelcomeWizard.qml
+        src/novelagent_qt/qml/ThemedButton.qml
+        src/novelagent_qt/qml/ThemedField.qml
+        src/novelagent_qt/qml/ThemedCombo.qml
+        src/novelagent_qt/qml/ThemedSwitch.qml
+        src/novelagent_qt/qml/Toast.qml
+        src/novelagent_qt/qml/CreateProjectDialog.qml
+        src/novelagent_qt/qml/ConfirmDialog.qml
         src/novelagent_qt/qml/Theme.qml
         src/novelagent_qt/qml/qmldir
     )

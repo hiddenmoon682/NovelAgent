@@ -15,6 +15,9 @@ Popup {
     closePolicy: Popup.NoAutoClose
     padding: Theme.gapLg
 
+    enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.animNormal } }
+    exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.animFast } }
+
     background: Rectangle {
         color: Theme.bgElevated
         radius: Theme.radiusMd
@@ -70,9 +73,9 @@ Popup {
                 Layout.alignment: Qt.AlignHCenter
             }
             Item { Layout.fillHeight: true }
-            Button {
+            ThemedButton {
+                kind: "primary"
                 text: "开始配置"
-                highlighted: true
                 Layout.alignment: Qt.AlignHCenter
                 onClicked: pages.currentIndex = 1
             }
@@ -93,7 +96,7 @@ Popup {
                 font.pixelSize: Theme.sizeCaption
                 color: Theme.textSecondary
             }
-            ComboBox {
+            ThemedCombo {
                 id: providerCombo
                 Layout.fillWidth: true
                 onActivated: root.loadProviderFields()
@@ -104,7 +107,7 @@ Popup {
                 font.pixelSize: Theme.sizeCaption
                 color: Theme.textSecondary
             }
-            TextField {
+            ThemedField {
                 id: keyField
                 Layout.fillWidth: true
                 echoMode: TextInput.Password
@@ -116,14 +119,14 @@ Popup {
                 font.pixelSize: Theme.sizeCaption
                 color: Theme.textSecondary
             }
-            TextField { id: modelField; Layout.fillWidth: true }
+            ThemedField { id: modelField; Layout.fillWidth: true }
             Item { Layout.fillHeight: true }
             RowLayout {
                 Layout.alignment: Qt.AlignRight
-                Button { text: "上一步"; onClicked: pages.currentIndex = 0 }
-                Button {
+                ThemedButton { text: "上一步"; onClicked: pages.currentIndex = 0 }
+                ThemedButton {
+                    kind: "primary"
                     text: "下一步"
-                    highlighted: true
                     enabled: keyField.text.trim().length > 0
                     onClicked: {
                         if (root.applyProvider())
@@ -143,7 +146,7 @@ Popup {
                 font.pixelSize: Theme.sizeCaption
                 color: Theme.textFaint
             }
-            Button {
+            ThemedButton {
                 text: "打开已有项目..."
                 Layout.fillWidth: true
                 onClicked: wizardOpenDlg.open()
@@ -155,38 +158,34 @@ Popup {
                 font.pixelSize: Theme.sizeCaption
                 color: Theme.textSecondary
             }
-            TextField {
-                id: wizardTitleField
+            Label {
+                text: "项目将保存到：" + bridge.projectsDir()
+                font.family: Theme.fontUi
+                font.pixelSize: Theme.sizeNote
+                color: Theme.textFaint
+                elide: Text.ElideMiddle
                 Layout.fillWidth: true
-                placeholderText: "小说名称"
             }
-            RowLayout {
-                TextField {
-                    id: wizardDirField
-                    Layout.fillWidth: true
-                    readOnly: true
-                    placeholderText: "项目目录"
-                }
-                Button { text: "浏览..."; onClicked: wizardNewDlg.open() }
-            }
-            Button {
-                text: "创建并进入"
-                highlighted: true
+            ThemedButton {
+                kind: "primary"
+                text: "新建项目…"
                 Layout.fillWidth: true
-                enabled: wizardTitleField.text.trim().length > 0 && wizardDirField.text.length > 0
-                onClicked: {
-                    if (bridge.createProject(wizardDirField.text, wizardTitleField.text))
-                        root.close()
-                }
+                onClicked: wizardCreateDialog.open()
             }
             Item { Layout.fillHeight: true }
-            Button {
+            ThemedButton {
+                kind: "text"
                 text: "暂时跳过（稍后可在设置中打开项目）"
-                flat: true
                 Layout.alignment: Qt.AlignHCenter
                 onClicked: root.close()   // Agent 已在第 1 步初始化，无项目状态可用
             }
         }
+    }
+
+    // 新建项目弹窗（共享）：创建成功即关闭向导并进入新项目
+    CreateProjectDialog {
+        id: wizardCreateDialog
+        onProjectCreated: root.close()
     }
 
     FolderDialog {
@@ -195,16 +194,6 @@ Popup {
         onAccepted: {
             if (bridge.openProject(selectedFolder.toString()))
                 root.close()
-        }
-    }
-
-    FolderDialog {
-        id: wizardNewDlg
-        title: "选择新项目目录"
-        onAccepted: {
-            var status = bridge.validateProjectDir(selectedFolder.toString())
-            if (status !== "occupied")
-                wizardDirField.text = selectedFolder.toString()
         }
     }
 }

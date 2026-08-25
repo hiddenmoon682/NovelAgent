@@ -13,6 +13,10 @@ public:
     // 创建新项目，并返回已初始化完成的 Project。
     Project create(const std::string& path, const std::string& title);
 
+    // 创建新项目并写入简介（description 为空时等价于双参版本）。
+    Project create(const std::string& path, const std::string& title,
+                   const std::string& description);
+
     // 打开已有项目并返回加载结果。
     // 如果目录无效，则返回空 Project（title 为空）。
     Project open(const std::string& path);
@@ -29,6 +33,9 @@ public:
 
     // 列出 baseDir 下的所有有效小说项目。
     std::vector<std::string> listProjects(const std::string& baseDir) const;
+
+    // 判断目录是否为软删项目（目录名带"（已删除）"标记）。
+    static bool isSoftDeleted(const std::string& path);
 
     // 根据标题生成相对安全的目录名，尽量保留可读性。
     static std::string getDefaultProjectDir(const std::string& title);

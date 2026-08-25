@@ -97,6 +97,7 @@ Rectangle {
                     }
                     Label {
                         text: "\u25be"
+                        visible: root.chapters.length > 0
                         font.pixelSize: Theme.sizeUi
                         color: Theme.textSecondary
                     }
@@ -106,7 +107,8 @@ Rectangle {
                     id: selectorMa
                     anchors.fill: parent
                     hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
+                    enabled: root.chapters.length > 0
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                     onClicked: chapterPopup.open()
                 }
 
@@ -116,6 +118,9 @@ Rectangle {
                     width: 300
                     height: Math.min(Math.max(chapterListView.contentHeight, 48) + Theme.gapSm * 2, 360)
                     padding: Theme.gapSm
+
+                    enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.animNormal } }
+                    exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.animFast } }
 
                     background: Rectangle {
                         radius: Theme.radiusMd
@@ -183,45 +188,57 @@ Rectangle {
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
 
         // ── 正文阅读区 ──
-        Flickable {
-            id: flick
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            contentWidth: width
-            contentHeight: readerText.implicitHeight + Theme.gapXl * 2
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
 
-            ScrollBar.vertical: ScrollBar {
-                policy: ScrollBar.AsNeeded
+            Flickable {
+                id: flick
+                anchors.fill: parent
+                contentWidth: width
+                contentHeight: readerText.implicitHeight + Theme.gapXl * 2
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                ScrollBar.vertical: ScrollBar {
+                    policy: ScrollBar.AsNeeded
+                }
+
+                Text {
+                    id: readerText
+                    anchors {
+                        top: parent.top
+                        left: parent.left
+                        right: parent.right
+                        margins: Theme.gapXl
+                    }
+                    visible: root.chapterContent.length > 0
+                    text: root.mdWithHardBreaks(root.chapterContent)
+                    font.family: Theme.fontDisplay
+                    font.pixelSize: Theme.sizeBody + 1
+                    lineHeight: 1.9
+                    wrapMode: Text.Wrap
+                    textFormat: Text.MarkdownText
+                    color: Theme.textPrimary
+                }
             }
 
-            Text {
-                id: readerText
-                anchors {
-                    top: parent.top
-                    left: parent.left
-                    right: parent.right
-                    margins: Theme.gapXl
-                }
-                text: root.chapterContent.length > 0
-                      ? root.mdWithHardBreaks(root.chapterContent)
-                      : "从上方选择章节，或让墨染生成内容后在此阅读。"
-                font.family: Theme.fontDisplay
-                font.pixelSize: Theme.sizeBody + 1
-                lineHeight: 1.9
-                wrapMode: Text.Wrap
-                textFormat: Text.MarkdownText
-                color: root.chapterContent.length > 0
-                       ? Theme.textPrimary
-                       : Theme.textFaint
+            // 空状态垂直居中：旧版提示贴顶、下方大片空白，重心失衡
+            Label {
+                anchors.centerIn: parent
+                visible: root.chapterContent.length === 0
+                text: "从上方选择章节，或让墨染生成内容后在此阅读。"
+                font.family: Theme.fontUi
+                font.pixelSize: Theme.sizeUi
+                color: Theme.textFaint
             }
         }
 
-        // ── 底部字数 ──
+        // ── 底部字数（无内容时隐藏，避免空占一条分割线）──
         Rectangle {
             Layout.fillWidth: true
             height: 26
+            visible: root.chapterContent.length > 0
             color: "transparent"
 
             Rectangle {

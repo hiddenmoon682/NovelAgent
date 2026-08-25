@@ -8,8 +8,10 @@
 #include "project/Models/Project.h"
 #include "project/ProjectIO.h"
 #include "project/ProjectManager.h"
+#include "utils/FileUtils.h"
 
 #include <QMetaObject>
+#include <QRegularExpression>
 #include <QUrl>
 
 #include <spdlog/spdlog.h>
@@ -22,6 +24,7 @@
 namespace qtui {
 
 namespace {
+namespace fu = utils::file;
 
 // QML FolderDialog / FileDialog 返回 file:///D:/... 形式 URL，统一转本地路径。
 std::string toLocalPath(const QString& pathOrUrl) {
@@ -133,12 +136,18 @@ bool QmlBridge::rebuildApp(const std::string& providerName,
 
     project_ = app_->project();
 
+    // 会话焦点复位：重建后旧会话 id 已失效（池已销毁），不清除会导致
+    // 首条消息携带陈旧 id 走 sendMessageToSession 报"会话不存在"。
+    current_session_id_.clear();
+    recent_sessions_.clear();
+
     emit agentReadyChanged();
     emit projectChanged();
     emit chaptersChanged();
     emit modelChanged();
     emit usageChanged();
     emit skillsChanged();
+    emit currentSessionIdChanged();
     setStatus(QStringLiteral("就绪"));
     return true;
 }
@@ -757,6 +766,24 @@ QVariantMap QmlBridge::providerInfo(const QString& name) const {
 bool QmlBridge::saveProvider(const QString& name, const QVariantMap& v) {
     const std::string key = name.toStdString();
     if (key.empty()) return false;
+
+    // 改名：目标名已存在则失败；map 键迁移后同步改写 default_provider 引用。
+    // 运行中 Agent 沿用旧名直到下次重建，属预期（保存时 UI 已提示）。
+    const QString renameTo = v.value(QStringLiteral("rename_to")).toString();
+    if (!renameTo.isEmpty() && renameTo != name) {
+        const std::string target = renameTo.trimmed().toStdString();
+        if (target.empty() || config_.providers.count(target))
+            return false;
+        config_.providers[target] = std::move(config_.providers[key]);
+        config_.providers.erase(key);
+        config_.providers[target].name = target;
+        if (config_.default_provider == key)
+            config_.default_provider = target;
+        config_.save();
+        emit providersChanged();
+        return true;
+    }
+
     ProviderConfig& p = config_.providers[key];
     p.name = key;
     if (v.contains(QStringLiteral("api_key")))
@@ -771,6 +798,37 @@ bool QmlBridge::saveProvider(const QString& name, const QVariantMap& v) {
         p.max_tokens = v[QStringLiteral("max_tokens")].toInt();
     if (v.contains(QStringLiteral("enable_thinking")))
         p.enable_thinking = v[QStringLiteral("enable_thinking")].toBool();
+    config_.save();
+    emit providersChanged();
+    return true;
+}
+
+QString QmlBridge::addProvider() {
+    // 自动生成唯一名："未命名"、"未命名-2"、"未命名-3"...
+    std::string name = "未命名";
+    int n = 2;
+    while (config_.providers.count(name))
+        name = "未命名-" + std::to_string(n++);
+    config_.providers[name] = ProviderConfig{};
+    config_.providers[name].name = name;
+    config_.save();
+    emit providersChanged();
+    return QString::fromStdString(name);
+}
+
+bool QmlBridge::deleteProvider(const QString& name) {
+    const std::string key = name.toStdString();
+    if (key.empty() || !config_.providers.count(key))
+        return false;
+    if (key == config_.default_provider) {
+        emit errorOccurred(QStringLiteral("默认模型不能删除，请先切换默认模型"));
+        return false;
+    }
+    if (app_ && key == activeProviderName()) {
+        emit errorOccurred(QStringLiteral("当前正在使用的模型不能删除"));
+        return false;
+    }
+    config_.providers.erase(key);
     config_.save();
     emit providersChanged();
     return true;
@@ -892,6 +950,148 @@ bool QmlBridge::removeRecentProject(const QString& path) {
 
 QString QmlBridge::lastProjectPath() const {
     return QString::fromStdString(config_.last_project_path);
+}
+
+// ── 固定目录项目管理 ──
+
+QString QmlBridge::projectsDir() const {
+    return QString::fromStdString(fu::joinPath(fu::configDir(), "projects"));
+}
+
+QString QmlBridge::createProjectAt(const QString& title, const QString& description) {
+    const std::string name = title.trimmed().toStdString();
+    if (name.empty()) return QStringLiteral("invalid_title");
+    if (title.trimmed().contains(QRegularExpression(QStringLiteral(R"([\\\/:*?"<>|])"))))
+        return QStringLiteral("invalid_chars");
+
+    namespace fs = std::filesystem;
+    const std::string base = toLocalPath(projectsDir());
+    ProjectManager pm;
+
+    // 重名判定：枚举有效项目 + 读取标题（大小写不敏感；软删目录已改名不参与）
+    for (const auto& dir : pm.listProjects(base)) {
+        std::string t = ProjectIO::peekTitle(dir);
+        if (t.empty()) t = fu::baseName(dir);
+        std::string a = t, b = name;
+        std::transform(a.begin(), a.end(), a.begin(), ::tolower);
+        std::transform(b.begin(), b.end(), b.begin(), ::tolower);
+        if (a == b) return QStringLiteral("duplicate");
+    }
+
+    // 目录名 = 标题安全化；与既有目录冲突时追加 -2、-3...
+    std::string dir = fu::joinPath(base, ProjectManager::getDefaultProjectDir(name));
+    int suffix = 2;
+    std::error_code ec;
+    while (fs::exists(dir, ec)) {
+        dir = fu::joinPath(base,
+               ProjectManager::getDefaultProjectDir(name) + "-" + std::to_string(suffix++));
+        ec.clear();
+    }
+
+    if (busy()) {
+        emit errorOccurred(QStringLiteral("Agent 正在生成中，请稍后再创建项目"));
+        return QStringLiteral("failed");
+    }
+    fu::createDirs(base);
+    Project p = pm.create(dir, name, description.trimmed().toStdString());
+    if (p.title.empty()) return QStringLiteral("failed");
+
+    QString err;
+    if (!rebuildApp(activeProviderName(),
+                    std::make_shared<Project>(std::move(p)), &err)) {
+        emit errorOccurred(err);
+        return QStringLiteral("failed");
+    }
+    config_.last_project_path = dir;
+    config_.recordRecentProject(dir);
+    config_.save();
+    return QStringLiteral("ok");
+}
+
+QVariantList QmlBridge::allProjects() const {
+    QVariantList result;
+    const QString current = projectPath();
+    const std::string base = toLocalPath(projectsDir());
+    ProjectManager pm;
+
+    // 枚举固定目录的有效项目，过滤软删目录（目录名带"（已删除）"标记）
+    std::vector<std::string> dirs;
+    for (const auto& dir : pm.listProjects(base)) {
+        if (ProjectManager::isSoftDeleted(dir))
+            continue;
+        dirs.push_back(dir);
+    }
+
+    // 按 recent_projects 中的下标排序（不在 recent 的排最后，保持枚举顺序）
+    std::stable_sort(dirs.begin(), dirs.end(),
+        [this](const std::string& a, const std::string& b) {
+            const auto& rec = config_.recent_projects;
+            auto ia = std::find(rec.begin(), rec.end(), a);
+            auto ib = std::find(rec.begin(), rec.end(), b);
+            if (ia == rec.end() && ib == rec.end()) return false;
+            if (ia == rec.end()) return false;
+            if (ib == rec.end()) return true;
+            return ia < ib;
+        });
+
+    for (const auto& dir : dirs) {
+        const QString path = QString::fromStdString(dir);
+        const std::string title = ProjectIO::peekTitle(dir);
+        QVariantMap item;
+        item.insert(QStringLiteral("title"),
+                    title.empty() ? QVariant(path)
+                                  : QVariant(QString::fromStdString(title)));
+        item.insert(QStringLiteral("path"), path);
+        item.insert(QStringLiteral("isCurrent"), path == current);
+        result.append(item);
+    }
+    return result;
+}
+
+bool QmlBridge::deleteProject(const QString& path) {
+    const std::string dir = toLocalPath(path);
+    if (dir.empty()) return false;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec))
+        return false;
+
+    // 软删：目录重命名为"原名（已删除）"，目标名冲突时追加 -2、-3...
+    std::string renamed;
+    std::string candidate = dir + "（已删除）";
+    int suffix = 2;
+    while (fs::exists(candidate, ec)) {
+        candidate = dir + "（已删除）-" + std::to_string(suffix++);
+        ec.clear();
+    }
+    fs::rename(dir, candidate, ec);
+    if (ec) {
+        emit errorOccurred(QStringLiteral("删除失败（目录重命名出错）"));
+        return false;
+    }
+    renamed = candidate;
+
+    // 删除的是当前项目：先重建为无项目状态，失败则回滚重命名
+    if (dir == toLocalPath(projectPath())) {
+        if (busy()) {
+            fs::rename(renamed, dir, ec);
+            emit errorOccurred(QStringLiteral("Agent 正在生成中，请稍后再删除"));
+            return false;
+        }
+        QString err;
+        if (!rebuildApp(activeProviderName(), nullptr, &err)) {
+            fs::rename(renamed, dir, ec);  // 回滚
+            emit errorOccurred(err);
+            return false;
+        }
+    }
+
+    // 清 last_project_path 防止下次启动把软删项目复活
+    if (config_.last_project_path == dir)
+        config_.last_project_path.clear();
+    config_.removeRecentProject(dir);
+    config_.save();
+    return true;
 }
 
 bool QmlBridge::tryAutoStart() {

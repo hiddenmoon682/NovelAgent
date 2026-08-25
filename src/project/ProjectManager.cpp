@@ -23,12 +23,21 @@ static std::string resolvePath(const std::string& raw) {
 }
 
 Project ProjectManager::create(const std::string& path, const std::string& title) {
+    return create(path, title, "");
+}
+
+Project ProjectManager::create(const std::string& path, const std::string& title,
+                               const std::string& description) {
     std::string absolute = resolvePath(path);
     spdlog::info("创建项目 '{}' 于 {}", title, absolute);
 
     // 先创建目录结构，再立即回读为完整 Project 对象。
     ProjectIO::createProjectDir(path, title);
     Project project = ProjectIO::load(path);
+    if (!description.empty()) {
+        project.description = description;
+        ProjectIO::save(project);
+    }
     return project;
 }
 
@@ -79,8 +88,12 @@ std::vector<std::string> ProjectManager::listProjects(const std::string& baseDir
     return result;
 }
 
-std::string ProjectManager::getDefaultProjectDir(const std::string& title) {
-    std::string result = title;
+bool ProjectManager::isSoftDeleted(const std::string& path) {
+    // 软删标记：目录名含"（已删除）"（软删时由 deleteProject 重命名追加）。
+    return fu::baseName(path).find("（已删除）") != std::string::npos;
+}
+
+std::string ProjectManager::getDefaultProjectDir(const std::string& title) {    std::string result = title;
 
     // 尽量保留字母、数字、中文、连字符和下划线，
     // 空格转成连字符，其余不安全字符直接跳过。

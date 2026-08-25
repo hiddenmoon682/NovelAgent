@@ -61,7 +61,7 @@ Rectangle {
                 width: 60
                 height: 4
                 radius: 2
-                color: Theme.bgHover
+                color: Theme.divider
 
                 Rectangle {
                     width: parent.width * Math.min(bridge.contextPercent, 100) / 100

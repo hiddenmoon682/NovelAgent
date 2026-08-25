@@ -1,5 +1,36 @@
 # Changelog
 
+## [2026-08-25] QML 前端按 HTML 原型重构
+
+### 增强 — GUI
+- **设置弹窗左右式重构**：560×540 顶部选项卡 → 780×520 左侧 rail 导航（模型/项目/调试），rail 项 36px 高、选中朱砂底 + 2.5px 标条；对齐 `settings-mockup.html`。
+- **模型页多模型管理**：左侧模型列表（＋ 新增"未命名"/悬停 ✕ 删除/「默认」徽标/朱砂选中态）+ 右侧表单（命名可改名/API Key/模型名/Base URL/Temperature 滑块）；「设为默认」即保存 + 启用当前模型。
+- **项目页全部项目列表**：枚举固定目录（过滤软删目录），recent 排序在前；行单击选中/双击或悬停「打开」进入；右下角「新增」打开新建弹窗、「删除」走确认弹窗（软删）；固定目录路径展示 + 「在资源管理器中打开」；保留弱化入口"打开其他目录中的项目…"（兼容旧目录项目）。
+- **新建项目弹窗（新 CreateProjectDialog）**：对齐 `create-project-mockup.html`——固定目录创建（`~/.novelagent/projects`）、只填书名+简介（简介 140px 高多行）、就地校验（非法字符/重名红字、错误行零占位不抖动静）、Enter 创建、成功后 toast 提示并自动进入。
+- **Toast 全局提示（新 Toast singleton）**：顶部居中、1600ms 自动消失、懒加载；覆盖新建/删除/保存模型等操作反馈。
+- **ConfirmDialog（新通用确认弹窗）**：380 宽、宋体标题、正文朱砂高亮项目名；删除确认文案明确"仅从列表移除，文件保留在磁盘"。
+- **侧边栏**：手风琴底部「打开其他项目…」→「＋ 添加项目」常驻入口（创建后自动收起）；项目行选中底改 `accentTint` 半透明朱砂、标条改 `Theme.markBar`；空态改"暂无最近项目"；`projectChanged` 时展开态自动刷新。
+- **WelcomeWizard 适配固定目录**：第 2 步新建区去掉目录浏览，改提示"项目将保存到固定目录"+「新建项目…」打开共享弹窗。
+- **Theme 扩展**：新增 `accentTint`（选中行底）、`markBar`（2.5px 标条）、`sizeMini`（徽标）、`radiusXs/radiusToast`、间距细档位 `gapMicro~gapAmple`。
+
+### 变更 — C++（QmlBridge 扩展）
+- 新增 `projectsDir()`：固定项目根目录 `~/.novelagent/projects`。
+- 新增 `createProjectAt(title, desc)`：固定目录创建，返回状态码（ok/invalid_title/invalid_chars/duplicate/failed）；重名大小写不敏感判重，目录名冲突自动追加 `-2` 后缀。
+- 新增 `allProjects()`：枚举固定目录 − 软删目录，按 recent 排序。
+- 新增 `deleteProject(path)`：**软删**——目录重命名为「原名（已删除）」并从 recent 移除、清 `last_project_path`；删当前项目时 Agent 重建为无项目状态，重建失败回滚重命名。磁盘内容保留。
+- 新增 `addProvider()` / `deleteProvider(name)`：多模型管理（默认/运行中模型拒绝删除）；`saveProvider` 支持 `rename_to` 改名并同步 `default_provider`。
+- `ProjectManager::create` 新增 description 重载；新增 `isSoftDeleted(path)` 静态谓词。
+- 修复既有 bug：`rebuildApp` 重建后清空 `current_session_id_`/`recent_sessions_`（否则切换项目后首条消息报"会话不存在"）。
+- QmlApp 连接 QML 引擎 `warnings` 信号输出加载错误日志。
+
+### 测试
+- `test_project_io` 新增：create 带简介持久化、`getDefaultProjectDir` 目录名安全化、软删目录标记识别与重命名冲突后缀。
+
+## [2026-08-22] 侧边栏"当前项目"卡片与下拉面板间隙收紧
+
+### 变更 — GUI
+- 展开最近项目下拉面板时，"当前项目"卡片与面板间距由 16px（卡片下边距 `gapMd` 12px + 面板上边距 `gapXs` 4px）收窄为 6px：卡片下边距在展开态改为 6px、面板上边距归零，与原型 `recent-project-mockup.html`（`.proj-panel { margin-top: 6px }`）一致；收起态卡片下边距保持 `gapMd`(12px) 不变。
+
 ## [2026-08-21] 侧边栏最近项目下拉列表
 
 ### 增强 — GUI

@@ -9,8 +9,6 @@ Rectangle {
 
     // 点击设置齿轮时发射，由 MainWindow 打开设置对话框
     signal settingsRequested()
-    // 点击当前项目卡片时发射，定位到设置对话框的项目页
-    signal projectRequested()
 
     // 最近项目列表展开态（手风琴）：点击卡片切换，选中项目后自动收起
     property bool projectListOpen: false
@@ -35,7 +33,8 @@ Rectangle {
             Layout.leftMargin: Theme.gapSm
             Layout.rightMargin: Theme.gapSm
             Layout.topMargin: Theme.gapMd
-            Layout.bottomMargin: Theme.gapMd
+            // 展开时贴合下拉面板（原型 margin-top 6px），收起时保持与下方分割线的呼吸
+            Layout.bottomMargin: root.projectListOpen ? 6 : Theme.gapMd
             height: 56
             radius: Theme.radiusMd
             color: projectMa.containsMouse ? Theme.bgHover : Theme.bgElevated
@@ -105,7 +104,6 @@ Rectangle {
             Layout.fillWidth: true
             Layout.leftMargin: Theme.gapSm
             Layout.rightMargin: Theme.gapSm
-            Layout.topMargin: Theme.gapXs
             visible: root.projectListOpen
             spacing: 2
 
@@ -135,14 +133,15 @@ Rectangle {
                     width: projList.width
                     height: 36
                     radius: Theme.radiusSm
-                    color: projRowHover.hovered ? Theme.bgHover : "transparent"
+                    color: projRowHover.hovered ? Theme.bgHover
+                         : (isCurrent ? Theme.accentTint : "transparent")
 
                     // 当前项目：左侧朱砂标条
                     Rectangle {
                         visible: isCurrent
-                        anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-                        width: 2.5
-                        radius: 1.25
+                        anchors { left: parent.left; top: parent.top; bottom: parent.bottom; topMargin: Theme.gapTight; bottomMargin: Theme.gapTight }
+                        width: Theme.markBar
+                        radius: Theme.markBar / 2
                         color: Theme.accent
                     }
 
@@ -195,26 +194,17 @@ Rectangle {
                 }
             }
 
-            // 空态：没有任何历史项目
-            MouseArea {
+            // 空态：没有任何最近项目（对齐原型"暂无最近项目"）
+            Label {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 32
                 visible: projModel.count === 0
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: { root.projectListOpen = false; root.projectRequested() }
-                Rectangle {
-                    anchors.fill: parent
-                    radius: Theme.radiusSm
-                    color: parent.containsMouse ? Theme.bgHover : "transparent"
-                    Label {
-                        anchors.centerIn: parent
-                        text: "打开或创建项目…"
-                        font.family: Theme.fontUi
-                        font.pixelSize: Theme.sizeUi
-                        color: Theme.textSecondary
-                    }
-                }
+                text: "暂无最近项目"
+                font.family: Theme.fontUi
+                font.pixelSize: Theme.sizeNote
+                color: Theme.textFaint
+                verticalAlignment: Text.AlignVCenter
+                leftPadding: Theme.gapTight
             }
 
             Rectangle {
@@ -224,27 +214,42 @@ Rectangle {
                 color: Theme.divider
             }
 
-            // 常驻入口：打开其他项目（原卡片点击行为 → 设置页项目选项卡）
+            // 常驻入口：添加项目（对齐原型 app-mockup；创建后自动收起面板）
             MouseArea {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 32
-                visible: projModel.count > 0
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: { root.projectListOpen = false; root.projectRequested() }
+                onClicked: createProjectDialog.open()
                 Rectangle {
                     anchors.fill: parent
                     radius: Theme.radiusSm
                     color: parent.containsMouse ? Theme.bgHover : "transparent"
                     RowLayout {
                         anchors { fill: parent; leftMargin: Theme.gapMd }
+                        spacing: Theme.gapTight
                         Label {
-                            text: "打开其他项目…"
+                            text: "＋"
                             font.family: Theme.fontUi
-                            font.pixelSize: Theme.sizeUi
-                            color: Theme.textSecondary
+                            font.pixelSize: Theme.sizeNote
+                            color: Theme.accent
+                        }
+                        Label {
+                            text: "添加项目"
+                            font.family: Theme.fontUi
+                            font.pixelSize: Theme.sizeNote
+                            color: parent.containsMouse ? Theme.textPrimary : Theme.textSecondary
                         }
                     }
+                }
+            }
+
+            // 新建项目弹窗（创建成功后收起面板）
+            CreateProjectDialog {
+                id: createProjectDialog
+                onProjectCreated: {
+                    root.projectListOpen = false
+                    root.reloadProjects()
                 }
             }
         }
@@ -460,5 +465,10 @@ Rectangle {
         target: bridge
         function onSessionsChanged() { sessionList.reload() }
         function onAgentReadyChanged() { sessionList.reload() }
+        // 项目变化（打开/创建/软删/切换）时若面板展开则刷新最近列表
+        function onProjectChanged() {
+            if (root.projectListOpen)
+                root.reloadProjects()
+        }
     }
 }

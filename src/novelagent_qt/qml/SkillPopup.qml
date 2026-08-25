@@ -19,6 +19,9 @@ Popup {
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
+    enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.animNormal } }
+    exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.animFast } }
+
     property var skills: []
 
     function reload() {
@@ -162,30 +165,12 @@ Popup {
                     }
 
                     // 启用开关
-                    Switch {
+                    ThemedSwitch {
                         id: sw
                         checked: modelData.enabled
                         onToggled: {
                             if (!bridge.setSkillEnabled(modelData.name, checked))
                                 checked = modelData.enabled  // 失败回滚
-                        }
-
-                        indicator: Rectangle {
-                            implicitWidth: 36
-                            implicitHeight: 20
-                            radius: 10
-                            color: sw.checked ? Theme.accent : Theme.bgHover
-                            border.width: 1
-                            border.color: sw.checked ? Theme.accent : Theme.divider
-                            Behavior on color { ColorAnimation { duration: Theme.animFast } }
-
-                            Rectangle {
-                                x: sw.checked ? parent.width - width - 3 : 3
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 14; height: 14; radius: 7
-                                color: "#f5efe2"
-                                Behavior on x { NumberAnimation { duration: Theme.animFast } }
-                            }
                         }
                     }
                 }
