@@ -129,12 +129,14 @@ ApplicationWindow {
                     var delta = Qt.point(mouse.x - clickPos.x, mouse.y - clickPos.y)
                     var nx = window.x + delta.x
                     var ny = window.y + delta.y
-                    // 钳制：保证窗口至少有 80px 留在当前屏内，拖不出屏（预防式，避免窗口跑到屏幕外）
+                    // 钳制：把窗口完整留在当前屏的可用区域内，四边都拖不出屏（含下缘，拖到底就贴住）
                     const scr = window.screen
                     if (scr && scr.availableGeometry) {
                         const av = scr.availableGeometry
-                        nx = Math.max(av.x - window.width + 80, Math.min(nx, av.x + av.width - 80))
-                        ny = Math.max(av.y - window.height + 80, Math.min(ny, av.y + av.height - 80))
+                        const maxX = av.x + av.width - window.width
+                        const maxY = av.y + av.height - window.height
+                        nx = (maxX >= av.x) ? Math.max(av.x, Math.min(nx, maxX)) : av.x
+                        ny = (maxY >= av.y) ? Math.max(av.y, Math.min(ny, maxY)) : av.y
                     }
                     window.setX(nx)
                     window.setY(ny)
