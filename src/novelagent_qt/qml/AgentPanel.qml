@@ -19,6 +19,7 @@ Rectangle {
         var idx = chatModel.count - 1
         if (idx < 0) return -1
         var it = chatModel.get(idx)
+        if (!it) return -1
         return (it.type === "message" && it.role === "assistant" && it.streaming) ? idx : -1
     }
 
@@ -30,13 +31,14 @@ Rectangle {
     function finalizeRunningTools(status) {
         for (var i = 0; i < chatModel.count; ++i) {
             var it = chatModel.get(i)
-            if (it.type === "tool" && it.toolStatus === "running")
+            if (it && it.type === "tool" && it.toolStatus === "running")
                 chatModel.setProperty(i, "toolStatus", status)
         }
     }
 
     // 条目归属的发言方：工具卡片归属 assistant 回合。
     function turnOwner(it) {
+        if (!it) return ""
         return it.type === "tool" ? "assistant" : it.role
     }
 
@@ -86,10 +88,17 @@ Rectangle {
             delegate: Item {
                 id: delegateRoot
                 width: chatView.width - chatView.leftMargin - chatView.rightMargin
-                // 发言方切换时才算新回合：加大段间距并显示名字标签；
-                // 同一回合内被工具卡片隔开的段落紧凑排列，读起来是一条完整回复。
-                readonly property bool newTurn: chatModel.count > 0 &&
-                    (index === 0 || root.turnOwner(chatModel.get(index - 1)) !== root.turnOwner(chatModel.get(index)))
+                // 发言方切换时才算新回合：加大段间距；同一回合内被工具卡片隔开的段落紧凑排列。
+                // 模型在流式/切换会话时会被 clear/append/remove 频繁改动，index 可能短暂越界，
+                // get() 返回 undefined，必须判空否则 turnOwner 报 "Value is undefined" 警告。
+                readonly property bool newTurn: {
+                    if (chatModel.count === 0) return false
+                    if (index === 0) return true
+                    if (index >= chatModel.count) return false
+                    var prev = chatModel.get(index - 1)
+                    var cur = chatModel.get(index)
+                    return !!prev && !!cur && root.turnOwner(prev) !== root.turnOwner(cur)
+                }
                 height: loader.height + (newTurn && index > 0 ? Theme.gapMd : 0)
 
                 Loader {
@@ -412,9 +421,9 @@ Rectangle {
             var idx = root.lastStreamingAssistant()
             if (idx >= 0) {
                 var it = chatModel.get(idx)
-                if (it.content.length === 0 && it.reasoning.length === 0)
+                if (it && it.content.length === 0 && it.reasoning.length === 0)
                     chatModel.remove(idx)   // 空占位直接移除，避免残留空气泡
-                else
+                else if (it)
                     chatModel.setProperty(idx, "streaming", false)
             }
             chatModel.append({ type: "tool", role: "", content: "", reasoning: "",
@@ -425,7 +434,7 @@ Rectangle {
             if (sessionId !== bridge.currentSessionId) return
             for (var i = chatModel.count - 1; i >= 0; --i) {
                 var it = chatModel.get(i)
-                if (it.type === "tool" && it.toolName === toolName && it.toolStatus === "running") {
+                if (it && it.type === "tool" && it.toolName === toolName && it.toolStatus === "running") {
                     chatModel.setProperty(i, "toolStatus", ok ? "ok" : "error")
                     return
                 }
@@ -438,9 +447,9 @@ Rectangle {
             var idx = root.lastStreamingAssistant()
             if (idx >= 0) {
                 var it = chatModel.get(idx)
-                if (it.content.length === 0 && it.reasoning.length === 0)
+                if (it && it.content.length === 0 && it.reasoning.length === 0)
                     chatModel.remove(idx)
-                else
+                else if (it)
                     chatModel.setProperty(idx, "streaming", false)
             }
         }

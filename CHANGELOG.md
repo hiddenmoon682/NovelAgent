@@ -1,5 +1,12 @@
 # Changelog
 
+## [2026-08-26] 修复 AgentPanel 会话切换时 TypeError 与对话页不刷新
+
+### 修复 — GUI
+- **`AgentPanel.qml:40 TypeError: Value is undefined and could not be converted to an object`（QML 警告，切换会话反复刷屏）**：会话 delegate 的 `newTurn` 属性调用 `turnOwner(chatModel.get(index))`，而 `reloadHistory()`/流式过程会对 `chatModel` 频繁 `clear/remove/append`，此时 `get(index)` 会瞬时返回 `undefined`，`turnOwner` 里 `it.type` 直接解引用就抛该错误。且该警告在切换会话（reload 清空重建）时大量触发，也导致 `chatModel` 重建过程被打乱、对话页看起来"停留在上一会话不刷新"。
+  - 修法：`turnOwner(it)` 判空返回 `""`；`lastStreamingAssistant()`/`finalizeRunningTools()` 及各流式回调（`onTokenReceived`/`onReasoningReceived`/`onToolCallStarted`/`onToolCallFinished`/`onResponseComplete`）对 `chatModel.get(idx)` 的结果做 `it && …` 判空；`newTurn` 改为带下标越界检查（`index >= chatModel.count` 直接返回 false、并 `!!prev && !!cur`）。
+  - 说明：会话切换本身链路（`switchPoolSession` → 更新 `current_session_id_` + `emit sessionReset` → `reloadHistory()` 读 `conversationHistory()`）在 C++ 侧是正确的，之前的"不刷新"根因是 QML 侧重建 `chatModel` 时被该 TypeError 干扰。
+
 ## [2026-08-26] 修复 SidebarPanel 会话列表 QML 警告：model.running 为 undefined
 
 ### 修复 — GUI
