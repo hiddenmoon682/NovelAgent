@@ -15,12 +15,9 @@ ApplicationWindow {
 
     color: Theme.bgSidebar
 
-    Material.theme: Material.Dark
-    Material.accent: Theme.accent
-
     // 模态遮罩不在此处配置：Qt 6 起 Overlay.modal / Overlay.modeless 只能挂在
     // Popup 上，挂在 ApplicationWindow 上静默无效（历史踩坑：此处配置从未生效，
-    // 弹窗四周一直是 Material 默认偏浅的白色遮罩）。统一由各模态弹窗引用共享
+    // 弹窗四周一直显示默认偏浅遮罩）。统一由各模态弹窗引用共享
     // 遮罩组件 `Overlay.modal: ModalDimmer {}`，色值取 Theme.overlayDim。
 
     // 窗口几何持久化。不直接用别名绑定 window.x/width：最大化退出时这些值会
@@ -92,8 +89,7 @@ ApplicationWindow {
         property color hoverColor: Theme.bgHover
         property color hoverText: Theme.textPrimary
         flat: true
-        // Material 样式默认 top/bottomInset=6，会把 background 布局内缩，
-        // 此处归零使悬浮高亮真正铺满按钮矩形
+        // 归零 inset，使悬浮高亮真正铺满按钮矩形（Fusion 默认 inset 即 0，此处显式声明以自文档化）
         topInset: 0
         bottomInset: 0
         width: 46

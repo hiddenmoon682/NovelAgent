@@ -1,5 +1,11 @@
 # Changelog
 
+## [2026-08-26] Qt Quick Controls 样式切换：Material → Fusion
+
+### 变更 — GUI / 样式层
+- **弃用 Material，改用 Fusion**：`QmlApp.cpp` 的 `QT_QUICK_CONTROLS_STYLE` 改 `Fusion`，并新增应用级深色 `QPalette`（窗口/基础/文字/高亮等色值与 `Theme.qml` 对齐，高亮=朱砂 `#c9553e`），替代原 `Material.theme: Dark`。`MainWindow.qml` 删除 Material 附加上下文两行。背景依据：Material 样式会在自定义 background/圆角/padding 下**动态推值**（`TextArea.topPadding` 被算成负值致占位符/内容/光标飞出框外、默认遮罩偏白、Button inset 内缩等），与自绘控件反复冲突；Fusion 对自定义 background/圆角/padding 完全可预测，切后一次清掉这类「Material 跟自定义打架」的坑。
+- **保留并在 Fusion 下复验**：`CreateProjectDialog` 简介框的显式 per-side padding 与占位符锚定 `background` 方案在 Fusion 下依然正确；主窗口/设置弹窗/新建项目弹窗均以深色暖墨渲染正常，占位符与输入光标落在框内。
+
 ## [2026-08-26] 新建项目弹窗占位符：组合态重叠 + 简介占位符溢出
 
 ### 修复 — GUI
