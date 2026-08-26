@@ -19,6 +19,9 @@ ColumnLayout {
     // 去掉尾部换行/空行：若保留，contentHeight 会把末行下方的空行也计入，气泡底部凭空多出空白，
     // 视觉上文本"偏上、下空隙大于上间隙"（与用户消息 displayText 的处理保持一致）。
     readonly property string formattedText: isUser ? displayText : mdWithHardBreaks(content).replace(/\n+$/, "")
+    // 与消息正文一致：去掉尾部换行/空行，避免把末行下方的空行也计入高度，
+    // 使思考过程框只包裹可见文本（此前 reasoning 直接 text: root.reasoning，尾部换行会让框变高、文本偏上）。
+    readonly property string displayReasoning: reasoning.replace(/\n+$/, "")
 
     // CommonMark 把单换行当软换行合并为空格，导致模型输出的分行被揉成一段；
     // 这里在代码块之外把单换行转为硬换行（行尾双空格），保留原始分行结构。
@@ -98,11 +101,12 @@ ColumnLayout {
                 leftMargin: Theme.gapMd
                 topMargin: Theme.gapSm
             }
-            text: root.reasoning
+            text: root.displayReasoning
             wrapMode: Text.Wrap
             font.family: Theme.fontUi
             font.pixelSize: Theme.sizeCaption + 1
-            lineHeight: 1.5
+            // 与消息气泡一致：用字体自然行高（不再额外 1.5 放大），
+            // 使浅色小字在思考过程框内上下居中、下方不再多出空白。
             color: Theme.textFaint
         }
     }
@@ -145,8 +149,9 @@ ColumnLayout {
             text: root.formattedText + (!root.isUser && root.streaming ? "▍" : "")
             font.family: Theme.fontDisplay
             font.pixelSize: Theme.sizeBody
-            lineHeight: root.isUser ? 20 : 1.4
-            lineHeightMode: root.isUser ? Text.FixedHeight : Text.ProportionalHeight
+            // 用字体自然行高，别再额外放大（1.4 / FixedHeight20）：Noto Serif SC 15px 自然行高约 22px
+            // 已含充分的 CJK 行距；再放大到 ~31px 会把约 13px 的字形挤到行框顶部、下方多出大片空白，
+            // 视觉上"文本偏上、下空隙大于上空隙"。改用默认行高后文本在气泡内上下居中。
             wrapMode: Text.Wrap
             textFormat: root.isUser ? Text.PlainText : Text.MarkdownText
             color: Theme.textPrimary
