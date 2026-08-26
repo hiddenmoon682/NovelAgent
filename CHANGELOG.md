@@ -5,7 +5,7 @@
 ### 修复 — GUI
 - **窗口恢复几何后跑到屏幕外（`setGeometry: ... +329-65091 → +329-32768`，页面看不见）**：`MainWindow.restoreGeometry()` 在 `Component.onCompleted`（窗口映射前）执行，此时 `window.screen`/`availableGeometry` 可能尚未指向真实屏（换屏/摘除副屏/最大化残留），按错误的屏信息做尺寸/位置夹取，可能把窗口铺到屏幕外。
   - 修法（**预防式**，不是事后拉回）：`restoreGeometry()` 改为——屏信息回退（`window.screen` 无可靠可用几何则回落主屏，仍无则只按默认尺寸、不动位置）；尺寸越界回落默认且不超过屏宽高；位置有非法/越界则回中，并**一律钳制到可用区域内**（`px = max(av.x, min(px, av.x+av.width-w))`），保证窗口完整落在屏内。
-  - 拖拽钳制：标题栏拖拽 `onPositionChanged` 钳制到**按下时缓存的当前屏可用区域**（`dragAv`，不含任务栏）。缓存一次、拖拽全程用固定矩形：不再逐帧访问 `window.screen`/`primaryScreen`（避免闪跳与取不到屏）；且每次移动都夹到同一矩形，分几次往屏幕外拖也拖不出去；往下拖到底就贴住任务栏上沿，不钻到任务栏后面。窗口始终完整留在可用区域内。
+  - 拖拽钳制：改为 **Qt 原生窗口移动 `Window.startSystemMove()`**（Qt 5.15+，官方推荐的无边框窗口拖动方式，见 [Custom client-side window decorations](https://www.qt.io/blog/custom-window-decorations)）。此前手写 `onPositionChanged` 逐帧 `setX/setY` 每次都触发整窗重排/重绘，导致拖拽闪跳、且手写钳制在多次拖拽时逐渐偏离屏外。改用 `startSystemMove()` 后由操作系统处理拖动循环——**不闪跳**，且系统**原生限制窗口不会拖出屏幕**；删除了手写钳制与 `window.screen`/`primaryScreen` 逐帧访问。
   - 说明：之前用 `onVisibleChanged` 反应式"拉到屏外再拉回"的兜底已删除——它会在拖拽时反复触发导致窗口闪跳，也违背"预防而非事后补救"的原则。
   - 背景：这正是 AGENTS.md 记录的"窗口几何持久化"历史坑（满屏假最大化/屏外恢复）的补强；旧键名重命名已作废一批越界残留，本次为屏信息时序缺口改为预防式钳制。
 

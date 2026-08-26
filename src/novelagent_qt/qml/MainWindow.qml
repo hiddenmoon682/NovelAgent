@@ -123,32 +123,12 @@ ApplicationWindow {
 
             MouseArea {
                 anchors.fill: parent
-                property point clickPos: Qt.point(0, 0)
-                // 按下时缓存一次"当前屏的可用区域"（不含任务栏），拖拽全程用这个固定矩形钳制。
-                // 这样拖拽过程不再逐帧访问 window.screen/primaryScreen（避免闪跳、取不到屏），
-                // 且每次移动都夹到同一矩形内，分几次往屏幕外拖也拖不出去。
-                property rect dragAv: Qt.rect(0, 0, 0, 0)
+                // 用系统原生移动（Window.startSystemMove()）拖拽无边框窗口：交给操作系统
+                // 处理拖动循环，不逐帧 setX/setY，避免触发整窗重排/重绘而闪跳；且系统会原生
+                // 限制窗口不会拖出屏幕。这是 Qt/Windows 推荐的无边框窗口拖动方式，不再手写钳制。
                 onPressed: (mouse) => {
-                    clickPos = Qt.point(mouse.x, mouse.y)
-                    let scr = window.screen
-                    if (!scr || !scr.availableGeometry) scr = Qt.application.primaryScreen
-                    dragAv = (scr && scr.availableGeometry)
-                             ? scr.availableGeometry : Qt.rect(0, 0, 0, 0)
-                }
-                onPositionChanged: (mouse) => {
-                    var delta = Qt.point(mouse.x - clickPos.x, mouse.y - clickPos.y)
-                    var nx = window.x + delta.x
-                    var ny = window.y + delta.y
-                    // 钳制到缓存的可屏用区域：窗口完整留在可用区域内，往下拖到底就贴住任务栏上沿，
-                    // 不会钻到任务栏后面、也不会拖出屏幕。
-                    if (dragAv && dragAv.width > 0 && dragAv.height > 0) {
-                        const maxX = dragAv.x + dragAv.width - window.width
-                        const maxY = dragAv.y + dragAv.height - window.height
-                        nx = (maxX >= dragAv.x) ? Math.max(dragAv.x, Math.min(nx, maxX)) : dragAv.x
-                        ny = (maxY >= dragAv.y) ? Math.max(dragAv.y, Math.min(ny, maxY)) : dragAv.y
-                    }
-                    window.setX(nx)
-                    window.setY(ny)
+                    if (mouse.button === Qt.LeftButton)
+                        window.startSystemMove()
                 }
                 onDoubleClicked: {
                     if (window.visibility === Window.Maximized)
