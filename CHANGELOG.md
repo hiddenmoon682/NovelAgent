@@ -1,5 +1,10 @@
 # Changelog
 
+## [2026-08-26] 设置页「调试」页内容边距修正
+
+### 修复 — GUI
+- **调试页「启用调试日志」顶满左上、无左右留白**：该页 `ColumnLayout` 此前只写 `anchors.margins: Theme.gapSpacious` 而未 `fill: parent`，边距不生效，内容贴住容器左上、右侧无留白。改为与「模型」「项目」页一致：`anchors { fill: parent; topMargin/bottomMargin: Theme.gapSpacious; leftMargin/rightMargin: Theme.gapAmple }`，使「启用调试日志」上下/左右都留出边距（Fusion 迁移走查时发现）。
+
 ## [2026-08-26] Qt Quick Controls 样式切换：Material → Fusion
 
 ### 变更 — GUI / 样式层

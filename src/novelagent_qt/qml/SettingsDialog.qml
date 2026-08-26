@@ -682,7 +682,9 @@ Popup {
 
                 // ── 页 2: 调试 ──
                 ColumnLayout {
-                    anchors.margins: Theme.gapSpacious
+                    // 同模型/项目页：fill 父级并留出上下/左右内边距（此前只写 anchors.margins 未 fill，
+                    // 边距不生效导致内容顶满左上、无右侧留白）
+                    anchors { fill: parent; topMargin: Theme.gapSpacious; bottomMargin: Theme.gapSpacious; leftMargin: Theme.gapAmple; rightMargin: Theme.gapAmple }
                     RowLayout {
                         Label {
                             text: "启用调试日志"
