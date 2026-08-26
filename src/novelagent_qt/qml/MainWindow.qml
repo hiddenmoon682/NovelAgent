@@ -129,10 +129,13 @@ ApplicationWindow {
                     var delta = Qt.point(mouse.x - clickPos.x, mouse.y - clickPos.y)
                     var nx = window.x + delta.x
                     var ny = window.y + delta.y
-                    // 钳制：把窗口完整留在当前屏的可用区域内，四边都拖不出屏（含下缘，拖到底就贴住）
-                    const scr = window.screen
-                    if (scr && scr.availableGeometry) {
-                        const av = scr.availableGeometry
+                    // 钳制：窗口完整留在屏幕内（含下缘往下拖也拖不出屏）。
+                    // 用整屏几何（geometry，含任务栏区）而非可用区域，给下方拖拽留足余量，
+                    // 否则窗口会停在任务栏上沿、往下拖不动；屏引用加主屏回退防拖拽时取不到。
+                    let scr = window.screen
+                    if (!scr || !scr.geometry) scr = Qt.application.primaryScreen
+                    if (scr && scr.geometry) {
+                        const av = scr.geometry
                         const maxX = av.x + av.width - window.width
                         const maxY = av.y + av.height - window.height
                         nx = (maxX >= av.x) ? Math.max(av.x, Math.min(nx, maxX)) : av.x
