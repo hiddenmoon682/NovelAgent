@@ -1,5 +1,10 @@
 # Changelog
 
+## [2026-08-26] 修复 SidebarPanel 会话列表 QML 警告：model.running 为 undefined
+
+### 修复 — GUI
+- **`SidebarPanel.qml` `Unable to assign [undefined] to bool`（QML 警告）**：`sessionList.reload()` 从 `bridge.sessionList()` 构造条目时只 `append({ sid, name, active })`，**漏掉了 `running` 字段**（C++ 侧 `sessionList()` 其实已提供 `running`）。会话行 delegate 却用到 `model.running`（运行中圆点 `visible: model.running`、颜色 `color: model.running ? warning : …`），读取不存在的角色返回 `undefined`，赋给 bool 属性触发 QML 警告（违反 QML 警告零容忍）。修法：`reload()` 的 append 补上 `running: list[i].running === true`，消除警告（`=== true` 兼做兜底规范化）。
+
 ## [2026-08-26] 修正对话消息气泡内文本"没有上下居中、下方空隙大于上方"（根因：人工行高）
 
 ### 修复 — GUI

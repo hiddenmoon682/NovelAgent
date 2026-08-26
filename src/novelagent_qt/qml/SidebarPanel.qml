@@ -335,7 +335,8 @@ Rectangle {
                 var list = bridge.sessionList()
                 for (var i = 0; i < list.length; ++i) {
                     sessionsModel.append({ sid: list[i].id, name: list[i].title,
-                                           active: list[i].active })
+                                           active: list[i].active,
+                                           running: list[i].running === true })
                 }
             }
             Component.onCompleted: reload()
