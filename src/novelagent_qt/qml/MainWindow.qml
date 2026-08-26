@@ -34,36 +34,34 @@ ApplicationWindow {
         property bool savedMaximized: false
     }
 
-    // 还原持久化几何：尺寸越界（残留整屏/换屏/首启缺省）回落默认尺寸；
-    // 位置不可见（负坐标哨兵/不在当前屏内/多屏摘除）回落居中。Component.onCompleted
-    // 在窗口映射前执行，window.screen 可能尚无真实屏，故回落主屏、再不行只按默认尺寸。
+    // 还原持久化几何：预防式——直接把尺寸/位置夹到屏内，避免窗口落到屏幕外。
+    // Component.onCompleted 在窗口映射前执行，window.screen 可能尚无真实屏，故回落主屏。
     function restoreGeometry() {
         let scr = window.screen
         if (!scr || !scr.availableGeometry) scr = Qt.application.primaryScreen
         if (!scr || !scr.availableGeometry) {
-            // 无可靠屏信息：只用默认尺寸、不动位置，避免残留整屏/屏外几何被铺开
+            // 无可靠屏信息：只用默认尺寸、不动位置，避免铺开残留的屏外几何
             window.width = Math.min(1400, 2000)
             window.height = Math.min(900, 1200)
             return
         }
         const av = scr.availableGeometry
+        // 尺寸：越界（残留整屏/换屏/首启缺省）回落默认，且不超过屏宽高
         let w = winState.savedWidth
         let h = winState.savedHeight
-        const sizeValid = w >= minimumWidth && h >= minimumHeight &&
-                          w < av.width && h < av.height
-        if (!sizeValid) {
+        if (!(w >= minimumWidth && h >= minimumHeight && w <= av.width && h <= av.height)) {
             w = Math.min(1400, av.width)
             h = Math.min(900, av.height)
         }
+        // 位置：无有效保存值则居中；再夹到屏内，保证窗口完整落在可用区域内
         let px = winState.savedX
         let py = winState.savedY
-        const havePos = px >= 0 && py >= 0
-        const posVisible = havePos && px + w > av.x && px < av.x + av.width &&
-                           py + h > av.y && py < av.y + av.height
-        if (!posVisible) {
+        if (!(px >= 0 && py >= 0)) {
             px = av.x + Math.round((av.width - w) / 2)
             py = av.y + Math.round((av.height - h) / 2)
         }
+        px = Math.max(av.x, Math.min(px, av.x + av.width - w))
+        py = Math.max(av.y, Math.min(py, av.y + av.height - h))
         window.x = px
         window.y = py
         window.width = w
@@ -71,30 +69,6 @@ ApplicationWindow {
 
         if (winState.savedMaximized)
             window.showMaximized()
-    }
-
-    // 兜底：窗口映射后若与所有屏幕都无可见交集（换屏/摘除副屏/最大化残留的屏外几何），
-    // 强制回到第一块屏居中。这能兜住 restoreGeometry 在 onCompleted 阶段拿不到真实屏的缺口。
-    function ensureOnScreen() {
-        const screens = Qt.application.screens || []
-        for (let i = 0; i < screens.length; ++i) {
-            const s = screens[i]
-            if (!s || !s.availableGeometry) continue
-            const a = s.availableGeometry
-            if (window.x + window.width > a.x && window.x < a.x + a.width &&
-                window.y + window.height > a.y && window.y < a.y + a.height)
-                return  // 与某块屏有交集，已可见
-        }
-        for (let i = 0; i < screens.length; ++i) {
-            const s = screens[i]
-            if (!s || !s.availableGeometry) continue
-            const a = s.availableGeometry
-            window.width = Math.min(window.width, a.width)
-            window.height = Math.min(window.height, a.height)
-            window.x = a.x + Math.round((a.width - window.width) / 2)
-            window.y = a.y + Math.round((a.height - window.height) / 2)
-            return
-        }
     }
 
     onClosing: {
@@ -153,8 +127,17 @@ ApplicationWindow {
                 onPressed: (mouse) => { clickPos = Qt.point(mouse.x, mouse.y) }
                 onPositionChanged: (mouse) => {
                     var delta = Qt.point(mouse.x - clickPos.x, mouse.y - clickPos.y)
-                    window.setX(window.x + delta.x)
-                    window.setY(window.y + delta.y)
+                    var nx = window.x + delta.x
+                    var ny = window.y + delta.y
+                    // 钳制：保证窗口至少有 80px 留在当前屏内，拖不出屏（预防式，避免窗口跑到屏幕外）
+                    const scr = window.screen
+                    if (scr && scr.availableGeometry) {
+                        const av = scr.availableGeometry
+                        nx = Math.max(av.x - window.width + 80, Math.min(nx, av.x + av.width - 80))
+                        ny = Math.max(av.y - window.height + 80, Math.min(ny, av.y + av.height - 80))
+                    }
+                    window.setX(nx)
+                    window.setY(ny)
                 }
                 onDoubleClicked: {
                     if (window.visibility === Window.Maximized)
@@ -278,9 +261,6 @@ ApplicationWindow {
         if (!bridge.tryAutoStart())
             welcomeWizard.open()
     }
-
-    // 窗口映射后（可见）再兜底一次：换成真实屏信息后若仍在屏外则回主屏居中
-    onVisibleChanged: if (visible) ensureOnScreen()
 
     Shortcut {
         sequence: "Ctrl+Q"
