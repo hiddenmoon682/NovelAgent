@@ -3,7 +3,7 @@
 ## [2026-08-26] ThemedSwitch 溢出修复（Fusion 下开关飞出框外）
 
 ### 修复 — GUI
-- **调试页开关「飞出框外」**：`Switch` 控件在 Fusion 样式下 `implicitWidth` 仅按空文本 + padding 计算（约 12px），不含 indicator，导致 40px 的 indicator 溢出控件；调试页 RowLayout 的 `fillWidth` 标签把开关推到行右缘，溢出的部分就渲染到内容区之外。修法：`ThemedSwitch` 显式固定 `implicitWidth/implicitHeight: 40/22` 并归零 `padding`，使 indicator 恰好落在控件内，任何样式下都不溢出（SkillPopup 的开关同样受益）。
+- **调试页开关「飞出框外」**：根因是 Qt Quick Controls `Switch` 基类在不同样式（尤其 Fusion）下对 `indicator` 的默认布局不一致——`AbstractButton` 会按 contentItem/spacing/padding 动态摆放 indicator，自定义 indicator 无显式 x/y 时被推到行右缘并溢出控件/内容区。先后尝试「固定 implicitWidth」「官方示例显式 x/y」均受基类布局干扰而不稳。最终改法：`ThemedSwitch` **改为纯自绘 `Item` + `MouseArea`**（40×22 轨道+圆点），完全自控位置/尺寸，不依赖 Switch 基类，任何样式下都稳定不溢出；对外 API 仍暴露 `checked` / `toggled(bool)`，调试页与 SkillPopup 用法不变。
 
 ## [2026-08-26] 设置页「调试」页内容边距修正
 
