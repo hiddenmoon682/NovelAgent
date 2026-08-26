@@ -158,6 +158,7 @@ if(BUILD_GUI)
         src/novelagent_qt/qml/Toast.qml
         src/novelagent_qt/qml/CreateProjectDialog.qml
         src/novelagent_qt/qml/ConfirmDialog.qml
+        src/novelagent_qt/qml/ModalDimmer.qml
         src/novelagent_qt/qml/Theme.qml
         src/novelagent_qt/qml/qmldir
     )

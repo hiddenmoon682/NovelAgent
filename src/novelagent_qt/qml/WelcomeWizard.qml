@@ -15,6 +15,9 @@ Popup {
     closePolicy: Popup.NoAutoClose
     padding: Theme.gapLg
 
+    // 模态遮罩：Qt 6 中 Overlay.modal 只能挂在 Popup 上，统一引用共享遮罩组件
+    Overlay.modal: ModalDimmer {}
+
     enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.animNormal } }
     exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.animFast } }
 
@@ -111,7 +114,7 @@ Popup {
                 id: keyField
                 Layout.fillWidth: true
                 echoMode: TextInput.Password
-                placeholderText: "sk-..."
+                placeholder: "sk-..."
             }
             Label {
                 text: "模型名"

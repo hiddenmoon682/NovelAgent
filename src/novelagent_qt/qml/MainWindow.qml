@@ -18,9 +18,10 @@ ApplicationWindow {
     Material.theme: Material.Dark
     Material.accent: Theme.accent
 
-    // 模态遮罩统一深色半透明：Material 默认遮罩偏浅色，与暖墨深色主题冲突。
-    Overlay.modal: Rectangle { color: "#99000000" }
-    Overlay.modeless: Rectangle { color: "transparent" }
+    // 模态遮罩不在此处配置：Qt 6 起 Overlay.modal / Overlay.modeless 只能挂在
+    // Popup 上，挂在 ApplicationWindow 上静默无效（历史踩坑：此处配置从未生效，
+    // 弹窗四周一直是 Material 默认偏浅的白色遮罩）。统一由各模态弹窗引用共享
+    // 遮罩组件 `Overlay.modal: ModalDimmer {}`，色值取 Theme.overlayDim。
 
     // 窗口几何持久化。不直接用别名绑定 window.x/width：最大化退出时这些值会
     // 变成整屏几何，下次启动按它恢复成"满屏假最大化"（历史 bug 根因），普通态
@@ -237,6 +238,13 @@ ApplicationWindow {
 
     SettingsDialog { id: settingsDialog }
     WelcomeWizard { id: welcomeWizard }
+
+    // UI 操作失败（删除/创建/打开项目、Provider 配置、索引重建等）统一 Toast 就地提示，
+    // 与聊天错误通道（errorOccurred → AgentPanel 对话区）分离（对齐原型：提示就地显示）
+    Connections {
+        target: bridge
+        function onUiErrorOccurred(message) { Toast.show(message) }
+    }
 
     // 启动策略：有默认 Provider + 有效 Key → 自动初始化（并恢复上次项目）；
     // 否则打开首启向导。先恢复窗口几何（onCompleted 在窗口映射前执行，无跳动）

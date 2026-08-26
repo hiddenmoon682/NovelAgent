@@ -1,5 +1,61 @@
 # Changelog
 
+## [2026-08-26] 新建项目弹窗占位符：组合态重叠 + 简介占位符溢出
+
+### 修复 — GUI
+- **输入内容时占位符不消失、与正文重叠（图一/图二）**：占位符可见条件此前绑定 `text === ""`。中文输入法（拼音/五笔等）组合态上屏中，输入框显示的是组合文（`preeditText`），而 `text`/`length` 仍为空——条件恒真，占位符一直显示，与正文重叠。改为对齐 Qt 原生占位符可见条件 `length === 0 && preeditText.length === 0`（`ThemedField.qml` 与 `CreateProjectDialog.qml` 的 descArea），组合态一输入即隐藏，杜绝重叠。
+- **小说简介占位符/输入光标「飞出框外」**：根因是 Material 样式下 `TextArea.topPadding` 会被算成 **负值**。Material 样式模板用 `topPadding = (implicitBackgroundHeight - placeholder.largestHeight)/2 + topInset` 动态推 padding，而本项目自定义的 `background: Rectangle` 没有 `implicitHeight`，使 `implicitBackgroundHeight = 0`，`topPadding` 变负——占位符/内容/输入光标（content 起点）按该 y 渲染就飘到框上方。修法两点：① 把占位符改作 **可见框 `background` 的子项、锚定左上**（`anchors.left/top` + `width` + `elide`），不再依赖控件 `topPadding`；② descArea 改用**显式 per-side padding**（`left/top/right/bottomPadding`）覆盖 Material 动态 `topPadding` 的负值，使内容与输入光标从框内 `(12,10)` 起渲染、与占位符对齐。标题框（`ThemedField`）因单行 + `verticalAlignment: AlignVCenter`、其 Material `topPadding` 本就是固定正值，故光标居中在框内、无此问题。
+
+## [2026-08-26] 项目页空态版式对齐有项目态
+
+### 修复 — GUI
+- **设置页「项目」无项目时呈上下两半割裂（图一）**：空态在「全部项目（共 N）」表头与空态文案之间插入了一条整宽分割线（`Rectangle { height: 1; color: Theme.divider }`），视觉上把面板劈成上下两半；而有项目时（图二）没有该分割线，直接是「表头 + 内容区」。删除该分割线，使空态与有项目态保持同一「表头 + 内容区」版式；空态文案改为顶对齐并填充内容区，落在列表首行应处的位置。
+
+## [2026-08-26] 软删目录重名判定修复
+
+### 修复 — C++
+- **删掉项目后无法再以同名创建（"同名项目已存在"）**：`createProjectAt` 重名判定枚举 `listProjects`（含软删目录）后直接 `peekTitle` 比对，而软删目录（目录名带"（已删除）"）在列表中被过滤、用户不可见，却仍占着标题挡住同名再创建。重名判定循环补 `isSoftDeleted` 跳过（`allProjects` 早已过滤，仅此处在创建路径漏了）。
+
+## [2026-08-26] 删除项目软删修复 + Toast/确认弹窗健壮性
+
+### 修复 — C++
+- **软删失败（"删除失败（目录重命名出错）"）根因**：`deleteProject` 原顺序是**先 `fs::rename` 目录、后 `rebuildApp`**——当前项目被删除时 Agent/SqliteStore 仍持有项目内 `novel.db` 等文件句柄，Windows 上重命名含被打开文件的目录必失败。改为**先重建为无项目状态（释放句柄）、再重命名目录**；非当前项目删除不受影响。错误信息附带 `ec.message()` 便于诊断。
+
+### 修复 — GUI
+- **删除确认弹窗显示字面量「%1」**：`ConfirmDialog` 替换逻辑依赖 `onTextChanged` 事件，但 `SettingsDialog` 先设 `messageText` 后设 `detailName`——text 变化时 detailName 尚空、替换被跳过，`Component.onCompleted` 又绑回原文本。改为纯绑定计算（`text:` 内联替换 + `escapeHtml` 防御转义），不再依赖事件时序。
+- **Toast QML 警告（Toast.qml:15 读取 null.width）**：单例 QtObject 上下文里 `Overlay.overlay` attached property 求值为 null（历史 QML 警告根因）；`show()` 在调用点取 overlay、防御性判空返回，popup 的 x/y 改用 `pop.parent` 定位。删除失败触发 Toast 时不再崩溃，失败原因（如"Agent 正在生成中"）能正常显示。
+
+## [2026-08-26] UI 操作失败与聊天错误通道分离（C++ + QML）
+
+### 修复 — GUI
+- **删除/创建/打开项目失败不再弹进对话区**：UI 操作失败此前全部复用 `errorOccurred`（聊天错误通道），被 `AgentPanel` 当作聊天消息「⚠ 删除失败...」追加进对话记录（原型里提示应就地显示，不该污染聊天流）。新增专用信号 `uiErrorOccurred(QString)` 承接 UI 操作失败（删除/创建/打开项目、Provider 删除/初始化、重建索引前置/失败、读章节失败、技能切换），`MainWindow` 全局接该信号 → `Toast` 顶部轻提示；`errorOccurred` 只保留聊天/Agent 运行时错误（发送消息前置、会话操作、runAgent 异常、自动索引、并发/上下文溢出）。
+
+## [2026-08-26] 修复中文路径文件读写崩溃（C++）
+
+### 修复 — C++
+- **创建中文项目名直接崩溃（"无法创建临时文件: ...<乱码>.tmp.0"）**：Windows（MSYS2 MinGW GCC）上 `std::ifstream`/`std::ofstream` 的窄 `std::string` 构造按**系统 ANSI 代码页**（本机 GBK/936）解释路径，而源码/路径是 UTF-8——中文路径打开失败（目录用 `std::filesystem` 建成功、窄流入流失败，即编码不一致）。修法：`FileUtils::readText`/`writeText` 与 `SqliteStore::hasValidSqliteHeader` 从窄 string 构造流时先包成 `std::filesystem::path` 变量（不可直接 `ofstream(fs::path(p))`，会触发 most-vexing-parse）；其余传 `fs::path` 表达式的调用（`BuiltinSkills`/`SkillLoader`/`SkillTools`）走 C++17 path 重载本就安全。
+
+## [2026-08-25] QML 修复与规范
+
+### 修复 — GUI
+- **模型列表整列白块（顽疾根因）**：delegate 颜色绑定引用未定义 id `rowHover`（应为 `modelRowHover`）→ 绑定静默失效、`Rectangle.color` 取默认白色；修正引用后恢复深色主题渲染。
+- **侧边栏项目展开面板文字叠字**：卡片 `Rectangle` 无高度绑定致塌陷为 0，内容溢出叠画；改显式高度跟随内部布局内容。
+- **设置弹窗项目空态 QML 警告**：布局容器子项误用 `anchors.centerIn`（undefined behavior），改 `Layout.*` + 文本对齐。
+- **设置弹窗左 rail 导航重叠**：`Row` + 整行宽 `Item`（`width: railRow.width`）令「模型/项目/调试」横排溢出——仅第一项可见，第二项"项"字戳进右侧「模型列表」表头造成控件重叠与表头文字错乱；改 `Column` 竖直堆叠（对照 `期望效果图-3`）。
+- **模型页新增 Provider 标识字段（对齐 `期望效果图-3`）**：把「命名」降级为仅编辑**显示名**，新增只读的 **Provider** 字段展示稳定标识（map 键）。`QmlBridge::providerInfo` 的 `isDefault` 改用标识（键）判定、`saveProvider` 的 `rename_to` 不再做 map 键迁移（重命名不再改动 default_provider 引用与运行中 Agent 的 provider 名），列表项 `title`=显示名、`key`=标识（QML 中 `id` 为保留关键字，故角色名用 `key`）。
+- **对齐原型间距**（对照三组期望/实际截图）：设置弹窗去标题区（rail 通顶）、rail 选中底改 `bgElevated`、内容区左右 20、两列表头 32、模型行右侧 10、滑块手柄 14px、滑块行间距 12、项目行手风琴间距（36 高 + 4px 边距）、「命名」字段顶距归零、新建弹窗标题上距 18 / 内容底 12 / 错误行零占位、确认弹窗底部 12、侧边栏面板整块卡片化（radius 10、padding 4、上距 6）、chevron 20px、「＋」14px、面板分隔线恒显。
+- **侧边栏底部工具栏布局化**：消除 `anchors.rightMargin: gapMd + 32 + gapSm` 手工推算坐标，改 `RowLayout` + 弹性空位。
+- **ThemedField 占位符重做**：放弃 TextField 默认 `placeholderText` 机制（其在密码 `echoMode` + 本项目字体垂直对齐下出现「占位符与内容重叠、不随内容隐藏、竖直溢出控件边界」的缺陷），改为自绘占位 `Label`——仅 `text==""` 时显示、垂直居中、宽度=内容区并省略、不拦截鼠标；调用方属性由 `placeholderText` 改为 `placeholder`（`SettingsDialog`/`WelcomeWizard`/`CreateProjectDialog`）。
+- **Temperature 滑块圆形手柄飞出**：`handle` 的 `y` 用 `parent.availableHeight`（可为 NaN）、`x` 用自引用 `parent.handle.width`，导致手柄错位/飞出；改为确定的 `tempSlider.height`/`width`，并补一条 **4px `divider` 轨道**（对齐 `settings-mockup.html` 的 `.slider`）。
+- **模态遮罩偏白**：`Overlay.modal` 改 `Qt.rgba(0,0,0,0.55)`（对齐 `app-mockup.html` 的 `rgba(0,0,0,0.55)`，避免十六进制 alpha 位误解析），并给遮罩矩形加 `anchors.fill: parent`——否则自定义矩形默认尺寸 0×0 不铺满窗口，弹窗周围无降暗（历史问题）。
+- **新建弹窗「小说简介」TextArea 占位符**：同 ThemedField 缺陷（默认占位符错位/溢出），改手动占位 `Label`（`text==""` 时显示、置左上、不拦截鼠标）。
+- **ThemedSwitch 对齐 mockup**：`app-mockup.html` 的 `.switch` 为 40×22 圆角轨（off=divider/on=accent）+ 18px 圆点（off=text-secondary/on=#f5efe2）；原 36×20/14px 不符，已按 mockup 重做。
+- **设置弹窗「项目」页对齐 `app-mockup.html`**（按需求完全对齐）：去掉「固定目录…/在资源管理器中打开」行与「打开其他目录中的项目…」弱入口，只保留项目列表（置顶左对齐空态 + 行选中朱砂标条/当前徽标/悬停打开）+ 右下角「删除（未选中置灰）/新增」；顺带移除已无引用的 `openFolderDlg`（`FolderDialog`）与未用 `import QtQuick.Dialogs`。
+- **模态遮罩仍偏白（根因修正）**：Qt 6 中 `Overlay.modal`/`Overlay.modeless` 只能挂在 Popup 上（官方文档：The property can be attached to any popup），此前挂在 `MainWindow`（ApplicationWindow）上的遮罩配置静默无效——白色即 Material 默认偏浅遮罩；新建共享组件 `ModalDimmer`（色值取 `Theme.overlayDim`，60% 黑），由 `SettingsDialog`/`WelcomeWizard`/`CreateProjectDialog`/`ConfirmDialog` 四个模态弹窗以 `Overlay.modal: ModalDimmer {}` 引用。
+
+### 规则
+- `CLAUDE.md` 新增「QML 专项规则」：**布局优先**（禁止 anchors + 数学表达式定位；布局容器子项禁用 anchors；布局内 Rectangle 必须显式高度）、**QML 警告零容忍**（引用未定义 id = 绑定静默失效取默认值，验收须日志无警告）、**样式统一从 Theme 档位取**。
+
 ## [2026-08-25] QML 前端按 HTML 原型重构
 
 ### 增强 — GUI

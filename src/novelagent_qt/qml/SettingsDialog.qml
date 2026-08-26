@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Dialogs
 
 // SettingsDialog — 墨染设置（左右式，对齐 settings-mockup 原型）。
 // 左 rail：模型 / 项目 / 调试；右内容区随选中切换。
@@ -14,6 +13,9 @@ Popup {
     height: 520
     modal: true
     padding: 0
+
+    // 模态遮罩：Qt 6 中 Overlay.modal 只能挂在 Popup 上，统一引用共享遮罩组件
+    Overlay.modal: ModalDimmer {}
 
     enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.animNormal } }
     exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.animFast } }
@@ -38,41 +40,9 @@ Popup {
         projectsPage.reload()
     }
 
-    // 顶栏：标题 + 关闭按钮
+    // ── 左右主体：左 rail + 右内容（对齐原型：无标题区，rail 通顶；Esc 关闭）──
     RowLayout {
-        anchors { top: parent.top; left: parent.left; right: parent.right; topMargin: Theme.gapLg; leftMargin: Theme.gapAmple; rightMargin: Theme.gapSm }
-        Label {
-            text: "墨染设置"
-            font.family: Theme.fontDisplay
-            font.pixelSize: Theme.sizeTitle
-            font.weight: Font.Bold
-            color: Theme.textPrimary
-            Layout.fillWidth: true
-        }
-        Rectangle {
-            width: 28; height: 28
-            radius: Theme.radiusSm
-            color: closeMa.containsMouse ? Theme.bgHover : "transparent"
-            Behavior on color { ColorAnimation { duration: Theme.animFast } }
-            Label {
-                anchors.centerIn: parent
-                text: "✕"
-                font.pixelSize: 12
-                color: closeMa.containsMouse ? Theme.textPrimary : Theme.textSecondary
-            }
-            MouseArea {
-                id: closeMa
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.close()
-            }
-        }
-    }
-
-    // ── 左右主体：左 rail + 右内容 ──
-    RowLayout {
-        anchors { top: parent.top; topMargin: 52; bottom: parent.bottom; left: parent.left; right: parent.right }
+        anchors.fill: parent
         spacing: 0
 
         // 左 rail（分类导航）
@@ -87,11 +57,12 @@ Popup {
                 color: Theme.divider
             }
 
-            Row {
+            // 左 rail 导航：竖直堆叠「模型/项目/调试」。用 Row + 整行宽 Item 会横排溢出，
+            // 只有第一项可见、第二项"项"字戳进右侧内容区（历史重叠 bug 根因），故改为 Column。
+            Column {
                 id: railRow
                 property int currentIndex: 0
-                anchors { top: parent.top; topMargin: Theme.gapRelaxed; left: parent.left; right: parent.right }
-                height: 36 * 3
+                anchors { top: parent.top; topMargin: Theme.gapRelaxed; left: parent.left; right: parent.right; leftMargin: Theme.gapSm; rightMargin: Theme.gapSm }
                 spacing: 0
 
                 Repeater {
@@ -104,7 +75,7 @@ Popup {
                         Rectangle {
                             anchors.fill: parent
                             radius: Theme.radiusSm
-                            color: railRow.currentIndex === index ? Theme.accentTint : "transparent"
+                            color: railRow.currentIndex === index ? Theme.bgElevated : "transparent"
                         }
                         // 左侧朱砂标条
                         Rectangle {
@@ -158,7 +129,10 @@ Popup {
                             selected = def
                         for (var i = 0; i < names.length; ++i) {
                             var info = bridge.providerInfo(names[i])
-                            modelListModel.append({ name: names[i],
+                            // key = Provider 标识（map 键，稳定）；title = 显示名（命名）
+                            // 注意：QML 中 id 是保留关键字，角色名用 key
+                            modelListModel.append({ key: names[i],
+                                                    title: info.name,
                                                     isDefault: info.isDefault,
                                                     hasKey: info.hasKey })
                             if (selected === names[i])
@@ -175,6 +149,8 @@ Popup {
                     function loadFields() {
                         var info = bridge.providerInfo(selectedProvider)
                         nameField.text = info.name || ""
+                        // Provider 标识：稳定只读，展示 selectedProvider（map 键）
+                        providerField.text = selectedProvider
                         apiKeyField.text = info.api_key || ""
                         modelField.text = info.model || ""
                         baseUrlField.text = info.base_url || ""
@@ -193,33 +169,31 @@ Popup {
                     function save() {
                         if (selectedProvider === "") return
                         var vals = collect()
-                        // 命名框内容变化 → 改名
+                        // 命名框内容变化 → 仅改显示名（Provider 标识 selectedProvider 保持稳定）
                         var newName = nameField.text.trim()
                         if (newName !== selectedProvider && newName !== "")
                             vals["rename_to"] = newName
                         if (bridge.saveProvider(selectedProvider, vals)) {
-                            if (newName !== selectedProvider && newName !== "")
-                                selectedProvider = newName
                             reload()
-                            Toast.show("已保存模型「" + newName + "」")
+                            Toast.show("已保存模型「" + (newName !== "" ? newName : selectedProvider) + "」")
                         } else {
-                            Toast.show("保存失败（目标名称已存在）")
+                            Toast.show("保存失败")
                         }
                     }
 
                     function setDefault() {
                         if (selectedProvider === "") return
                         save()
+                        var label = nameField.text.trim() !== "" ? nameField.text.trim() : selectedProvider
                         if (bridge.initialize(selectedProvider)) {
-                            Toast.show("已将「" + selectedProvider + "」设为默认模型")
+                            Toast.show("已将「" + label + "」设为默认模型")
                         } else {
                             Toast.show("启用失败：请检查 API Key 是否有效")
                         }
                     }
 
                     RowLayout {
-                        anchors.fill: parent
-                        anchors.margins: Theme.gapSpacious
+                        anchors { fill: parent; topMargin: Theme.gapSpacious; bottomMargin: Theme.gapSpacious; leftMargin: Theme.gapAmple; rightMargin: Theme.gapAmple }
                         spacing: Theme.gapRelaxed
 
                         // ── 左：模型列表 ──
@@ -230,7 +204,7 @@ Popup {
 
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 36
+                                Layout.preferredHeight: 32
                                 color: Theme.bgField
                                 radius: Theme.radiusSm
                                 border.width: 1
@@ -287,18 +261,19 @@ Popup {
                                     clip: true
 
                                     delegate: Rectangle {
-                                        required property string name
+                                        required property string key
+                                        required property string title
                                         required property bool isDefault
                                         required property bool hasKey
                                         width: modelList.width
                                         height: 36
                                         radius: Theme.radiusSm
-                                        color: rowHover.hovered ? Theme.bgHover
-                                             : (name === modelsPage.selectedProvider ? Theme.accentTint : "transparent")
+                                        color: modelRowHover.hovered ? Theme.bgHover
+                                             : (key === modelsPage.selectedProvider ? Theme.accentTint : "transparent")
 
                                         // 选中标条
                                         Rectangle {
-                                            visible: name === modelsPage.selectedProvider
+                                            visible: key === modelsPage.selectedProvider
                                             anchors { left: parent.left; top: parent.top; bottom: parent.bottom; topMargin: 7; bottomMargin: 7 }
                                             width: Theme.markBar
                                             radius: Theme.markBar / 2
@@ -311,19 +286,19 @@ Popup {
                                             anchors.fill: parent
                                             cursorShape: Qt.PointingHandCursor
                                             onClicked: {
-                                                modelsPage.selectedProvider = name
+                                                modelsPage.selectedProvider = key
                                                 modelsPage.loadFields()
                                             }
                                         }
 
                                         RowLayout {
-                                            anchors { left: parent.left; leftMargin: Theme.gapMd; right: parent.right; rightMargin: Theme.gapTight; verticalCenter: parent.verticalCenter }
+                                            anchors { left: parent.left; leftMargin: Theme.gapMd; right: parent.right; rightMargin: Theme.gapCozy; verticalCenter: parent.verticalCenter }
                                             spacing: Theme.gapTight
                                             Label {
-                                                text: name
+                                                text: title
                                                 font.family: Theme.fontUi
                                                 font.pixelSize: Theme.sizeUi
-                                                color: name === modelsPage.selectedProvider ? Theme.textPrimary : Theme.textSecondary
+                                                color: key === modelsPage.selectedProvider ? Theme.textPrimary : Theme.textSecondary
                                                 elide: Text.ElideRight
                                                 Layout.fillWidth: true
                                             }
@@ -357,15 +332,25 @@ Popup {
                                                     hoverEnabled: true
                                                     cursorShape: Qt.PointingHandCursor
                                                     onClicked: {
-                                                        if (bridge.deleteProvider(name)) {
+                                                        if (bridge.deleteProvider(key)) {
                                                             modelsPage.reload()
-                                                            Toast.show("已删除模型「" + name + "」")
+                                                            Toast.show("已删除模型「" + title + "」")
                                                         }
                                                     }
                                                 }
                                             }
                                         }
                                     }
+                                }
+
+                                // 空态（原型：暂无模型，点击右上角 ＋ 添加。）
+                                Label {
+                                    anchors.centerIn: parent
+                                    visible: modelListModel.count === 0
+                                    text: "暂无模型，点击右上角 ＋ 添加。"
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: Theme.sizeNote
+                                    color: Theme.textFaint
                                 }
                             }
                         }
@@ -384,10 +369,18 @@ Popup {
                                 Layout.bottomMargin: Theme.gapTight
                             }
 
-                            FieldLabel { text: "命名" }
+                            FieldLabel { text: "命名"; Layout.topMargin: 0 }
                             ThemedField {
                                 id: nameField
                                 Layout.fillWidth: true
+                            }
+
+                            // Provider：稳定标识（map 键），只读展示，与可改的显示名（命名）分离
+                            FieldLabel { text: "Provider" }
+                            ThemedField {
+                                id: providerField
+                                Layout.fillWidth: true
+                                readOnly: true
                             }
 
                             FieldLabel { text: "API Key" }
@@ -395,7 +388,7 @@ Popup {
                                 id: apiKeyField
                                 Layout.fillWidth: true
                                 echoMode: TextInput.Password
-                                placeholderText: "sk-..."
+                                placeholder: "sk-..."
                             }
 
                             FieldLabel { text: "模型名" }
@@ -412,11 +405,38 @@ Popup {
 
                             RowLayout {
                                 Layout.topMargin: Theme.gapRelaxed
+                                spacing: Theme.gapMd
                                 FieldLabel { text: "Temperature"; Layout.topMargin: 0 }
                                 Slider {
                                     id: tempSlider
                                     Layout.fillWidth: true
                                     from: 0.0; to: 2.0; stepSize: 0.1
+                                    implicitHeight: 20
+                                    // 对齐原型（settings-mockup/.slider）：4px 轨道(divider) + 14px 朱砂圆点
+                                    // 背景：控制层会把 background 铺满控件，此处用透明底 + 内部细轨道，
+                                    //       轨道宽=availableWidth，逐点居中对齐手柄的移动范围。
+                                    background: Rectangle {
+                                        color: "transparent"
+                                        Rectangle {
+                                            x: tempSlider.leftPadding
+                                            width: tempSlider.availableWidth
+                                            height: 4
+                                            radius: 2
+                                            color: Theme.divider
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+                                    }
+                                    // 手柄：14px 朱砂圆点，垂直居中。用确定的 tempSlider.height/width，
+                                    //       避免 parent.availableHeight（可为 NaN）与自引用 parent.handle.width。
+                                    handle: Rectangle {
+                                        width: 14
+                                        height: 14
+                                        radius: 7
+                                        color: tempSlider.pressed ? Qt.lighter(Theme.accent, 1.12) : Theme.accent
+                                        x: Math.round(tempSlider.leftPadding + tempSlider.visualPosition * (tempSlider.availableWidth - width))
+                                        y: Math.round((tempSlider.height - height) / 2)
+                                        Behavior on color { ColorAnimation { duration: Theme.animFast } }
+                                    }
                                 }
                                 Label {
                                     text: tempSlider.value.toFixed(1)
@@ -487,39 +507,13 @@ Popup {
                     }
 
                     ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: Theme.gapSpacious
+                        anchors { fill: parent; topMargin: Theme.gapSpacious; bottomMargin: Theme.gapSpacious; leftMargin: Theme.gapAmple; rightMargin: Theme.gapAmple }
                         spacing: 0
 
-                        // 固定目录信息
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Label {
-                                text: "固定目录："
-                                font.family: Theme.fontUi
-                                font.pixelSize: Theme.sizeNote
-                                color: Theme.textFaint
-                            }
-                            Label {
-                                text: bridge.projectsDir()
-                                font.family: Theme.fontUi
-                                font.pixelSize: Theme.sizeNote
-                                color: Theme.textFaint
-                                elide: Text.ElideMiddle
-                                Layout.fillWidth: true
-                            }
-                            ThemedButton {
-                                text: "在资源管理器中打开"
-                                kind: "text"
-                                onClicked: Qt.openUrlExternally("file:///" + bridge.projectsDir())
-                            }
-                        }
-
-                        // 全部项目列表
+                        // 全部项目列表（对齐原型 .proj-list）
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            Layout.topMargin: Theme.gapMd
                             color: Theme.bgField
                             radius: Theme.radiusSm
                             border.width: 1
@@ -532,7 +526,7 @@ Popup {
 
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 36
+                                    Layout.preferredHeight: 32
                                     Layout.leftMargin: Theme.gapCozy
                                     Layout.rightMargin: Theme.gapCozy
                                     Label {
@@ -543,21 +537,41 @@ Popup {
                                         Layout.fillWidth: true
                                     }
                                 }
-                                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
+
+                                // 空态：与列表同布局（对齐原型 .proj-empty；置于列表之前，空时可见）
+                                // 无项目时同样保持「表头 + 内容区」单一区域，不额外插入分割线，
+                                // 避免出现图一那种上下两半的割裂视觉 —— 与有项目时的版式保持一致。
+                                Label {
+                                    visible: projModel.count === 0
+                                    text: "暂无项目，点击下方「新增」创建。"
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: Theme.sizeNote
+                                    color: Theme.textFaint
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    Layout.topMargin: 20
+                                    Layout.leftMargin: 12
+                                    horizontalAlignment: Text.AlignLeft
+                                    verticalAlignment: Text.AlignTop
+                                }
 
                                 ListView {
                                     Layout.fillWidth: true
                                     Layout.fillHeight: true
+                                    visible: projModel.count > 0
                                     clip: true
+                                    spacing: 4
                                     model: ListModel { id: projModel }
                                     ScrollBar.vertical: ScrollBar { width: 4; policy: ScrollBar.AsNeeded; background: Rectangle { color: "transparent" } }
 
+                                    // 手风琴行：原型 .proj-row margin 2px 4px（水平 4 + 行序 2*2）
                                     delegate: Rectangle {
                                         required property string title
                                         required property string path
                                         required property bool isCurrent
-                                        width: ListView.view.width
-                                        height: 38
+                                        x: 4
+                                        width: ListView.view.width - 8
+                                        height: 36
                                         radius: Theme.radiusSm
                                         color: rowHover.hovered ? Theme.bgHover
                                              : (path === projectsPage.selectedProject ? Theme.accentTint : "transparent")
@@ -629,10 +643,11 @@ Popup {
                                         }
                                     }
                                 }
+
                             }
                         }
 
-                        // 底部操作
+                        // 底部操作（对齐原型 .proj-page-actions）
                         RowLayout {
                             Layout.fillWidth: true
                             Layout.topMargin: Theme.gapMd
@@ -661,15 +676,6 @@ Popup {
                                 text: "新增"
                                 onClicked: createProjectDialog.open()
                             }
-                        }
-
-                        // 兼容旧目录项目：弱化入口
-                        ThemedButton {
-                            text: "打开其他目录中的项目…"
-                            kind: "text"
-                            Layout.alignment: Qt.AlignLeft
-                            Layout.topMargin: Theme.gapTight
-                            onClicked: openFolderDlg.open()
                         }
                     }
                 }
@@ -710,6 +716,8 @@ Popup {
                 projectsPage.reload()
                 Toast.show("已删除项目")
             }
+            // 失败时 C++ 已 emit uiErrorOccurred → MainWindow 全局 Toast 提示，
+            // 此处不再重复提示，仅保持列表不刷新（软删未发生的原状）
         }
     }
 
@@ -717,14 +725,5 @@ Popup {
     Connections {
         target: bridge
         function onProjectChanged() { projectsPage.reload() }
-    }
-
-    FolderDialog {
-        id: openFolderDlg
-        title: "选择小说项目目录"
-        onAccepted: {
-            if (bridge.openProject(selectedFolder.toString()))
-                root.close()
-        }
     }
 }

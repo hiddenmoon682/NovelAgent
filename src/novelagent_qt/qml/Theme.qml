@@ -28,6 +28,9 @@ QtObject {
     // ── 分割线 ──
     readonly property color divider:       "#453d30"
 
+    // ── 弹窗遮罩 ──
+    readonly property color overlayDim: "#99000000"   // 模态遮罩 60% 黑（覆盖 Material 默认偏浅遮罩）
+
     // ── 字体 ──
     readonly property string fontDisplay:  "Noto Serif SC"       // 标题/正文（衬线）
     readonly property string fontUi:       "Microsoft YaHei UI"  // UI 控件（无衬线）

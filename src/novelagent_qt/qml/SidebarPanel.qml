@@ -79,7 +79,7 @@ Rectangle {
                     Label {
                         text: "\uE70D"  // Segoe MDL2 Assets ChevronDown
                         font.family: "Segoe MDL2 Assets"
-                        font.pixelSize: 10
+                        font.pixelSize: 20
                         color: Theme.textFaint
                         rotation: root.projectListOpen ? 180 : 0
                         Behavior on rotation { NumberAnimation { duration: Theme.animFast } }
@@ -98,14 +98,23 @@ Rectangle {
             }
         }
 
-        // ── 最近项目展开面板（手风琴；行样式与会话列表一致）──
-        ColumnLayout {
+        // ── 最近项目展开面板（手风琴）：整块圆角卡片（原型 .proj-panel）──
+        Rectangle {
             id: projPanel
             Layout.fillWidth: true
             Layout.leftMargin: Theme.gapSm
             Layout.rightMargin: Theme.gapSm
             visible: root.projectListOpen
-            spacing: 2
+            radius: Theme.radiusMd
+            color: Theme.bgElevated
+            border.width: 1
+            border.color: Theme.divider
+
+            ColumnLayout {
+                id: panelCol
+                anchors { left: parent.left; right: parent.right; top: parent.top }
+                anchors.margins: Theme.gapXs
+                spacing: 2
 
             ListView {
                 id: projList
@@ -131,7 +140,7 @@ Rectangle {
                     required property string path
                     required property bool isCurrent
                     width: projList.width
-                    height: 36
+                    height: 34
                     radius: Theme.radiusSm
                     color: projRowHover.hovered ? Theme.bgHover
                          : (isCurrent ? Theme.accentTint : "transparent")
@@ -161,7 +170,7 @@ Rectangle {
                     }
 
                     RowLayout {
-                        anchors { fill: parent; leftMargin: Theme.gapMd; rightMargin: Theme.gapSm }
+                        anchors { fill: parent; leftMargin: Theme.gapTight; rightMargin: Theme.gapSm }
                         spacing: Theme.gapSm
                         Label {
                             text: title
@@ -176,7 +185,7 @@ Rectangle {
                             text: "\uE74D"
                             visible: projRowHover.hovered
                             font.family: "Segoe MDL2 Assets"
-                            font.pixelSize: 12
+                            font.pixelSize: 14
                             color: delMa.containsMouse ? Theme.warning : Theme.textFaint
                             MouseArea {
                                 id: delMa
@@ -197,7 +206,7 @@ Rectangle {
             // 空态：没有任何最近项目（对齐原型"暂无最近项目"）
             Label {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 32
+                Layout.preferredHeight: 34
                 visible: projModel.count === 0
                 text: "暂无最近项目"
                 font.family: Theme.fontUi
@@ -207,10 +216,12 @@ Rectangle {
                 leftPadding: Theme.gapTight
             }
 
+            // 面板分隔线（原型 .panel-divider margin 4px 0，空态也保留）
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 1
-                visible: projModel.count > 0
+                Layout.topMargin: Theme.gapXs
+                Layout.bottomMargin: Theme.gapXs
                 color: Theme.divider
             }
 
@@ -231,7 +242,7 @@ Rectangle {
                         Label {
                             text: "＋"
                             font.family: Theme.fontUi
-                            font.pixelSize: Theme.sizeNote
+                            font.pixelSize: 14
                             color: Theme.accent
                         }
                         Label {
@@ -252,6 +263,10 @@ Rectangle {
                     root.reloadProjects()
                 }
             }
+            }
+
+            // 高度跟随内部内容（ColumnLayout 未锚定底部 → 高度=内容 implicit）
+            height: panelCol.implicitHeight + Theme.gapXs * 2
         }
 
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
@@ -393,20 +408,26 @@ Rectangle {
             height: 44
             color: "transparent"
 
-            // 左侧利用空位弱化展示版本号
-            Label {
-                anchors { left: parent.left; leftMargin: Theme.gapLg; verticalCenter: parent.verticalCenter }
-                text: "v" + Qt.application.version
-                font.family: Theme.fontUi
-                font.pixelSize: Theme.sizeCaption
-                color: Theme.textFaint
-            }
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Theme.gapLg
+                anchors.rightMargin: Theme.gapMd
+                spacing: Theme.gapSm
 
-            // 重建索引：强制全量重嵌入（索引损坏/换嵌入模型后的自愈入口）
-            Rectangle {
-                anchors { right: parent.right; rightMargin: Theme.gapMd + 32 + Theme.gapSm; verticalCenter: parent.verticalCenter }
-                width: 32
-                height: 32
+                // 左侧利用空位弱化展示版本号
+                Label {
+                    text: "v" + Qt.application.version
+                    font.family: Theme.fontUi
+                    font.pixelSize: Theme.sizeCaption
+                    color: Theme.textFaint
+                }
+
+                Item { Layout.fillWidth: true }
+
+                // 重建索引：强制全量重嵌入（索引损坏/换嵌入模型后的自愈入口）
+                Rectangle {
+                    Layout.preferredWidth: 32
+                    Layout.preferredHeight: 32
                 radius: Theme.radiusSm
                 color: rebuildMa.containsMouse && !bridge.busy ? Theme.bgHover : "transparent"
                 opacity: bridge.busy ? 0.4 : 1.0
@@ -431,12 +452,11 @@ Rectangle {
                 }
             }
 
-            Rectangle {
-                anchors { right: parent.right; rightMargin: Theme.gapMd; verticalCenter: parent.verticalCenter }
-                width: 32
-                height: 32
-                radius: Theme.radiusSm
-                color: settingsMa.containsMouse ? Theme.bgHover : "transparent"
+                Rectangle {
+                    Layout.preferredWidth: 32
+                    Layout.preferredHeight: 32
+                    radius: Theme.radiusSm
+                    color: settingsMa.containsMouse ? Theme.bgHover : "transparent"
 
                 ToolTip.visible: settingsMa.containsMouse
                 ToolTip.text: "设置"
@@ -455,6 +475,7 @@ Rectangle {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: root.settingsRequested()
+                }
                 }
             }
         }

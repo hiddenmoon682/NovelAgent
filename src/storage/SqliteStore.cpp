@@ -49,7 +49,9 @@ std::string nowTimestamp() {
 // 校验 path 是否为合法 SQLite 库：读取头部 16 字节魔数 "SQLite format 3\0"。
 // 文件不存在或读取不足 16 字节 → 非法（供损坏自愈判定使用）。
 bool hasValidSqliteHeader(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
+    // 用 fs::path 构造流：Windows ANSI 代码页无法解释 UTF-8 中文路径（见 FileUtils 同款注释）
+    const std::filesystem::path p(path);
+    std::ifstream f(p, std::ios::binary);
     if (!f) return false;
     char buf[16];
     f.read(buf, sizeof(buf));

@@ -159,7 +159,11 @@ signals:
     void toolCallStarted(const QString& sessionId, const QString& toolName);
     void toolCallFinished(const QString& sessionId, const QString& toolName, bool ok);
     void responseComplete(const QString& sessionId, const QString& fullText);
+    // 聊天/Agent 运行时错误（发送消息失败、生成异常等），由 AgentPanel 展示在对话区
     void errorOccurred(const QString& message);
+    // UI 操作失败（删除/创建/打开项目、Provider 配置、重建索引、读取章节等），
+    // 与聊天错误通道分离：由全局 Toast 就地提示，不进对话区（对齐原型：提示就地显示）
+    void uiErrorOccurred(const QString& message);
     // 新会话已创建或已切换会话，QML 据此重建聊天流
     void sessionReset();
     // 会话列表变化（新建/切换/删除/标题自动提取后），侧栏据此刷新

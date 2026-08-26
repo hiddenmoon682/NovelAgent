@@ -17,7 +17,11 @@ std::atomic<unsigned long long> g_tmp_seq{0};
 }  // namespace
 
 std::string readText(const std::string& path) {
-    std::ifstream f(path);
+    // 用 std::filesystem::path 构造流：Windows 下窄字符 ifstream/ofstream 按 ANSI 代码页
+    // （GBK）解释路径，UTF-8 中文路径会打开失败（历史 bug：创建中文项目名时 "无法创建临时文件"）；
+    // path 重载内部走 UTF-8→宽字符转换，可正确读写中文路径。
+    const fs::path p(path);
+    std::ifstream f(p);
     if (!f) return {};
 
     std::ostringstream buf;
@@ -41,8 +45,10 @@ void writeText(const std::string& path, const std::string& content) {
     const std::string tmp_path = path + ".tmp." + std::to_string(seq);
 
     // 1) 写入临时文件。若打开失败，抛异常让上层统一处理。
+    // ofstream 用 fs::path 构造，避开 Windows ANSI 代码页对 UTF-8 中文路径的破坏。
     {
-        std::ofstream f(tmp_path, std::ios::binary | std::ios::trunc);
+        const fs::path tmp(tmp_path);
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) {
             throw std::runtime_error("无法创建临时文件: " + tmp_path);
         }
