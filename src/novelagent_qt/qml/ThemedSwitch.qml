@@ -7,6 +7,16 @@ import QtQuick.Controls
 Switch {
     id: control
 
+    // 显式固定为 indicator 尺寸并归零 padding：Fusion 样式下 Switch 的 implicitWidth 只按
+    // 空文本 + padding 计算（约 12px），不含 indicator，导致 40px 的 indicator 溢出控件，
+    // 在 RowLayout 的 fillWidth 标签把它推到行右缘时，溢出的部分就渲染到内容区之外
+    // （调试页开关"飞出框外"根因）。显式声明后 indicator 恰好落在控件内，任何样式均不溢出。
+    implicitWidth: 40
+    implicitHeight: 22
+    padding: 0
+    leftPadding: 0
+    rightPadding: 0
+
     indicator: Rectangle {
         implicitWidth: 40
         implicitHeight: 22

@@ -1,5 +1,10 @@
 # Changelog
 
+## [2026-08-26] ThemedSwitch 溢出修复（Fusion 下开关飞出框外）
+
+### 修复 — GUI
+- **调试页开关「飞出框外」**：`Switch` 控件在 Fusion 样式下 `implicitWidth` 仅按空文本 + padding 计算（约 12px），不含 indicator，导致 40px 的 indicator 溢出控件；调试页 RowLayout 的 `fillWidth` 标签把开关推到行右缘，溢出的部分就渲染到内容区之外。修法：`ThemedSwitch` 显式固定 `implicitWidth/implicitHeight: 40/22` 并归零 `padding`，使 indicator 恰好落在控件内，任何样式下都不溢出（SkillPopup 的开关同样受益）。
+
 ## [2026-08-26] 设置页「调试」页内容边距修正
 
 ### 修复 — GUI
