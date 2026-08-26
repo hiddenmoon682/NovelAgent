@@ -1,5 +1,12 @@
 # Changelog
 
+## [2026-08-26] 修复窗口启动时落到屏幕外（程序运行但页面不可见）
+
+### 修复 — GUI
+- **窗口恢复几何后跑到屏幕外（`setGeometry: ... +329-65091 → +329-32768`，页面看不见）**：`MainWindow.restoreGeometry()` 在 `Component.onCompleted`（窗口映射前）执行，此时 `window.screen`/`availableGeometry` 可能尚未指向真实屏（换屏/摘除副屏/最大化残留），按错误的屏信息做尺寸/位置夹取，可能把窗口铺到屏幕外（尺寸 2100×1350、Y 被 Windows 夹到 -32768）。
+  - 修法两处：① `restoreGeometry()` 加屏信息回退——`window.screen` 无可靠可用几何则回落主屏，仍无则只按默认尺寸、不动位置；② 新增 `ensureOnScreen()` 兜底：窗口映射后（`onVisibleChanged: visible`）检查是否与任一屏有可见交集，若全屏外则按第一块屏夹尺寸并居中。这样无论在 onCompleted 阶段拿到的屏信息是否可靠，窗口都会落到可见屏上。
+  - 说明：这正是 AGENTS.md 记录的"窗口几何持久化"历史坑（满屏假最大化/屏外恢复）的补强；旧键名重命名已作废一批越界残留，本次为屏信息时序缺口补的最后一道兜底。
+
 ## [2026-08-26] 修复 AgentPanel 会话切换时 TypeError 与对话页不刷新
 
 ### 修复 — GUI
