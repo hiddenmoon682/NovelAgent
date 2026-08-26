@@ -681,26 +681,32 @@ Popup {
                 }
 
                 // ── 页 2: 调试 ──
-                ColumnLayout {
-                    // 同模型/项目页：fill 父级并留出上下/左右内边距（此前只写 anchors.margins 未 fill，
-                    // 边距不生效导致内容顶满左上、无右侧留白）
-                    anchors { fill: parent; topMargin: Theme.gapSpacious; bottomMargin: Theme.gapSpacious; leftMargin: Theme.gapAmple; rightMargin: Theme.gapAmple }
-                    RowLayout {
-                        spacing: Theme.gapMd
-                        Label {
-                            text: "启用调试日志"
-                            font.family: Theme.fontUi
-                            font.pixelSize: Theme.sizeUi
-                            color: Theme.textPrimary
-                            // 不用 Layout.fillWidth：让开关紧贴标签左侧排布，避免标签取满宽度后把
-                            // 开关推到行右缘、甚至被内容区宽度计算挤出设置弹窗（之前"飞出框外"）。
+                // StackLayout 直接管理子项几何（当前子项会被强制铺满自身），直接写 anchors 会触发
+                // "Detected anchors on an item that is managed by a layout" 警告且边距不生效；
+                // 与模型/项目页一致：先用透明 Rectangle 承接 StackLayout 的铺满，内层布局再留内边距。
+                Rectangle {
+                    color: "transparent"
+                    ColumnLayout {
+                        // 同模型/项目页：fill 父级并留出上下/左右内边距（此前只写 anchors.margins 未 fill，
+                        // 边距不生效导致内容顶满左上、无右侧留白）
+                        anchors { fill: parent; topMargin: Theme.gapSpacious; bottomMargin: Theme.gapSpacious; leftMargin: Theme.gapAmple; rightMargin: Theme.gapAmple }
+                        RowLayout {
+                            spacing: Theme.gapMd
+                            Label {
+                                text: "启用调试日志"
+                                font.family: Theme.fontUi
+                                font.pixelSize: Theme.sizeUi
+                                color: Theme.textPrimary
+                                // 不用 Layout.fillWidth：让开关紧贴标签左侧排布，避免标签取满宽度后把
+                                // 开关推到行右缘、甚至被内容区宽度计算挤出设置弹窗（之前"飞出框外"）。
+                            }
+                            ThemedSwitch {
+                                checked: bridge.verboseEnabled()
+                                onToggled: bridge.setVerbose(checked)
+                            }
                         }
-                        ThemedSwitch {
-                            checked: bridge.verboseEnabled()
-                            onToggled: bridge.setVerbose(checked)
-                        }
+                        Item { Layout.fillHeight: true }
                     }
-                    Item { Layout.fillHeight: true }
                 }
             }
         }

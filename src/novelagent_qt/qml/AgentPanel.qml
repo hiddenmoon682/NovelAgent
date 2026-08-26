@@ -106,7 +106,6 @@ Rectangle {
                             content: model.content
                             reasoning: model.reasoning
                             streaming: model.streaming === true
-                            showHeader: delegateRoot.newTurn
                         }
                     }
                     Component {

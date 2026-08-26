@@ -10,14 +10,15 @@ ColumnLayout {
     property string reasoning: ""
     property bool streaming: false
     property bool reasoningExpanded: false
-    property bool showHeader: true   // 同一回合的后续段落不重复显示名字标签
 
     width: parent ? parent.width : 0
     spacing: Theme.gapXs
 
     readonly property bool isUser: role === "user"
     readonly property string displayText: content.replace(/\n{2,}/g, "\n").replace(/\n+$/, "")
-    readonly property string formattedText: isUser ? displayText : mdWithHardBreaks(content)
+    // 去掉尾部换行/空行：若保留，contentHeight 会把末行下方的空行也计入，气泡底部凭空多出空白，
+    // 视觉上文本"偏上、下空隙大于上间隙"（与用户消息 displayText 的处理保持一致）。
+    readonly property string formattedText: isUser ? displayText : mdWithHardBreaks(content).replace(/\n+$/, "")
 
     // CommonMark 把单换行当软换行合并为空格，导致模型输出的分行被揉成一段；
     // 这里在代码块之外把单换行转为硬换行（行尾双空格），保留原始分行结构。
@@ -34,18 +35,6 @@ ColumnLayout {
             parts[i] = lines.join(nl)
         }
         return parts.join("```")
-    }
-
-    Label {
-        visible: root.showHeader
-        Layout.alignment: root.isUser ? Qt.AlignRight : Qt.AlignLeft
-        Layout.leftMargin: root.isUser ? 0 : Theme.gapSm
-        Layout.rightMargin: root.isUser ? Theme.gapSm : 0
-        text: root.isUser ? "你" : "墨染"
-        font.family: Theme.fontUi
-        font.pixelSize: Theme.sizeCaption
-        font.weight: Font.DemiBold
-        color: root.isUser ? Theme.accent : Theme.agentTint
     }
 
     // ── 思考过程折叠条（仅 assistant 且 reasoning 非空）──
@@ -127,7 +116,11 @@ ColumnLayout {
         Layout.leftMargin: root.isUser ? 0 : Theme.gapSm
         Layout.rightMargin: root.isUser ? Theme.gapSm : 0
 
-        implicitWidth: Math.min(bubbleText.maxWidth, Math.max(40, textMeasurer.contentWidth)) + Theme.gapMd * 2
+        // 气泡宽度按文本自然宽度收紧：此前用 Math.max(40, …) 做最小文本宽，
+        // 短消息（如"你好"，文本仅 ~30px）也会被强撑到 40px 文本区→气泡约 64px，
+        // 实际文本只占左侧、右侧多出一段死白。改用较小地板（留出 24px 保底），
+        // 使气泡贴合文本、两侧留白对称。
+        implicitWidth: Math.min(bubbleText.maxWidth, Math.max(Theme.gapMd * 2, textMeasurer.contentWidth)) + Theme.gapMd * 2
         implicitHeight: bubbleText.contentHeight + Theme.gapXs * 2
         radius: Theme.radiusMd
         color: root.isUser ? Theme.accentSoft : Theme.bgElevated
