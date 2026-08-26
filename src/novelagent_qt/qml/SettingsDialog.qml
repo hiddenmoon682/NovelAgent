@@ -686,12 +686,14 @@ Popup {
                     // 边距不生效导致内容顶满左上、无右侧留白）
                     anchors { fill: parent; topMargin: Theme.gapSpacious; bottomMargin: Theme.gapSpacious; leftMargin: Theme.gapAmple; rightMargin: Theme.gapAmple }
                     RowLayout {
+                        spacing: Theme.gapMd
                         Label {
                             text: "启用调试日志"
                             font.family: Theme.fontUi
                             font.pixelSize: Theme.sizeUi
                             color: Theme.textPrimary
-                            Layout.fillWidth: true
+                            // 不用 Layout.fillWidth：让开关紧贴标签左侧排布，避免标签取满宽度后把
+                            // 开关推到行右缘、甚至被内容区宽度计算挤出设置弹窗（之前"飞出框外"）。
                         }
                         ThemedSwitch {
                             checked: bridge.verboseEnabled()
