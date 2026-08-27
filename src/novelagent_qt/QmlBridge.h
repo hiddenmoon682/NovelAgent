@@ -133,8 +133,13 @@ public:
     // "ok" | "invalid_title" | "invalid_chars" | "duplicate" | "failed"。
     Q_INVOKABLE QString createProjectAt(const QString& title, const QString& description);
     // 全部项目列表（固定目录枚举 − 软删目录）：
-    // [{title, path, isCurrent}]，按最近使用排序（不在 recent 的排最后）。
+    // [{title, description, path, isCurrent}]，按最近使用排序（不在 recent 的排最后）。
     Q_INVOKABLE QVariantList allProjects() const;
+    // 编辑项目元数据（名称/简介）：当前项目走内存访问层落盘（界面即时刷新），
+    // 非当前项目仅改写磁盘 novel.json。返回状态码：
+    // "ok" | "invalid_title" | "invalid_chars" | "duplicate" | "not_found" | "failed"。
+    Q_INVOKABLE QString editProject(const QString& path, const QString& title,
+                                    const QString& description);
     // 软删项目：目录重命名为"原名（已删除）"并从 recent 移除；
     // 删除的是当前项目时 Agent 重建为无项目状态。磁盘内容保留。
     Q_INVOKABLE bool deleteProject(const QString& path);

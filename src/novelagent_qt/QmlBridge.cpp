@@ -1165,15 +1165,79 @@ QVariantList QmlBridge::allProjects() const {
     for (const auto& dir : dirs) {
         const QString path = QString::fromStdString(dir);
         const std::string title = ProjectIO::peekTitle(dir);
+        const std::string desc = ProjectIO::peekDescription(dir);
         QVariantMap item;
         item.insert(QStringLiteral("title"),
                     title.empty() ? QVariant(path)
                                   : QVariant(QString::fromStdString(title)));
+        item.insert(QStringLiteral("description"),
+                    desc.empty() ? QVariant(QString())
+                                 : QVariant(QString::fromStdString(desc)));
         item.insert(QStringLiteral("path"), path);
         item.insert(QStringLiteral("isCurrent"), path == current);
         result.append(item);
     }
     return result;
+}
+
+QString QmlBridge::editProject(const QString& path, const QString& title,
+                               const QString& description) {
+    const std::string name = title.trimmed().toStdString();
+    if (name.empty()) return QStringLiteral("invalid_title");
+    if (title.trimmed().contains(QRegularExpression(QStringLiteral(R"([\\\/:*?"<>|])"))))
+        return QStringLiteral("invalid_chars");
+
+    const std::string dir = toLocalPath(path);
+    if (dir.empty()) return QStringLiteral("failed");
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec))
+        return QStringLiteral("not_found");
+
+    // 重名判定：枚举有效项目（跳过软删目录与被编辑项目自身），大小写不敏感。
+    // 与 createProjectAt 同规则，保证"改回同名"不被误判。
+    const std::string base = toLocalPath(projectsDir());
+    ProjectManager pm;
+    std::string normName = name;
+    std::transform(normName.begin(), normName.end(), normName.begin(), ::tolower);
+    for (const auto& other : pm.listProjects(base)) {
+        if (ProjectManager::isSoftDeleted(other)) continue;
+        if (other == dir) continue;
+        std::string t = ProjectIO::peekTitle(other);
+        if (t.empty()) t = fu::baseName(other);
+        std::string normOther = t;
+        std::transform(normOther.begin(), normOther.end(), normOther.begin(), ::tolower);
+        if (normName == normOther) return QStringLiteral("duplicate");
+    }
+
+    try {
+        const bool isCurrent = (dir == toLocalPath(projectPath()));
+        if (isCurrent && app_ && app_->projectAccess()) {
+            // 当前项目：经访问层锁内修改 + 脏标记 + 快照落盘，界面随 projectChanged 即时刷新
+            app_->projectAccess()->withWriteLock([&](Project& p) {
+                p.title = name;
+                p.description = description.trimmed().toStdString();
+                p.markDirty(Project::DIRTY_NOVEL);
+            });
+            app_->projectAccess()->save();
+        } else {
+            // 非当前项目：磁盘直改 novel.json（加载副本 → 修改 → 增量保存）
+            Project p = pm.open(dir);
+            if (p.title.empty()) return QStringLiteral("not_found");
+            p.title = name;
+            p.description = description.trimmed().toStdString();
+            p.markClean();
+            p.markDirty(Project::DIRTY_NOVEL);
+            ProjectIO::save(p);
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("[QmlBridge] 编辑项目元数据失败 {}: {}", dir, e.what());
+        emit uiErrorOccurred(QStringLiteral("保存项目信息失败: ") + QString::fromUtf8(e.what()));
+        return QStringLiteral("failed");
+    }
+
+    emit projectChanged();
+    return QStringLiteral("ok");
 }
 
 bool QmlBridge::deleteProject(const QString& path) {

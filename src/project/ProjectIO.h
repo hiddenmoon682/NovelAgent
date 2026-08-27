@@ -62,6 +62,10 @@ std::optional<nlohmann::json> loadJsonFile(const std::string& path);
 // （供最近项目列表等只读场景使用）；目录无效或无 title 时返回空串。
 std::string peekTitle(const std::string& path);
 
+// 轻量读取项目简介：仅解析 <path>/novel.json 的 description 字段，不加载整棵树
+// （供项目编辑弹窗预填等只读场景使用）；目录无效或无 description 时返回空串。
+std::string peekDescription(const std::string& path);
+
 // 将 nlohmann::json 写入文件，自动创建不存在的父目录。
 // 输出格式为两空格缩进、末尾换行。
 void saveJsonFile(const std::string& path, const nlohmann::json& data);

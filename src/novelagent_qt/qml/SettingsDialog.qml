@@ -486,6 +486,7 @@ Popup {
                             selectedProject = cur
                         for (var i = 0; i < list.length; ++i) {
                             projModel.append({ title: list[i].title,
+                                               description: list[i].description,
                                                path: list[i].path,
                                                isCurrent: list[i].isCurrent })
                             if (selectedProject === list[i].path)
@@ -672,6 +673,20 @@ Popup {
                                 }
                             }
                             ThemedButton {
+                                text: "编辑"
+                                enabled: projectsPage.selectedProject !== ""
+                                onClicked: {
+                                    // 从模型取选中项目的当前信息（title/description），预填到编辑弹窗
+                                    for (var i = 0; i < projModel.count; ++i) {
+                                        if (projModel.get(i).path === projectsPage.selectedProject) {
+                                            var it = projModel.get(i)
+                                            editProjectDialog.openFor(it.path, it.title, it.description)
+                                            break
+                                        }
+                                    }
+                                }
+                            }
+                            ThemedButton {
                                 kind: "primary"
                                 text: "新增"
                                 onClicked: createProjectDialog.open()
@@ -716,6 +731,12 @@ Popup {
     CreateProjectDialog {
         id: createProjectDialog
         onProjectCreated: projectsPage.reload()
+    }
+
+    // 编辑项目弹窗（名称/简介）
+    EditProjectDialog {
+        id: editProjectDialog
+        onProjectEdited: projectsPage.reload()
     }
 
     // 删除确认（软删语义）
