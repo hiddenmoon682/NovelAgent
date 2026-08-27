@@ -52,6 +52,30 @@ Rectangle {
                                reasoning: hist[i].reasoning, streaming: false,
                                toolName: "", toolStatus: "" })
         }
+        // 视口定位与加载解耦（文档依据 doc.qt.io Qt6 ListView/Flickable 协议）：
+        // 启动早期 SplitView 首帧布局晚于 agentReadyChanged，chatView 宽高可能尚未
+        // 定型（甚至为 0——0 宽高下 ListView 不加载任何 delegate，contentHeight=0，
+        // 此时"滚动到底"实际等于"滚动到顶"）；且变量高度 delegate 下 contentHeight
+        // 只是估计值，按临时值手写 contentY 会让视口停在不该停的位置（顶部空白/中间错位）。
+        // 因此这里不设一次性定时器：改为事件驱动——布局/内容高度每次变化都触发
+        // snapToEnd()，由它自身的"宽高已定型 + 内容高于视口"守卫决定是否锚定，
+        // 布局稳定后必然落在底部；内容不足一屏则显式回顶，避免负偏移在首条上方空出空白。
+        root.snapToEnd()
+    }
+
+    // 视口贴底锚定：仅在"用户未主动上翻"（chatView.userAtBottom）时执行。
+    // 统一走官方 positionViewAtEnd()，不手写 contentY（官方点名手写定位会随
+    // delegate 尺寸变化而失效）；内容不足一屏时显式回顶部，防止 positionViewAtEnd
+    // 在短内容上产生负偏移，把首条消息上方空出一大片空白（用户可复现的"上部空白"）。
+    // 宽高未定型（≤0）时跳过：此时 ListView 不加载 delegate，等 onWidth/HeightChanged
+    // 或内容高度变化事件再触发，天然规避"用临时尺寸定位"的竞态。
+    function snapToEnd() {
+        if (!chatView.userAtBottom) return
+        if (chatView.width <= 0 || chatView.height <= 0) return
+        if (chatView.contentHeight > chatView.height)
+            chatView.positionViewAtEnd()
+        else
+            chatView.contentY = 0
     }
 
     Component.onCompleted: reloadHistory()
@@ -87,6 +111,17 @@ Rectangle {
             model: chatModel
             delegate: Item {
                 id: delegateRoot
+                // 显式声明模型角色（required property）：替代隐式 model.* 作用域链，
+                // 避免未来增删字段/重命名时漏改造成绑定静默失效（QML 未定义引用取默认值）
+                required property string type
+                required property string role
+                required property string content
+                required property string reasoning
+                required property bool streaming
+                required property string toolName
+                required property string toolStatus
+                // required property 会关闭隐式 index/modelData 上下文注入，须显式声明
+                required property int index
                 width: chatView.width - chatView.leftMargin - chatView.rightMargin
                 // 发言方切换时才算新回合：加大段间距；同一回合内被工具卡片隔开的段落紧凑排列。
                 // 模型在流式/切换会话时会被 clear/append/remove 频繁改动，index 可能短暂越界，
@@ -106,22 +141,22 @@ Rectangle {
                     anchors.bottom: parent.bottom
                     width: parent.width
                     height: item ? item.implicitHeight : 0
-                    sourceComponent: model.type === "tool" ? toolComp : msgComp
+                    sourceComponent: type === "tool" ? toolComp : msgComp
 
                     Component {
                         id: msgComp
                         ChatBubble {
-                            role: model.role
-                            content: model.content
-                            reasoning: model.reasoning
-                            streaming: model.streaming === true
+                            role: delegateRoot.role
+                            content: delegateRoot.content
+                            reasoning: delegateRoot.reasoning
+                            streaming: delegateRoot.streaming
                         }
                     }
                     Component {
                         id: toolComp
                         ToolCallCard {
-                            toolName: model.toolName
-                            status: model.toolStatus
+                            toolName: delegateRoot.toolName
+                            status: delegateRoot.toolStatus
                         }
                     }
                 }
@@ -131,6 +166,10 @@ Rectangle {
                 NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.animNormal }
             }
 
+            // 底部跟随开关（初始贴底）。官方语义：moving/flicking 仅在用户拖动/甩动
+            // 期间为 true——程序化定位（positionViewAtEnd 等）、布局变化、动画、
+            // 流式文本增长都不会置位它们。因此只有用户手势能让状态切到"上翻暂停"
+            // （离开底部）或"翻回底部恢复跟随"，杜绝自动跟随被误关。
             property bool userAtBottom: true
 
             onContentYChanged: {
@@ -138,14 +177,19 @@ Rectangle {
                     userAtBottom = atYEnd
             }
 
+            // 布局/内容变化后统一经根节点 snapToEnd() 重新锚定（事件驱动，
+            // 无固定延时定时器的时序竞态：每次尺寸/内容变化都触发，最后一次
+            // 稳定布局必然落在正确位置——贴底时到底部、内容不足一屏时到顶部）。
             onContentHeightChanged: {
-                if (userAtBottom)
-                    contentY = Math.max(0, contentHeight - height)
+                root.snapToEnd()
             }
 
             onHeightChanged: {
-                if (userAtBottom)
-                    contentY = Math.max(0, contentHeight - height)
+                root.snapToEnd()
+            }
+
+            onWidthChanged: {
+                root.snapToEnd()
             }
 
             // ── 空状态 ──
@@ -158,7 +202,7 @@ Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: "墨染"
                     font.family: Theme.fontDisplay
-                    font.pixelSize: Theme.sizeDisplay + 12
+                    font.pixelSize: Theme.sizeHero
                     font.weight: Font.Bold
                     color: Theme.textPrimary
                 }
@@ -277,8 +321,12 @@ Rectangle {
                     top: inputField.top
                     topMargin: inputField.topPadding
                 }
-                visible: inputField.text.length === 0
-                text: bridge.agentReady ? "输入指令或问题..." : "请先完成模型配置（左下角设置）"
+                // IME 合成期间 preeditText 非空（而 text 仍为空），需一并视为"有输入"，
+                // 否则中/日文输入法联拼时占位文案会一直盖在候选文字上，回车提交后才消失。
+                visible: inputField.text.length === 0 && inputField.preeditText.length === 0
+                // 生成中禁输入（sessionBusy 时发送按钮变"取消"）：占位文案同步提示，避免"输入了没反应"
+                text: bridge.sessionBusy ? "正在生成中…"
+                     : (bridge.agentReady ? "输入指令或问题..." : "请先完成模型配置（左下角设置）")
                 font.family: Theme.fontUi
                 font.pixelSize: Theme.sizeBody
                 color: Theme.textFaint
@@ -396,6 +444,11 @@ Rectangle {
 
         function onSessionReset() {
             root.reloadHistory()  // 新建会话为空；切换/删除后加载目标会话历史
+            // 切回"正在生成"的会话：进行中的回复尚未提交进 memory（完成时才落盘），
+            // 重载后补一个空 streaming 占位，让后续 token 续写同一气泡，
+            // 避免回复呈现"无头残片"（后台生成切回场景）。
+            if (bridge.sessionBusy)
+                root.appendAssistant("", "")
         }
 
         function onTokenReceived(sessionId, delta) {

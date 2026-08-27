@@ -43,6 +43,7 @@ QtObject {
     readonly property int sizeBody:     15
     readonly property int sizeTitle:    18
     readonly property int sizeDisplay:  22
+    readonly property int sizeHero:     34   // 空态/欢迎大字标题（原 sizeDisplay+12 内联值收敛为档位）
 
     // ── 间距（含原型细档位：micro 2 / tight 6 / cozy 10 / relaxed 14 / spacious 18 / ample 20）──
     readonly property int gapMicro:    2

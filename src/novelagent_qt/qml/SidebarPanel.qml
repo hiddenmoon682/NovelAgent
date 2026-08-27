@@ -120,6 +120,8 @@ Rectangle {
                 id: projList
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.min(contentHeight, 260)
+                // 无最近项目时隐藏，不占用面板高度（避免空列表渲染出一片空白）
+                visible: projModel.count > 0
                 clip: true
 
                 model: ListModel { id: projModel }
@@ -203,25 +205,13 @@ Rectangle {
                 }
             }
 
-            // 空态：没有任何最近项目（对齐原型"暂无最近项目"）
-            Label {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 34
-                visible: projModel.count === 0
-                text: "暂无最近项目"
-                font.family: Theme.fontUi
-                font.pixelSize: Theme.sizeNote
-                color: Theme.textFaint
-                verticalAlignment: Text.AlignVCenter
-                leftPadding: Theme.gapTight
-            }
-
-            // 面板分隔线（原型 .panel-divider margin 4px 0，空态也保留）
+            // 面板分隔线（原型 .panel-divider margin 4px 0）：列表为空时一并隐藏
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 1
                 Layout.topMargin: Theme.gapXs
                 Layout.bottomMargin: Theme.gapXs
+                visible: projModel.count > 0
                 color: Theme.divider
             }
 
@@ -238,7 +228,7 @@ Rectangle {
                     color: parent.containsMouse ? Theme.bgHover : "transparent"
                     RowLayout {
                         anchors { fill: parent; leftMargin: Theme.gapMd }
-                        spacing: Theme.gapTight
+                        spacing: 0
                         Label {
                             text: "＋"
                             font.family: Theme.fontUi
@@ -266,7 +256,9 @@ Rectangle {
             }
 
             // 高度跟随内部内容（ColumnLayout 未锚定底部 → 高度=内容 implicit）
-            height: panelCol.implicitHeight + Theme.gapXs * 2
+            // 用 Layout.preferredHeight 让外层 ColumnLayout 严格按内容高度放置；
+            // 空态（无最近项目）时内部列表/分隔线隐藏，面板随之收缩，不残留空白。
+            Layout.preferredHeight: panelCol.implicitHeight + Theme.gapXs * 2
         }
 
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
@@ -282,7 +274,7 @@ Rectangle {
             Label {
                 text: "会话"
                 font.family: Theme.fontUi
-                font.pixelSize: Theme.sizeCaption
+                font.pixelSize: Theme.sizeNote
                 font.weight: Font.DemiBold
                 color: Theme.textSecondary
                 Layout.fillWidth: true
@@ -290,16 +282,21 @@ Rectangle {
             Button {
                 id: newSessionBtn
                 text: "+ 新建"
+                // 未初始化（未配置模型）时禁用，避免空态文案诱导点击必失效的操作
+                enabled: bridge.agentReady
                 onClicked: bridge.createPoolSession()
+                ToolTip.visible: newSessionBtn.hovered && !bridge.agentReady
+                ToolTip.text: "请先完成模型配置（左下角设置）"
+                ToolTip.delay: 300
                 contentItem: Text {
                     text: newSessionBtn.text
                     font.family: Theme.fontUi
-                    font.pixelSize: Theme.sizeCaption
-                    color: Theme.accent
+                    font.pixelSize: Theme.sizeNote
+                    color: newSessionBtn.enabled ? Theme.accent : Theme.textFaint
                 }
                 background: Rectangle {
                     radius: Theme.radiusSm
-                    color: newSessionBtn.hovered ? Theme.bgHover : "transparent"
+                    color: newSessionBtn.hovered && newSessionBtn.enabled ? Theme.bgHover : "transparent"
                     Behavior on color { ColorAnimation { duration: Theme.animFast } }
                 }
             }
@@ -317,9 +314,12 @@ Rectangle {
 
             model: ListModel { id: sessionsModel }
 
-            // 空状态占位：无会话时给出引导，避免大片空白
+            // 空状态占位：无会话时给出引导，避免大片空白。
+            // 文案区域对齐会话行的左右内边距（此前 centerIn 全视口居中，视觉偏中偏离行区）
             Label {
-                anchors.centerIn: parent
+                anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter }
+                anchors.leftMargin: Theme.gapSm
+                anchors.rightMargin: Theme.gapSm
                 visible: sessionsModel.count === 0
                 text: "暂无会话\n点击右上角「+ 新建」开始创作"
                 horizontalAlignment: Text.AlignHCenter
@@ -330,6 +330,7 @@ Rectangle {
             }
 
             function reload() {
+                var prevY = contentY
                 sessionsModel.clear()
                 if (!bridge.agentReady) return
                 var list = bridge.sessionList()
@@ -338,23 +339,45 @@ Rectangle {
                                            active: list[i].active,
                                            running: list[i].running === true })
                 }
+                // 保持阅读位置：clear+refill 会把 contentY 弹回顶部，重填后恢复原位置
+                //（列表变短时钳制到底）；标题提取等后台刷新不再打断阅读
+                Qt.callLater(function() {
+                    contentY = Math.min(prevY, Math.max(0, contentHeight - height))
+                })
             }
             Component.onCompleted: reload()
 
             delegate: Rectangle {
+                required property string sid
+                required property string name
+                required property bool active
+                required property bool running
                 width: sessionList.width - Theme.gapSm * 2
                 height: 36
                 radius: Theme.radiusSm
-                color: model.active || rowHover.hovered ? Theme.bgHover : "transparent"
+                // 当前会话：accentTint 底（与 hover 的 bgHover 区分），并配左侧朱砂标条
+                color: active ? Theme.accentTint
+                              : (rowHover.hovered ? Theme.bgHover : "transparent")
+
+                // 当前会话：左侧朱砂标条（对齐「当前项也用该标条」的选中样式规范）
+                Rectangle {
+                    visible: active
+                    anchors { left: parent.left; top: parent.top; bottom: parent.bottom; topMargin: Theme.gapTight; bottomMargin: Theme.gapTight }
+                    width: Theme.markBar
+                    radius: Theme.markBar / 2
+                    color: Theme.accent
+                }
 
                 // HoverHandler 不与 MouseArea 互斥，悬停时同时高亮行 + 显示删除按钮
                 HoverHandler { id: rowHover }
 
-                // 整行点击切换会话（删除按钮的 MouseArea 在其上层，不受影响）
+                // 整行点击切换会话（删除按钮的 MouseArea 在其上层，不受影响）。
+                // 守卫用实时比较而非 ListModel 快照的 active：快照可能陈旧
+                //（历史 bug：新建/切换后高亮错位导致点击被吞），实时值保证点击必达 C++。
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: if (!model.active) bridge.switchPoolSession(model.sid)
+                    onClicked: if (bridge.currentSessionId !== sid) bridge.switchPoolSession(sid)
                 }
 
                 RowLayout {
@@ -362,11 +385,11 @@ Rectangle {
                     spacing: Theme.gapSm
                     Rectangle {
                         width: 7; height: 7; radius: 3.5
-                        color: model.running ? Theme.warning
-                                             : (model.active ? Theme.agentTint : Theme.textFaint)
+                        color: running ? Theme.warning
+                                       : (active ? Theme.agentTint : Theme.textFaint)
                         // 运行中会话用警示色圆点提示（阶段 4）
                         Rectangle {
-                            visible: model.running
+                            visible: running
                             anchors.fill: parent
                             radius: 3.5
                             color: "transparent"
@@ -374,7 +397,7 @@ Rectangle {
                         }
                     }
                     Label {
-                        text: model.name
+                        text: name
                         font.family: Theme.fontUi
                         font.pixelSize: Theme.sizeUi
                         color: Theme.textPrimary
@@ -394,7 +417,7 @@ Rectangle {
                             anchors.margins: -6
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: bridge.deleteSession(model.sid)
+                            onClicked: bridge.deleteSession(sid)
                         }
                     }
                 }
@@ -487,6 +510,9 @@ Rectangle {
         target: bridge
         function onSessionsChanged() { sessionList.reload() }
         function onAgentReadyChanged() { sessionList.reload() }
+        // 运行态起止即时刷新：当前/后台会话的运行圆点随 sessionBusyChanged 更新
+        //（仅凭 sessionsChanged 时，会话行圆点整段生成期间不出现）
+        function onSessionBusyChanged() { sessionList.reload() }
         // 项目变化（打开/创建/软删/切换）时若面板展开则刷新最近列表
         function onProjectChanged() {
             if (root.projectListOpen)

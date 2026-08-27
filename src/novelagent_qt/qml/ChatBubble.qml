@@ -18,10 +18,23 @@ ColumnLayout {
     readonly property string displayText: content.replace(/\n{2,}/g, "\n").replace(/\n+$/, "")
     // 去掉尾部换行/空行：若保留，contentHeight 会把末行下方的空行也计入，气泡底部凭空多出空白，
     // 视觉上文本"偏上、下空隙大于上间隙"（与用户消息 displayText 的处理保持一致）。
-    readonly property string formattedText: isUser ? displayText : mdWithHardBreaks(content).replace(/\n+$/, "")
+    readonly property string formattedText: isUser ? displayText : mdWithHardBreaks(normalizeKeycapEmoji(content)).replace(/\n+$/, "")
     // 与消息正文一致：去掉尾部换行/空行，避免把末行下方的空行也计入高度，
-    // 使思考过程框只包裹可见文本（此前 reasoning 直接 text: root.reasoning，尾部换行会让框变高、文本偏上）。
-    readonly property string displayReasoning: reasoning.replace(/\n+$/, "")
+    // 使思考过程框只包裹可见文本（此前 reasoning 直接 text: root.reasoning，尾部换行会让框变高、文本偏上）；
+    // 键帽 emoji 与正文同一渲染机制，同样做归一化（见 normalizeKeycapEmoji 注释）。
+    readonly property string displayReasoning: normalizeKeycapEmoji(reasoning).replace(/\n+$/, "")
+
+    // 键帽 emoji（1️⃣ 2️⃣ 🔟 #️⃣ *️⃣）由"数字/符号 + U+FE0F 变体选择符 + U+20E3 组合键帽框"组成，
+    // 衬线主题字体（Noto Serif SC）只有基础字形：数字正常、键帽框字形缺失，
+    // 回退字体嵌入的键帽框与数字叠加错位，视觉上表现为"裸数字/数字套碎框"（1️⃣→"1"）。
+    // 修复：显示层归一化为纯文本标记（1️⃣→"1."、🔟→"10."、#️⃣→"#"），与暖墨单色主题一致；
+    // 复制按钮取原始 content，不丢模型原文。兼容含/不含 U+FE0F 两种写法（"1️⃣"与"1⃣"）。
+    function normalizeKeycapEmoji(src) {
+        var s = src.replace(/[0-9]\uFE0F?\u20E3/g, function(m) { return m.charAt(0) + "." })
+        s = s.replace(/\uD83D\uDD1F/g, "10.")                       // 🔟 → "10."
+        s = s.replace(/[#*]\uFE0F?\u20E3/g, function(m) { return m.charAt(0) })
+        return s
+    }
 
     // CommonMark 把单换行当软换行合并为空格，导致模型输出的分行被揉成一段；
     // 这里在代码块之外把单换行转为硬换行（行尾双空格），保留原始分行结构。
