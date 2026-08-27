@@ -45,6 +45,7 @@ set(NOVELAGENT_LLM
     src/llm/SSEParser.h src/llm/SSEParser.cpp
     src/llm/StreamAccumulator.h src/llm/StreamAccumulator.cpp
     src/llm/StreamingPipeline.h
+    src/llm/EmojiStripFilter.h src/llm/EmojiStripFilter.cpp
     src/llm/HttpClient.h src/llm/HttpClient.cpp
     src/llm/LLMClient.h src/llm/LLMClient.cpp
     src/llm/LLMClientFactory.h src/llm/LLMClientFactory.cpp

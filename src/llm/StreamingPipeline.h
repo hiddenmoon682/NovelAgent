@@ -8,6 +8,7 @@
 #include "llm/LLMClient.h"
 #include "llm/SSEParser.h"
 #include "llm/StreamAccumulator.h"
+#include "llm/EmojiStripFilter.h"
 
 #include <functional>
 
@@ -43,13 +44,20 @@ public:
     // LLMClient::chat）也不必关心构造与注入的先后顺序。
     StreamingPipeline() {
         parser_.setOnChunk([this](const StreamChunk& chunk) {
-            accumulator_.feed(chunk);
+            // emoji 剥离（显示 / 持久化 / 复制 / 后续上下文四层统一无 emoji）：
+            // 先过滤增量再喂累积器与回调，保证两端看到的内容一致。
+            // content 与 reasoning 各自独立过滤器，避免两路增量相互干扰。
+            StreamChunk c = chunk;
+            c.content_delta = strip_content_.feed(chunk.content_delta);
+            c.reasoning_delta = strip_reasoning_.feed(chunk.reasoning_delta);
 
-            if (callbacks_.on_content && !chunk.content_delta.empty()) {
-                callbacks_.on_content(chunk.content_delta);
+            accumulator_.feed(c);
+
+            if (callbacks_.on_content && !c.content_delta.empty()) {
+                callbacks_.on_content(c.content_delta);
             }
-            if (callbacks_.on_reasoning && !chunk.reasoning_delta.empty()) {
-                callbacks_.on_reasoning(chunk.reasoning_delta);
+            if (callbacks_.on_reasoning && !c.reasoning_delta.empty()) {
+                callbacks_.on_reasoning(c.reasoning_delta);
             }
             if (callbacks_.on_tool_call_start && !tool_call_seen_
                 && !chunk.tool_call_deltas.empty()) {
@@ -68,8 +76,22 @@ public:
         accumulator_.setOnDone([this](const LLMResponse& response) {
             response_ = response;
             completed_ = true;
+            // 冲刷过滤器残余（结尾孤立数字/未完成键帽序列），保持与已过滤
+            // 增量同等语义，并同步转发给下游，避免显示与持久化不一致。
+            const std::string leftover_content = strip_content_.finish();
+            const std::string leftover_reasoning = strip_reasoning_.finish();
+            if (!leftover_content.empty()) {
+                response_.content += leftover_content;
+                if (callbacks_.on_content)
+                    callbacks_.on_content(leftover_content);
+            }
+            if (!leftover_reasoning.empty()) {
+                response_.reasoning_content += leftover_reasoning;
+                if (callbacks_.on_reasoning)
+                    callbacks_.on_reasoning(leftover_reasoning);
+            }
             if (callbacks_.on_complete) {
-                callbacks_.on_complete(response);
+                callbacks_.on_complete(response_);
             }
         });
     }
@@ -103,6 +125,8 @@ public:
     void reset() {
         parser_.reset();
         accumulator_.reset();
+        strip_content_.reset();
+        strip_reasoning_.reset();
         response_ = LLMResponse{};
         completed_ = false;
         tool_call_seen_ = false;
@@ -110,13 +134,15 @@ public:
     }
 
 private:
-    SSEParser parser_;                // SSE 解析器，将原始 SSE 文本解析为 StreamChunk
-    StreamAccumulator accumulator_;   // 流累积器，将多个 StreamChunk 累积为完整的 LLMResponse
-    StreamCallbacks callbacks_;       // 外部回调函数集，转发给 Agent / QmlBridge
-    LLMResponse response_;            // 累积完成的完整 LLM 响应
-    bool completed_ = false;          // 标记流是否已正常结束（收到 finish_reason 或 [DONE]）
-    bool tool_call_seen_ = false;     // 标记是否已触发 on_tool_call_start，确保只触发一次
-    std::string error_;               // 解析或处理过程中产生的错误描述
+    SSEParser parser_;                    // SSE 解析器，将原始 SSE 文本解析为 StreamChunk
+    StreamAccumulator accumulator_;       // 流累积器，将多个 StreamChunk 累积为完整的 LLMResponse
+    EmojiStripFilter strip_content_;      // 内容增量 emoji 剥离（流安全，跨 chunk 保序）
+    EmojiStripFilter strip_reasoning_;    // 推理增量 emoji 剥离（与内容流隔离）
+    StreamCallbacks callbacks_;           // 外部回调函数集，转发给 Agent / QmlBridge
+    LLMResponse response_;                // 累积完成的完整 LLM 响应
+    bool completed_ = false;              // 标记流是否已正常结束（收到 finish_reason 或 [DONE]）
+    bool tool_call_seen_ = false;         // 标记是否已触发 on_tool_call_start，确保只触发一次
+    std::string error_;                   // 解析或处理过程中产生的错误描述
 };
 
 } // namespace llm

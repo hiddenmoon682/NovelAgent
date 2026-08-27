@@ -1,5 +1,6 @@
 #include "llm/LLMClient.h"
 
+#include "llm/EmojiStripFilter.h"
 #include "llm/StreamingPipeline.h"
 
 #include <nlohmann/json.hpp>
@@ -127,7 +128,12 @@ LLMResponse LLMClient::chatNonStreaming(
 
     try {
         auto j = http_.post("/v1/chat/completions", body);
-        return j.get<LLMResponse>();
+        LLMResponse r = j.get<LLMResponse>();
+        // 与流式路径对齐：内容与推理文本剥离 emoji（工具参数不处理 ——
+        // 它们是结构化 JSON，且可能承载用户的创作内容）。
+        r.content = EmojiStripFilter::stripOnce(r.content);
+        r.reasoning_content = EmojiStripFilter::stripOnce(r.reasoning_content);
+        return r;
     } catch (const std::exception& e) {
         last_error_ = e.what();
         throw;
