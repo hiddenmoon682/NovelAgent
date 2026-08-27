@@ -1,5 +1,244 @@
 # Changelog
 
+## [2026-08-27] 修复对话区启动/全屏时的视口错位（顶部空白、停在中间、不显示最新）
+
+### 现象
+- 启动程序后，对话区有时不显示最后一条消息，而是停在中间某条，需手动下滚；
+- 启动后点最大化/全屏，对话区跳到第一条消息，且首条消息上方空出一大片空白。
+
+### 根因（依据 Qt 官方文档 doc.qt.io Qt6 ListView/Flickable）
+原实现用"一次性 50ms 定时器 + 手写 contentY"定位，同时踩中官方文档三处告诫：
+- **0 宽高下 ListView 不加载任何 delegate**：启动早期 `agentReadyChanged` 同步
+  加载历史时 SplitView 首帧布局未完成，chatView 宽高仍为 0/临时值，此时
+  contentHeight=0，"滚动到底"实际等于"滚动到顶"；
+- **contentHeight 只是估计值**：变量高度 delegate（气泡文本换行）下，未实例化的
+  尾部条目高度按已加载部分估计，按临时值手写 contentY 会停在不该停的位置
+  （顶部空白/中间错位）；窗口最大化→加宽→重新换行→contentHeight 剧变，放大偏差；
+- **官方点名不要手写 contentX/contentY 定位**：会随 delegate 尺寸变化而失效；
+  且 `positionViewAtEnd()` 在短内容上会产生负偏移，把首条消息上方空出大片空白。
+
+### 修复（事件驱动替代一次性定时器）
+- 删除 50ms `viewportSnapTimer`，改为 `snapToEnd()` 事件驱动锚定：
+  布局/内容高度每次变化（`onContentHeightChanged`/`onHeightChanged`/`onWidthChanged`）
+  都重新经官方 `positionViewAtEnd()` 锚定，最后一次稳定布局必然落在正确位置；
+- `snapToEnd()` 自带守卫：宽高未定型（≤0）跳过（等尺寸变化事件再触发）；
+  内容高于视口才 `positionViewAtEnd()`，内容不足一屏则显式 `contentY=0` 回顶，
+  杜绝负偏移空白；
+- `userAtBottom` 底部跟随开关语义不变：仅用户拖动/甩动（moving/flicking 官方语义
+  为仅手势置位）才切换"上翻暂停/恢复跟随"，程序化定位、布局变化、流式增长
+  不会误关自动跟随。
+
+### 验证
+- `./scripts/verify.sh --build` 构建通过；
+- 用户已复验通过：启动即定位到最新消息；点最大化/全屏后仍贴底、无顶部空白；
+  上翻暂停跟随、翻回底部恢复跟随均正常。
+
+## [2026-08-27] AI 回复完全去除 emoji（提示词约束 + 流式兜底过滤）
+
+### 背景
+- 模型回复（含键帽 emoji `1️⃣`）在衬线主题字体（Noto Serif SC）下缺失字形，
+  退化为"裸数字/数字套碎框"（`1️⃣`→`1` 且无列表样式），观感断裂。
+- OpenAI/DeepSeek 兼容 API 无"禁用 emoji"参数，提示词约束只能大概率收敛、不保证 0。
+
+### 功能
+- **提示词层**：全局规则 `~/.novelagent/rules.md` 新增「回复格式规范」一节
+  （禁止 emoji/装饰符号、编号用 `1.`/`-` 纯文本），经 `RulesProvider` 注入每次对话
+  的 system prompt；出厂默认规则 `kDefaultRulesMd` 同步更新（仅影响全新安装）。
+- **流式兜底层（硬保证）**：新增 `src/llm/EmojiStripFilter`（纯 C++、无 Qt 依赖）：
+  - 在 `StreamingPipeline` 咽喉处过滤 `content_delta` / `reasoning_delta`（两路各自
+    独立实例，避免相互干扰），显示、持久化、复制、后续上下文四层全部无 emoji；
+  - 流安全：缓存未完成的 UTF-8 尾字节，跨 chunk 拼接后处理，不产生半个字符；
+  - 键帽归一化：`1️⃣`→`1.`、`🔟`→`10.`、`#️⃣`→`#`、`*️⃣`→`*`（与 QML 显示层
+    `normalizeKeycapEmoji` 语义一致，后者继续对历史消息兜底）；
+  - 剥离范围：U+1F000–U+1FAFF、U+2600–U+27BF、U+2B00–U+2BFF、变体选择符
+    U+FE00–U+FE0F、键帽框 U+20E3、零宽连接符 U+200D；普通中英文与标点不受影响；
+  - 非流式路径 `chatNonStreaming` 同步过滤；工具参数与工具结果（章节正文等
+    用户创作内容）不处理。
+
+### 验证
+- 新增 `tests/test_emoji_filter.cpp`（9 个用例：基本剥离/键帽归一化/ZWJ 与肤色/
+  4 字节 emoji 逐字节分块/键帽逐字节分块/finish 冲刷/reset/无效字节/管道集成），
+  全部通过；
+- 构建零警告；全量回归 `ctest` 通过；
+- 无头启动无 QML 警告。
+
+## [2026-08-27] 新增项目编辑功能（设置 → 项目 → 编辑：修改名称与简介）
+
+### 功能
+- 设置弹窗「项目」页底部新增 **编辑** 按钮（选中任意项目后可用），
+  打开仿照「新建项目」的 **EditProjectDialog**：预填当前名称/简介，可修改后保存。
+- 修改生效范围：
+  - **当前项目**：经 `ProjectAccess` 锁内修改 + `DIRTY_NOVEL` 脏标记 + 快照落盘，
+    界面随 `projectChanged` 即时刷新（侧栏项目名同步更新）；
+  - **非当前项目**：磁盘直改 `novel.json`（增量保存，不影响其它文件）。
+- 校验与新建一致：非法字符、重名（大小写不敏感，排除被编辑项目自身）、空标题。
+- 底层新增 `QmlBridge::editProject(path, title, description)`（返回
+  `ok/invalid_title/invalid_chars/duplicate/not_found/failed`）与
+  `ProjectIO::peekDescription(path)`（轻量读取简介，供列表预填）。
+
+### 验证
+- 构建零警告；`test_project_io.cpp` 新增 2 个用例：
+  `peekDescription 轻量读取项目简介`、`编辑项目元数据（名称/简介）持久化`
+  （覆盖"当前项目访问层路径"A 与"非当前项目磁盘路径"B）→ 15/15 通过；
+- 全量回归 `ctest` 32/32 通过；
+- 无头启动日志确认项目/库/会话恢复正常且 **无任何 QML 警告**（新弹窗随设置页实例化加载）。
+
+## [2026-08-27] 修复会话列表排序语义（点击不得置顶，发送才置顶）
+
+### 修复 — 排序时间戳语义
+- **根因 1（点击会话跳到列表第一）**：`SessionRuntime` 构造时把 `updated_at_ms_` 初始化为**当前时刻**。
+  历史会话被物化（点开）时新建 runtime → "最近活动时间"被刷成现在 → 该会话立即置顶；
+  所有会话物化完毕后不再跳（"用一次就没效果"）。与预期"只有发送消息才置顶"相悖。
+- **根因 2（时间戳解析格式错误）**：库内 `sessions.updated_at` 实际为 `"yyyy-MM-ddTHH:mm:ssZ"`
+  （`ProjectIO::nowTimestamp` 产出），`sessionList()` 却按紧凑格式 `yyyyMMddTHHmmssZ` 解析 →
+  **全部解析失败（ms=0）**，持久层会话排序依赖 SQL 顺序侥幸正确，池/持久层混合排序错乱。
+- **修复**：
+  - `SessionPool::materializeSession()`：物化后经新增的 `SessionPersistence::sessionUpdatedAtMs(id)`
+    把 runtime 排序时间戳**恢复为库内真实 updated_at**（点击/物化不再改变排序）；
+  - `QmlBridge::switchPoolSession()`：不再 prepend `recent_sessions_`（查看不算"使用"）；
+  - `QmlBridge::sendMessageToSession()`：提交发送时 `runtime.touchActivity()` 立即置顶
+    （每轮完成的 `saveSessionState` 仍会续刷并写库，重启顺序一致）；
+  - `QmlBridge::sessionList()`：按真实格式解析库内时间戳。
+- 测试：`test_session_sqlite.cpp` 补 `sessionUpdatedAtMs` 断言（已落盘 >0、无行 -1）。
+
+## [2026-08-27] 会话管理全面审查修复（4 子 Agent 交叉审查）
+
+### 恢复 — 启动/打开项目时恢复最近会话
+- **背景**：P8 懒物化改版时把"启动即恢复上次对话"一并去掉（`rebuildApp` 清空 `current_session_id_`、
+  启动不物化任何会话），与 `AgentPanel.qml:45`"启动恢复上次对话"注释及用户预期不符——启动后
+  聊天区空白，会话要手动点侧栏才恢复。
+- **修复**：`QmlBridge::rebuildApp()` 在清空焦点、发出 `agentReadyChanged` 之前，取持久层
+  `listSessions()`（updated_at 降序）最近会话经 `materializeSession` 物化并设为当前；
+  聊天区经既有 `onAgentReadyChanged → reloadHistory` 自动加载上次对话。恢复失败不阻塞启动。
+- 副作用核对：恢复后「+ 新建」走 `had_focus=true` 分支正常清空聊天区切到新会话；
+  首条消息直接输入则续写最近会话（延续对话语义），均与预期一致。
+
+### 严重修复 — "新建会话盖掉旧会话"（数据覆盖）
+- **根因**：`SessionPool::makeSessionId()` 的进程内计数器 `session_seq_` 从 0 起且从不与持久层
+  已存在会话 id 同步（历史 `s-multi-N` 是上次运行生成的同类 id，重启/重建后归零）。
+  新建会话生成与旧会话**相同 id** → 池内 `emplace` 静默失败 / 会话列表按 id 去重隐藏旧条目 /
+  首条消息保存时 `DELETE + 重插` 覆盖旧消息，旧会话数据被毁。
+- **修复**：`SessionPool::createSession()` 生成 id 后核对**池内 + 持久层（含已归档行）**，
+  被占用则递增换号，保证返回的 id 全局唯一；新增 `SessionPersistence::sessionIdExists()`。
+  依据：Qt/SQLite 无关，纯 C++ 逻辑；4 个审查子代理一致确认（详见 docs/review/REVIEW_STATUS.md）。
+
+### 修复 — 删除未落盘会话的归档假警报
+- **根因**：新建后未跑完一轮消息的会话在 DB 中**无行**，删除时 `deleteSession()` 因"行不存在"
+  返回 false，被误判为"归档失败（重启后可能复活）"并弹吓人 toast —— 实际无行根本不可能复活。
+- **修复**：`QmlBridge::deletePoolSession()` 删除前用 `sessionIdExists` 判定是否曾落盘：
+  无行 → 静默成功；有行但归档失败 → 才告警提示。
+
+## [2026-08-26] 修复聊天列表 delegate 的 index 未定义
+
+### 修复 — QML
+- **`ReferenceError: index is not defined`（AgentPanel.qml delegate）**：会话列表 delegate 改用
+  `required property` 声明模型角色后，Qt 6 会关闭隐式 `index`/`modelData` 上下文注入。delegate 内的
+  `newTurn` 逻辑与 `height` 绑定仍引用 `index`，导致该引用未定义而报错（QML 警告零容忍口径）。
+  按 Qt 6 规范在 delegate 显式补充 `required property int index` 即可获得视图提供的行号。
+
+## [2026-08-26] 修复聊天输入框 IME 占位文案残留
+
+### 修复 — QML
+- **输入法联拼时占位文案"输入指令或问题..."不消失**：占位 Label 的可见条件只判断
+  `inputField.text.length === 0`，而中文输入法合成期间的拼音/候选位于 `preeditText`（`text` 仍为空），
+  导致占位文案一直盖在候选文字上，回车提交后才消失。改为同时判断 `inputField.preeditText.length === 0`
+  （对齐 `CreateProjectDialog` 的既有写法）。
+
+## [2026-08-26] 侧边栏（SidebarPanel）视觉微调
+
+### 改动 — QML
+- **去掉"暂无最近项目"空态文案**：最近项目展开面板在无项目时不再显示该占位标签。
+- **去掉"＋ 添加项目"加号与文字间距**：内部 `RowLayout` 间距由 `gapTight` 改为 `0`，视觉更贴合。
+- **"会话"/"+ 新建"字号加大一号**：`sizeCaption`(11px) → `sizeNote`(12px)。
+- **去掉空态残留空白**：无最近项目时，最近项目面板内的空列表与分隔线一并隐藏，面板改为按内容高度
+  放置（`Layout.preferredHeight`），不再留下大片空白。
+
+## [2026-08-26] 构建警告清零（-Wmissing-field-initializers 刷屏等）
+
+### 修复 — C++
+- **`-Wreorder`（本批首次引入）**：`SessionRuntime` 构造函数初始化列表顺序与成员声明顺序
+  不一致（`updated_at_ms_` 声明在 `client_` 之前却排在初始化列表末尾），按声明顺序调整。
+- **`-Wmissing-field-initializers` 全工程清理（含本项目既有的大量同类告警）**：GCC 对
+  设计式聚合初始化（只写部分字段）默认告警。按项目"工厂方法优先"规范：
+  - `llm::LLMResponse` 新增静态工厂 `rejected(finish_reason)`（显式初始化全部无默认值字段），
+    SessionPool/SessionRuntime 全部 11 处 `LLMResponse{.finish_reason=...}` 改用工厂；
+  - `agent::ErrorPayload` 新增静态工厂 `error(reason, state=nullopt)`，4 处构造改用工厂；
+  - `Message` 的 content/tool_calls/tool_call_id/name/reasoning_content、`SessionRuntimeDeps`
+    的 exec_config/config/system_prompt 补默认成员初始化（测试聚合构造的告警随之消失）。
+- **`-Wdeprecated-declarations`（本批引入）**：`QDateTime::setTimeSpec`/`fromMSecsSinceEpoch(ts, TimeSpec)`
+  Qt 6.8 弃用，`QmlBridge::sessionList` 改用 `QTimeZone::UTC`（含时区说明注释）。
+- **既有零星警告**：`applyCompaction` 冗余 `std::move`（const 引用下本就是拷贝，移除后语义不变）、
+  `on_round_complete` 未用参数 `output_tok` 匿名化、`ChapterTools` 未使用的 `findChapter` 辅助函数删除。
+
+### 验证
+- `cmake --build --preset test`：**WARNING_COUNT=0**，`BUILD_EXIT=0`。
+- ctest 全量回归：**32/32 通过，0 失败**。
+- 说明：此前控制台出现的"绌鸿緭緭鍏ヨ鎷掔粷"类乱码是 GBK 终端渲染 UTF-8 源文件字符串的
+  显示假象，与代码无关（源码与运行时均为 UTF-8）。
+
+## [2026-08-26] 会话切换 Minor 项批量收尾（评审遗留清理）
+
+### 优化 — C++
+- **会话列表排序改为"统一最近活动时间"降序**（原池会话在前、持久层在后，跨段不严格）：
+  `SessionRuntime` 新增 `updated_at_ms_`（创建/每轮完成刷新，原子），`sessionList()` 将池会话与
+  持久层历史会话（解析 DB `updated_at`，UTC `yyyyMMddTHHmmssZ`）合并后按活动时间降序输出，
+  池条目 `updatedAt` 不再恒为空串（原池条目排序仅靠 recent_sessions_ 快照）。
+- **物化路径全表扫描改为点查**：`SessionPersistence` 新增 `hasSession(id)`（`SELECT 1 ... WHERE archived=0`），
+  `SessionPool::materializeSession` 存在性检查不再 `listSessions()` 全扫（O(n) + 与池线程长事务争锁的卡顿源）。
+- **`anyRunning()` 计入排队任务**（原只统计 `running_`）：`in_flight_` 非空即视为忙，全局操作守卫
+  （重建/删项目/切技能）不再在任务排队的空档被放行。
+- **`releaseIdleClients()` 跳过有排队任务的会话**：running_ 未置位但任务已提交时会话的 client
+  不再被释放导致启动时白重建一次。
+- **`discardPendingNewSession()` 拒绝丢弃非空内存**：未落盘但已有消息（落盘失败残留/首条消息处理中）
+  的会话不允许丢弃，防数据丢失（走加锁快照读判断）。
+- **`cancelRequest()` 空池早退**：不再经 `currentSessionId()` 自动建会话（防幽灵会话的只读语义污染）。
+- **发消息提交时即刷侧栏**：`sendMessageToSession` 补发 `sessionsChanged`，会话顺序不再等到
+  `responseComplete` 才更新。
+- **移除死代码**：`QmlBridge::newSession()` / `QmlBridge::switchSession()`（无任何 QML/测试调用方；
+  Agent/SessionPool 层的 `newSession` 被 test_agent 使用，保留）。
+
+### 优化 — QML
+- **`Theme.qml` 新增 `sizeHero`（34px）档位**：空态大标题不再内联 `sizeDisplay + 12` 魔法值。
+- **AgentPanel 输入占位细分场景**：`sessionBusy` 时显示"正在生成中…"，不再误导输入。
+- **SidebarPanel 会话列表**：
+  - 空态文案对齐会话行左右内边距（不再全视口居中偏离行区）；
+  - `reload()` 保持滚动位置（`Qt.callLater` 恢复 `contentY`，列表变短时钳制到底），
+    标题提取/运行圆点刷新不再打断阅读；
+  - 会话行 delegate 改为 `required property` 显式角色声明（替代隐式 `model.*` 作用域链，
+    防未来漏改静默失效）；当前会话行加左侧朱砂标条 + `accentTint` 底（区分 hover）。
+- **AgentPanel 消息 delegate 同样 required property 化**（Loader 内组件经 `delegateRoot.*`
+  显式传参，替代隐式 `model` 作用域链）。
+- 说明：其余评审 Minor（会话池无上限/无淘汰的架构取舍、并发满消息不入 memory 的语义、
+  队列中会话圆点、StatusBar 全局状态文本等）属设计权衡或需另行设计，未在本轮处理，
+  记录于 docs/review/REVIEW_STATUS.md。
+
+## [2026-08-26] 修复"新建会话点了没反应、对话页仍显示旧会话"（多 Agent 全面审查 + 修复）
+
+### 修复 — GUI
+- **「+ 新建」后对话页不刷新、点击新会话无反应（报告 Bug，根因 C1）**：`QmlBridge::createPoolSession()` 只发射 `currentSessionIdChanged`/`sessionsChanged`，漏发 `sessionReset`——而 `AgentPanel` 重建聊天流的唯一触发是 `onSessionReset`/`onAgentReadyChanged`；新建后聊天区仍渲染旧会话内容，且新会话已被标为当前（active），侧栏行点击守卫 `if (!model.active)` 把点击吞掉，表现为"点了没用、还是旧内容"。
+  - 修法：`createPoolSession()` 补发 `sessionReset()` + `sessionBusyChanged()`，并区分两条入口——**已有焦点会话「+ 新建」时重载**（聊天区切到新会话空态）；**首条消息隐式建会话时不重载**（`sendCurrentMessage` 已本地追加用户气泡/回复占位，重载会清掉它们导致用户消息消失）。
+- **切换会话后侧栏 active 高亮/最近使用排序不刷新（C2）**：`switchPoolSession()` 漏发 `sessionsChanged()`，侧栏 `ListModel` 的 active 是陈旧快照，切换后高亮错位、点击目标会话被守卫拦截。修法：补发 `sessionsChanged()`；侧栏行点击守卫改为与实时值比较（`bridge.currentSessionId !== model.sid`）。
+- **删除当前会话后池焦点悬空 → 幽灵会话（I4/C3）**：`deletePoolSession()` 只改桥接层 `current_session_id_`，未重同步 `SessionPool` 焦点，`cancelRequest` 等按池焦点路由的操作会经 `currentSession()` 自动新建用户从未见过的"新会话"；且回退焦点取 map 首项（最早创建）而非最近使用。修法：回退优先取 `recent_sessions_` 中仍在池的会话，并显式 `switchSession(fallback)` 重同步池焦点；顺带清理 `recent_sessions_` 中的已删 id。
+- **删除非当前会话也重置聊天流（I3）**：`deletePoolSession()` 无条件发 `sessionReset`，删除后台会话会打断正在观看的流式展示。修法：仅删除当前会话时发 `sessionReset`/`sessionBusyChanged`。
+- **删除/物化失败静默无反馈（I4/I6）**：生成中删除会话被 `busy()` 守卫静默拒绝、物化失败无提示。修法：删除被拦截时走 `uiErrorOccurred` Toast（对齐删除项目既有做法）；`switchPoolSession` 物化失败同样 Toast。
+- **会话错误无维度，后台会话报错污染当前视图（I3-QML）**：`errorOccurred` 增加会话维度（空串 = 会话无关，始终显示；非空 = 仅查看该会话时显示），`runAgent` 的错误/并发满/上下文溢出均带 sid 上报，`AgentPanel` 按当前查看会话过滤。
+- **切回"正在生成"的会话回复呈"无头残片"（I2-QML）**：进行中的回复完成时才提交 memory，切回后视图中止于最后完整回合、后续 token 另起新气泡。修法：`onSessionReset` 重载后若 `bridge.sessionBusy` 则补空 streaming 占位气泡续写。
+- **运行圆点不刷新（I5-QML）**：侧栏 `Connections` 增加 `onSessionBusyChanged → sessionList.reload()`，当前/后台会话运行态圆点即时更新；「+ 新建」按钮增加 `enabled: bridge.agentReady` 守卫与 ToolTip。
+
+### 修复 — C++
+- **跨线程读运行中会话 Memory 的数据竞争（UB）**：`sessionList()`/`conversationHistory()` 在 GUI 线程迭代 `memory().messages()` 裸引用，与池线程的 vector 变异（inject/apply 重分配）并发 → 迭代器越界/撕裂读。修法：`IMemory` 新增 `snapshot()`（加锁拷贝）；`Memory` 内部所有变异方法加 `mutex_`，跨线程读取走快照；`messages()` 裸引用保持 LLM 热路径零拷贝、仅限单写线程（注释固化）。
+- **同会话重复提交 → 同一 runtime 并发执行 + in_flight 覆盖 + 删除 UAF 链**：`SessionPool::submitProcess`/`process` 只查全局并发上限、不查同会话单飞，排队窗口内的二次提交（快双击/回车连发）会并发执行 `process` 并互相覆盖 `in_flight_` 条目。修法：持锁内增加 `in_flight_.count(session_id)` 单飞检查，拒绝返回 `session_busy`（GUI 侧静默复位）。
+- **并发拒绝回调在持锁内同步调用（GUI 卡死）**：`submitProcess` 的 `concurrency_full` 分支在 `in_flight_mutex_` 作用域内同步调 `on_complete`（其内可能执行 indexAll 等重型工作）。修法：拒绝回调移到锁外。
+- **被拒/取消轮空跑自动索引**：`cancelled`/`concurrency_full`/`session_not_found` 响应完成回调仍触发全量增量索引。修法：新增 `rejected_round` 判定，拒绝类响应跳过自动索引。
+- **`cancelAllAndWait` 不置删除标志，排队任务重启取消**：进程内排队任务启动时 `resetCancel()` 清掉取消标志 → 关闭/重建时"2s 退场"契约失效。修法：收集 in-flight 时同时 `setDeleteRequested()`。
+- **`discardPendingNewSession` 可擦除运行中 runtime（UAF）**：未落盘会话首条消息在跑时直接 erase，池线程持悬垂指针。修法：对齐 `deleteSessionRuntime` 的 cancel+wait(2s) 防护。
+- **`makeRuntime` 抛异常留下空池条目（空指针解引用）**：`pool_[id] = makeRuntime(id)` 先插空指针后赋值。修法：先构造后 `emplace`。
+- **`materializeSession` 持久层查询无异常防护**：DB 异常穿透 Q_INVOKABLE（与"点击无反应"同形）。修法：try/catch 后按"不存在"处理返回 false，由桥接层 Toast。
+
+### 变更 — 说明
+- 遗留死代码 `newSession()`/`switchSession()`（无 QML 调用方）与删除空 id 占位分支未在本轮改动，避免扩大影响面；后续可清理。
+- 本次改动覆盖四路独立评审（桥接层/会话 UI/池与持久化/端到端走查）的 Critical 与 Important 项；Minor（侧栏排序合并、updatedAt 空串、空态文案居中、active 行标条、delegate required property 等）记录在评审报告中，未在本轮处理。
+
 ## [2026-08-26] 修复窗口启动时落到屏幕外（程序运行但页面不可见）
 
 ### 修复 — GUI
