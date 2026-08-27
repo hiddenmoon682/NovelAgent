@@ -20,12 +20,6 @@ using json = nlohmann::json;
 
 namespace {
 
-Chapter* findChapter(std::vector<Chapter>& chapters,
-                     const std::string& chapter_id)
-{
-    return utils::id::findById(chapters, chapter_id);
-}
-
 // A6: 校验单值 string ID 和 vector<string> ID 是否存在。
 // 采用软校验——不存在时 warn 但不阻断（允许 LLM 先创建实体再关联）。
 static void validateCharId(const std::vector<Character>& chars, const std::string& id, const std::string& field, const std::string& caller) {
