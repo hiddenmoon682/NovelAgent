@@ -29,6 +29,16 @@ struct ErrorPayload {
     int round = -1;                           // 可选：当前轮次（-1 表示无）
     std::optional<int> max_rounds;            // 可选：最大轮次
     std::optional<int64_t> timeout_s;         // 可选：超时秒数
+
+    // 构造错误负载（常用形态：仅 reason，可选 state）。
+    // 显式初始化全部无默认字段，避免聚合初始化漏字段的 -Wmissing-field-initializers 警告。
+    static ErrorPayload error(std::string reason,
+                              std::optional<std::string> state = std::nullopt) {
+        return ErrorPayload{.reason = std::move(reason),
+                            .state = std::move(state),
+                            .max_rounds = std::nullopt,
+                            .timeout_s = std::nullopt};
+    }
 };
 
 struct UserInputPayload {

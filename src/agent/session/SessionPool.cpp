@@ -45,8 +45,33 @@ std::string SessionPool::makeSessionId() {
 }
 
 std::string SessionPool::createSession() {
-    const std::string id = makeSessionId();
-    pool_[id] = makeRuntime(id);
+    // id 唯一化（跨重启/重建）：session_seq_ 进程内从 0 计数，而持久层历史会话
+    // 是上次运行生成的同类 id（s-multi-N）。直接递增会生成与旧会话相同的 id——
+    // 同 id 入池失败（"新建"顶替不了旧 runtime）、会话列表按 id 去重隐藏旧条目、
+    // 首条消息保存时 DELETE+重插覆盖旧数据（"新建盖掉旧会话"严重 bug 根因）。
+    // 生成后逐一核对池内与持久层（含已归档行），被占用则继续递增，
+    // 保证返回的 id 一定对应一个全新的、全局唯一的会话。
+    std::string id;
+    for (;;) {
+        id = makeSessionId();
+        if (pool_.count(id) != 0) continue;   // 池内已占用 → 换号
+        if (persistence_) {
+            bool taken = false;
+            try {
+                taken = persistence_->sessionIdExists(id);
+            } catch (const std::exception& e) {
+                // DB 异常不再继续查重：按未占用放行（创建动作本身不依赖 DB，
+                // 事后保存路径另有异常兜底），避免查重失败阻塞新建。
+                spdlog::warn("[SessionPool] 新建会话 id 查重失败: {}", e.what());
+            }
+            if (taken) continue;              // 持久层已占用（含归档）→ 换号
+        }
+        break;
+    }
+    // 先构造后入池：makeRuntime 抛异常时不会留下空 unique_ptr 条目
+    //（否则后续按 id 命中却拿到 nullptr runtime，解引用即崩溃）。
+    auto rt = makeRuntime(id);
+    pool_.emplace(id, std::move(rt));
     return id;
 }
 
@@ -66,6 +91,42 @@ bool SessionPool::pendingNewSession() const {
 bool SessionPool::discardPendingNewSession() {
     if (!pendingNewSession()) return false;
     const std::string discarded = current_session_id_;
+    auto it = pool_.find(discarded);
+    if (it == pool_.end()) return false;
+    // 未落盘但已有消息（落盘失败残留/首条消息处理中）不得丢弃：丢弃会丢失这些消息。
+    // 走加锁快照读（GUI 线程可能正与池线程的 process 并发写同会话 memory）。
+    if (!it->second->memory().snapshot().empty()) {
+        spdlog::warn("[SessionPool] 会话 {} 未落盘但已有消息，拒绝丢弃（防数据丢失）", discarded);
+        return false;
+    }
+    // 与 deleteSessionRuntime 同款防护：首条消息可能在跑/排队（persisted_ 要等整轮
+    // 结束才置位），直接 erase 会让池线程持有的 runtime 裸指针悬垂（UAF）。
+    // 先 cancel + delete_requested（排队任务启动即退出，不被 resetCancel 吞掉），
+    // 再等 in-flight 退场（2s 超时则不强行删除，恢复标志后由调用方重试）。
+    std::shared_future<llm::LLMResponse> fut;
+    {
+        std::lock_guard<std::mutex> lock(in_flight_mutex_);
+        auto it = in_flight_.find(discarded);
+        if (it != in_flight_.end()) {
+            if (auto rt_it = pool_.find(discarded); rt_it != pool_.end()) {
+                rt_it->second->requestCancel();
+                rt_it->second->setDeleteRequested();
+            }
+            fut = it->second;
+        }
+    }
+    if (fut.valid()) {
+        if (fut.wait_for(std::chrono::seconds(2)) == std::future_status::timeout
+            && fut.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+            spdlog::warn("[SessionPool] 丢弃未落盘会话 {} 超时（任务仍在执行），暂不丢弃", discarded);
+            // 恢复会话标志：任务若结束则会话可继续使用，稍后重试删除
+            if (auto rt_it = pool_.find(discarded); rt_it != pool_.end()) {
+                rt_it->second->clearDeleteRequested();
+                rt_it->second->resetCancel();
+            }
+            return false;
+        }
+    }
     pool_.erase(discarded);
     current_session_id_.clear();
     fallbackCurrentAfterDelete();
@@ -146,16 +207,35 @@ bool SessionPool::materializeSession(const std::string& id) {
         current_session_id_ = id;
         return true;
     }
-    // 不在池：须持久层存在该 id 才物化（避免为不存在的历史 id 建幽灵 runtime）
+    // 不在池：须持久层存在该 id 才物化（避免为不存在的历史 id 建幽灵 runtime）。
+    // DB 异常（磁盘错误/中断）不得穿透到 QML Q_INVOKABLE（与 sessionList 的
+    // try/catch 对称）：按"不存在"处理，调用方应给出 UI 提示。
+    // 存在性检查用点查 hasSession 替代 listSessions 全扫：每次点开会话全表扫描
+    // 是 O(n) 浪费，且可能在 GUI 线程与池线程的长事务争锁（卡片级卡顿来源）。
     bool persisted_exists = false;
     if (persistence_) {
-        for (const auto& s : persistence_->listSessions()) {
-            if (s.id == id) { persisted_exists = true; break; }
+        try {
+            persisted_exists = persistence_->hasSession(id);
+        } catch (const std::exception& e) {
+            spdlog::warn("[SessionPool] 物化会话 {} 时读取持久层失败: {}", id, e.what());
+            return false;
         }
     }
     if (!persisted_exists) return false;
-    pool_[id] = makeRuntime(id);
+    // 先构造后入池（异常安全，见 createSession）
+    auto rt = makeRuntime(id);
+    pool_.emplace(id, std::move(rt));
     pool_[id]->loadSessionState();  // 恢复历史消息（无则保持空会话）
+    // 排序时间戳恢复为库内真实 updated_at：runtime 构造会把"最近活动"刷成当前时刻，
+    // 若不改回，每次物化（点开会话）都会让该会话跳到列表第一（"点击导致列表跳动"历史 bug）。
+    if (persistence_) {
+        try {
+            const int64_t db_ms = persistence_->sessionUpdatedAtMs(id);
+            if (db_ms > 0) pool_[id]->setUpdatedAtMs(db_ms);
+        } catch (const std::exception& e) {
+            spdlog::warn("[SessionPool] 读取会话 {} 活动时间失败: {}", id, e.what());
+        }
+    }
     current_session_id_ = id;
     spdlog::info("[SessionPool] 物化历史会话: {}", id);
     return true;
@@ -198,12 +278,24 @@ std::vector<std::string> SessionPool::sessionIds() const {
 bool SessionPool::anyRunning() const {
     for (const auto& [_, rt] : pool_)
         if (rt && rt->running()) return true;
+    // 排队/收尾中的任务同样算"忙"：作业已提交但尚未启动（4 并发满时的排队窗口）
+    // 或已完成尚未清理——供 busy() 聚合信号正确反映"会话将占用/正占用线程池"，
+    // 避免全局操作守卫（重建/删项目等）在任务排队的空档被放行。
+    {
+        std::lock_guard<std::mutex> lock(in_flight_mutex_);
+        if (!in_flight_.empty()) return true;
+    }
     return false;
 }
 
 void SessionPool::releaseIdleClients() {
-    for (auto& [_, rt] : pool_) {
-        if (rt && !rt->running()) rt->releaseClient();
+    std::lock_guard<std::mutex> lock(in_flight_mutex_);
+    for (auto& [id, rt] : pool_) {
+        if (!rt || rt->running()) continue;
+        // 有排队任务（running_ 尚未置位）的会话不释放 client：
+        // 任务启动时会立即使用，释放只会导致白重建一次
+        if (in_flight_.count(id) > 0) continue;
+        rt->releaseClient();
     }
 }
 
@@ -217,15 +309,20 @@ llm::LLMResponse SessionPool::process(const std::string& session_id,
     SessionRuntime* rt = session(session_id);
     if (!rt) {
         spdlog::warn("[SessionPool] 会话 {} 不存在，拒绝输入", session_id);
-        return llm::LLMResponse{.finish_reason = "session_not_found"};
+        return llm::LLMResponse::rejected("session_not_found");
     }
-    // P9：并发检查 + 提交 + in-flight 占位在持锁内一次完成，避免 TOCTOU 突破上限。
+    // P9：并发检查 + 同会话单飞检查 + 提交 + in-flight 占位在持锁内一次完成，
+    // 避免 TOCTOU 突破上限；in_flight_ 每会话至多一条（不变量）：同一会话重复提交
+    // 会导致同一 runtime 并发执行 process（内存无锁数据竞争）且两个条目互相覆盖，
+    // 删除时 wait 到错误的 future 直接 erase → 池线程持悬垂 runtime 指针（UAF）。
     llm::LLMResponse rejected;
     std::shared_future<llm::LLMResponse> shared;
     {
         std::lock_guard<std::mutex> lock(in_flight_mutex_);
         if (in_flight_.size() >= kMaxConcurrent) {
-            rejected = llm::LLMResponse{.finish_reason = "concurrency_full"};
+            rejected = llm::LLMResponse::rejected("concurrency_full");
+        } else if (in_flight_.count(session_id) > 0) {
+            rejected = llm::LLMResponse::rejected("session_busy");
         } else {
             shared = pool_exec_->submit([rt, input, cb = std::move(callbacks)]() mutable {
                 return rt->process(input, std::move(cb));
@@ -234,7 +331,11 @@ llm::LLMResponse SessionPool::process(const std::string& session_id,
         }
     }
     if (!shared.valid()) {
-        spdlog::warn("[SessionPool] 并发已满（{}），拒绝提交会话 {}", kMaxConcurrent, session_id);
+        spdlog::warn("[SessionPool] {}，拒绝提交会话 {}",
+                     rejected.finish_reason == "concurrency_full"
+                         ? "并发已满"
+                         : "会话正在生成中",
+                     session_id);
         return rejected;
     }
     struct Cleanup {
@@ -259,28 +360,45 @@ void SessionPool::submitProcess(const std::string& session_id,
     SessionRuntime* rt = session(session_id);
     if (!rt) {
         spdlog::warn("[SessionPool] 会话 {} 不存在，拒绝输入", session_id);
-        if (on_complete) on_complete(session_id, llm::LLMResponse{.finish_reason = "session_not_found"});
+        if (on_complete) on_complete(session_id, llm::LLMResponse::rejected("session_not_found"));
         return;
     }
-    // P9：并发检查 + 提交 + in-flight 占位在持锁内一次完成，避免 TOCTOU 突破上限。
+    // P9：并发检查 + 同会话单飞检查 + 提交 + in-flight 占位在持锁内一次完成，
+    // 避免 TOCTOU 突破上限（拒绝回调移到锁外调用——回调内可能执行重型工作
+    //（如 GUI 侧 indexAll），持锁同步调用会卡住所有池任务的收尾）。
     // in_flight_ 记录供 deleteSessionRuntime 在删除运行中会话时 cancel+wait。
+    llm::LLMResponse rejected;
+    bool rejected_flag = false;
     {
         std::lock_guard<std::mutex> lock(in_flight_mutex_);
         if (in_flight_.size() >= kMaxConcurrent) {
-            spdlog::warn("[SessionPool] 并发已满（{}），拒绝提交会话 {}", kMaxConcurrent, session_id);
-            if (on_complete) on_complete(session_id, llm::LLMResponse{.finish_reason = "concurrency_full"});
-            return;
+            rejected = llm::LLMResponse::rejected("concurrency_full");
+            rejected_flag = true;
+        } else if (in_flight_.count(session_id) > 0) {
+            // 同会话已在跑/排队：拒绝重复提交（防同一 runtime 并发执行 + 删除 UAF）
+            rejected = llm::LLMResponse::rejected("session_busy");
+            rejected_flag = true;
+        } else {
+            auto future = pool_exec_->submit(
+                [this, rt, session_id, input, cb = std::move(callbacks),
+                 oc = std::move(on_complete)]() mutable {
+                    auto resp = rt->process(input, std::move(cb));
+                    if (oc) oc(session_id, resp);
+                    std::lock_guard<std::mutex> l(in_flight_mutex_);
+                    in_flight_.erase(session_id);
+                    return resp;
+                });
+            in_flight_[session_id] = future.share();
         }
-        auto future = pool_exec_->submit(
-            [this, rt, session_id, input, cb = std::move(callbacks),
-             oc = std::move(on_complete)]() mutable {
-                auto resp = rt->process(input, std::move(cb));
-                if (oc) oc(session_id, resp);
-                std::lock_guard<std::mutex> l(in_flight_mutex_);
-                in_flight_.erase(session_id);
-                return resp;
-            });
-        in_flight_[session_id] = future.share();
+    }
+    if (rejected_flag) {
+        spdlog::warn("[SessionPool] {}，拒绝提交会话 {}",
+                     rejected.finish_reason == "concurrency_full"
+                         ? "并发已满"
+                         : "会话正在生成中",
+                     session_id);
+        if (on_complete) on_complete(session_id, rejected);
+        return;
     }
 }
 
@@ -292,8 +410,13 @@ bool SessionPool::cancelAllAndWait(std::chrono::milliseconds timeout) {
         std::lock_guard<std::mutex> lock(in_flight_mutex_);
         futures.reserve(in_flight_.size());
         for (const auto& [id, fut] : in_flight_) {
-            if (auto it = pool_.find(id); it != pool_.end())
+            if (auto it = pool_.find(id); it != pool_.end()) {
                 it->second->requestCancel();
+                // 同时置删除请求：排队未启动的任务在 process 开头会 resetCancel()
+                // 清掉取消标志，不置删除标志则它仍会完整跑一轮 LLM——关闭/重建的
+                // "2s 内退场"契约对排队任务失效（析构期间 GUI 可阻塞整轮生成时长）。
+                it->second->setDeleteRequested();
+            }
             futures.push_back(fut);
         }
     }

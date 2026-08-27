@@ -23,6 +23,8 @@
 
 #include <algorithm>
 #include <deque>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -46,6 +48,7 @@ public:
     // ================================================================
 
     void inject(Message msg) override {
+        std::lock_guard<std::mutex> lk(*mutex_);
         if (msg.role == MessageRole::System) {
             system_prompt_ = std::move(msg.content);
         } else {
@@ -67,10 +70,12 @@ public:
     }
 
     void setSystemPrompt(std::string prompt) override {
+        std::lock_guard<std::mutex> lk(*mutex_);
         system_prompt_ = std::move(prompt);
     }
 
     void prepend(Message msg) override {
+        std::lock_guard<std::mutex> lk(*mutex_);
         if (msg.role == MessageRole::System) {
             system_prompt_ = std::move(msg.content);
         } else {
@@ -80,6 +85,7 @@ public:
 
     // 批量原子修改（Issue 2: copy-then-swap 强异常保证）
     void apply(MemoryDiff diff) override {
+        std::lock_guard<std::mutex> lk(*mutex_);
         auto replacement = messages_;
         replacement.reserve(messages_.size() + diff.added.size());
 
@@ -119,6 +125,12 @@ public:
     const std::string& systemPrompt() const override { return system_prompt_; }
 
     const std::vector<Message>& messages() const override { return messages_; }
+
+    // 加锁拷贝：GUI 线程跨线程读取运行中会话的历史必须走此方法（见 IMemory::snapshot）。
+    std::vector<Message> snapshot() const override {
+        std::lock_guard<std::mutex> lk(*mutex_);
+        return messages_;
+    }
 
     std::vector<Message> all() const override {
         if (system_prompt_.empty()) return messages_;
@@ -160,12 +172,14 @@ public:
     // ================================================================
 
     void clear() override {
+        std::lock_guard<std::mutex> lk(*mutex_);
         messages_.clear();
         system_prompt_.clear();
         auto_pin_ids_.clear();
     }
 
     void truncateTo(size_t keep_count) override {
+        std::lock_guard<std::mutex> lk(*mutex_);
         size_t offset = system_prompt_.empty() ? 0 : 1;
         if (keep_count == 0) {
             messages_.clear();
@@ -182,6 +196,7 @@ public:
     }
 
     void removeOldest(size_t count) override {
+        std::lock_guard<std::mutex> lk(*mutex_);
         if (count >= messages_.size()) {
             messages_.clear();
         } else {
@@ -190,9 +205,13 @@ public:
         }
     }
 
-    void popBack() override { messages_.pop_back(); }
+    void popBack() override {
+        std::lock_guard<std::mutex> lk(*mutex_);
+        messages_.pop_back();
+    }
 
     bool pin(size_t index) override {
+        std::lock_guard<std::mutex> lk(*mutex_);
         size_t offset = system_prompt_.empty() ? 0 : 1;
         if (index < offset) return false;
         size_t msg_idx = index - offset;
@@ -206,6 +225,7 @@ public:
     }
 
     bool unpin(size_t index) override {
+        std::lock_guard<std::mutex> lk(*mutex_);
         size_t offset = system_prompt_.empty() ? 0 : 1;
         if (index < offset) return false;
         size_t msg_idx = index - offset;
@@ -218,6 +238,7 @@ public:
     }
 
     bool edit(size_t index, std::string new_content) override {
+        std::lock_guard<std::mutex> lk(*mutex_);
         size_t offset = system_prompt_.empty() ? 0 : 1;
         if (index < offset) return false;
         size_t msg_idx = index - offset;
@@ -231,10 +252,12 @@ public:
     }
 
     MemorySnapshot checkpoint() const override {
+        std::lock_guard<std::mutex> lk(*mutex_);
         return MemorySnapshot{messages_, system_prompt_};
     }
 
     void restore(const MemorySnapshot& snapshot) override {
+        std::lock_guard<std::mutex> lk(*mutex_);
         messages_ = snapshot.messages;
         system_prompt_ = snapshot.system_prompt;
         // WHY：快照不携带自动 pin 队列（MemorySnapshot 保持消息语义纯粹），
@@ -255,7 +278,10 @@ public:
     // 非虚便捷方法（Memory 特有，不在 IMemory 接口中）
     // ================================================================
 
-    void reserve(size_t n) { messages_.reserve(n); }
+    void reserve(size_t n) {
+        std::lock_guard<std::mutex> lk(*mutex_);
+        messages_.reserve(n);
+    }
 
     auto begin() const { return messages_.begin(); }
     auto end()   const { return messages_.end(); }
@@ -301,6 +327,13 @@ private:
             }
         }
     }
+
+    // 线程安全说明：池工作线程是 memory 的唯一写者兼主要读者（messages() 等裸引用
+    // 方法仅限该线程调用，保持 LLM 热路径零拷贝）；GUI 线程只经 snapshot()/checkpoint()
+    // 读加锁拷贝。mutex_ 保护所有变异方法与跨线程快照（无嵌套加锁，无死锁风险）。
+    // unique_ptr 包一层：Memory 在既有代码中按值返回/移动赋值（SessionPersistence::load、
+    // SessionRuntime::loadSessionState），裸 mutex 会使 Memory 不可移动。
+    mutable std::unique_ptr<std::mutex> mutex_{std::make_unique<std::mutex>()};
 
     // 按 tool_call_id 查找仍处于 pinned 状态的 Tool 消息；未找到返回 nullptr。
     Message* findPreservedTool(const std::string& id) {

@@ -14,6 +14,13 @@ namespace agent {
 namespace {
 constexpr size_t kMaxInputLength = 65536;
 
+// 当前毫秒级 epoch（会话最近活动时间用；跨线程原子读，无时钟一致性要求）。
+int64_t nowEpochMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
 const std::vector<std::string> kDangerousPatterns = {
     "<|im_start|>", "<|im_end|>",
     "忽略以上指令", "ignore all previous",
@@ -42,6 +49,7 @@ SessionRuntime::SessionRuntime(const std::string& session_id,
                                ToolRegistry& registry,
                                SessionRuntimeDeps deps)
     : session_id_(session_id)
+    , updated_at_ms_(nowEpochMs())   // 须与成员声明顺序一致（声明在 client_ 之前），否则 -Wreorder
     , client_(factory.create())
     , progressive_tools_(registry)
     , pipeline_(progressive_tools_, /*num_threads=*/2)
@@ -69,6 +77,10 @@ SessionRuntime::SessionRuntime(const std::string& session_id,
         prompt = std::move(deps.system_prompt);
     }
     memory_.setSystemPrompt(std::move(prompt));
+}
+
+void SessionRuntime::touchActivity() {
+    updated_at_ms_.store(nowEpochMs());  // 发送提交时置最近活动（列表即时置顶）
 }
 
 void SessionRuntime::refreshUsage() {
@@ -191,7 +203,7 @@ SessionRuntime::InternalResult SessionRuntime::processSerial(
     config.setMaxRounds(exec_config_.max_tool_rounds)
           .setMaxRepeatedCalls(exec_config_.max_repeated_calls);
 
-    config.hooks.on_round_complete = [this](int input_tok, int output_tok, int estimated) {
+    config.hooks.on_round_complete = [this](int input_tok, int /*output_tok*/, int estimated) {
         if (calibrator_ && estimated > 0 && input_tok > 0) {
             calibrator_->calibrate(client_->config().model, estimated, input_tok);
         }
@@ -251,8 +263,10 @@ SessionRuntime::InternalResult SessionRuntime::processSerial(
 void SessionRuntime::applyCompaction(const CompactionResult& cr) {
     auto snapshot = memory_.checkpoint();
     memory_.clear();
-    for (auto& msg : cr.retained) {
-        memory_.inject(std::move(msg));
+    for (const auto& msg : cr.retained) {
+        // cr 为 const 引用：此处的"移动"实际是拷贝（const 元素无法移动），
+        // 去掉 std::move 语义不变（-Wredundant-move 噪声消除）
+        memory_.inject(msg);
     }
     memory_.setSystemPrompt(snapshot.system_prompt);
     spdlog::info("[SessionRuntime] 压缩已应用: {} 条消息保留", cr.retained.size());
@@ -295,35 +309,33 @@ llm::LLMResponse SessionRuntime::process(const std::string& input,
     // 不被刚才的 resetCancel() 清零覆盖（否则删除者会白等一整轮 LLM）。
     if (delete_requested_.load()) {
         spdlog::info("[SessionRuntime] 会话 {} 已标记删除，跳过本轮执行", session_id_);
-        return llm::LLMResponse{.finish_reason = "cancelled"};
+        return llm::LLMResponse::rejected("cancelled");
     }
 
     if (input.empty()) {
         spdlog::warn("[SessionRuntime] 收到空输入，已忽略");
-        tracer_.record("error", 0, 0, ErrorPayload{.reason = "空输入被拒绝"});
-        return llm::LLMResponse{.finish_reason = "empty_input"};
+        tracer_.record("error", 0, 0, ErrorPayload::error("空输入被拒绝"));
+        return llm::LLMResponse::rejected("empty_input");
     }
 
     {
         std::string reason;
         if (!validateInput(input, reason)) {
             spdlog::warn("[SessionRuntime] 输入校验失败: {}", reason);
-            tracer_.record("error", 0, 0, ErrorPayload{.reason = "输入校验: " + reason});
-            return llm::LLMResponse{.finish_reason = "invalid_input"};
+            tracer_.record("error", 0, 0, ErrorPayload::error("输入校验: " + reason));
+            return llm::LLMResponse::rejected("invalid_input");
         }
     }
 
     if (!state_.canAcceptInput()) {
         spdlog::warn("[SessionRuntime] 当前状态 [{}] 不接受新输入", agentStateName(state_.current()));
-        tracer_.record("error", 0, 0, ErrorPayload{
-            .reason = "状态不允许输入",
-            .state = agentStateName(state_.current())
-        });
+        tracer_.record("error", 0, 0, ErrorPayload::error(
+            "状态不允许输入", agentStateName(state_.current())));
         if (state_.isError()) {
             spdlog::info("[SessionRuntime] 尝试从错误状态自动恢复 → Idle");
             state_.recover();
         } else {
-            return llm::LLMResponse{.finish_reason = "state_rejected"};
+            return llm::LLMResponse::rejected("state_rejected");
         }
     }
 
@@ -349,18 +361,19 @@ llm::LLMResponse SessionRuntime::process(const std::string& input,
         tracer_.record("done", result.raw_response.total_tokens, total_ms);
 
         saveSessionState();  // 每轮结束按本会话 id 落盘（D3）
+        updated_at_ms_.store(nowEpochMs());  // 本轮完成即视为最近活动（列表排序用）
 
         refreshUsage();
 
         return result.raw_response;
     } catch (const std::exception& e) {
         spdlog::error("[SessionRuntime] 处理异常，强制状态恢复: {}", e.what());
-        tracer_.record("error", 0, 0, ErrorPayload{.reason = "处理异常: " + std::string(e.what())});
+        tracer_.record("error", 0, 0, ErrorPayload::error("处理异常: " + std::string(e.what())));
         memory_.restore(memory_snapshot);
         state_.transition(AgentState::Error);
         state_.recover();
         running_ = false;
-        return llm::LLMResponse{.finish_reason = "error"};
+        return llm::LLMResponse::rejected("error");
     }
 }
 

@@ -70,6 +70,18 @@ public:
     // 会话列表（不含归档，按 updated_at 降序，最近使用在前）。
     std::vector<SessionInfo> listSessions();
 
+    // 会话是否存在（未归档）。点查替代 listSessions 全扫（物化路径每次点击都
+    // 全表扫描是 O(n) 浪费，且可能在 GUI 线程与池线程长事务争锁）。
+    bool hasSession(const std::string& id);
+
+    // 会话 id 是否已存在（含已归档行）。供新建会话 id 查重：撞已归档行会让
+    // 新会话写入归档行后"隐形"（save 的 upsert 不重置 archived），查重必须覆盖全部行。
+    bool sessionIdExists(const std::string& id);
+
+    // 会话在库中的最近活动时间戳（epoch 毫秒，解析 sessions.updated_at）；
+    // 无行/格式非法返回 -1。物化会话时用于把 runtime 排序时间戳恢复为库内真实值。
+    int64_t sessionUpdatedAtMs(const std::string& id);
+
     // 新建空会话，返回新会话 id（s-<时间戳> 格式）。
     std::string createSession();
 

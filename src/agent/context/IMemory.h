@@ -47,8 +47,13 @@ public:
     // ================================================================
 
     // 获取不含 system 消息的对话历史（传给 LLMClient::chat）。
-    // 零拷贝 — 直接返回内部引用。
+    // 零拷贝 — 直接返回内部引用。仅限"本记忆的单写线程"（每会话的池工作线程）调用。
     virtual const std::vector<Message>& messages() const = 0;
+
+    // 加锁拷贝的对话历史快照（不含 system 消息）。
+    // 跨线程读取（GUI 线程读运行中会话的 memory）必须走此接口：
+    // messages() 的裸引用与池线程的 vector 变异并发迭代是数据竞争（UB）。
+    virtual std::vector<Message> snapshot() const = 0;
 
     // 返回系统提示词。
     virtual const std::string& systemPrompt() const = 0;

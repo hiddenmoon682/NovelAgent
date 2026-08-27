@@ -20,6 +20,7 @@
 #include "llm/ILLMClient.h"
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -58,12 +59,13 @@ struct SessionConfig {
 
 // SessionRuntime 核心依赖（P5：构造参数一次性注入；相对固定、生命周期内不变）。
 // client 例外：可单独懒重建（D6 空闲休眠），不在此结构内。
+// 注意：无默认值成员全部给 {} 默认初始化（缺省聚合初始化会触发 -Wmissing-field-initializers）。
 struct SessionRuntimeDeps {
     SessionPersistence* persistence = nullptr;      // 持久化（按 id 落盘）
     llm::TokenCounter* calibrator = nullptr;        // 共享校准器
-    AgentExecutionConfig exec_config;               // 工具循环执行配置
-    SessionConfig config;                           // 共享装配配置（summary_sink 等）
-    std::string system_prompt;                      // 创建时注入的 system prompt（D11）
+    AgentExecutionConfig exec_config{};             // 工具循环执行配置
+    SessionConfig config{};                         // 共享装配配置（summary_sink 等）
+    std::string system_prompt{};                    // 创建时注入的 system prompt（D11）
     int model_limit = 0;                            // 模型上下文上限
 };
 
@@ -136,6 +138,14 @@ public:
     void setPersisted(bool v) { persisted_.store(v); }
     // 运行状态（供调用方判断是否空闲可休眠）。跨线程：池线程写、GUI 线程读。
     bool running() const { return running_.load(); }
+    // 最近活动时间（毫秒级 epoch：创建/每轮完成时刷新），供会话列表按最近使用统一排序。
+    // 跨线程：池线程写、GUI 线程读 → 原子。
+    int64_t updatedAtMs() const { return updated_at_ms_.load(); }
+    // 覆盖最近活动时间：物化历史会话时恢复为库内真实 updated_at（避免"点击会话"把
+    // 排序时间刷成现在导致列表跳动），或发送消息时立即置顶用。
+    void setUpdatedAtMs(int64_t ms) { updated_at_ms_.store(ms); }
+    // 标记最近活动（置为当前时刻）：发送消息提交时调用，即时刷新列表排序。
+    void touchActivity();
     // 释放 client 连接（D6 空闲休眠）：切走/空闲时释放 HTTP 连接，下次 process 懒重建。
     void releaseClient() { client_.reset(); }
     // client 是否已释放（休眠中）。
@@ -164,6 +174,8 @@ private:
     std::atomic<bool> persisted_{false};
     // 运行状态（池线程写、GUI 线程读）→ 原子。
     std::atomic<bool> running_{false};
+    // 最近活动时间（毫秒级 epoch）。池线程写（构造/每轮完成）、GUI 线程读 → 原子。
+    std::atomic<int64_t> updated_at_ms_{0};
 
     // 每会话独有运行时状态
     llm::Memory memory_;

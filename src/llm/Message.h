@@ -116,11 +116,11 @@ inline void from_json(const nlohmann::json& j, ToolCall& tc) {
 struct Message {
     // ── 字段 ──
     MessageRole role = MessageRole::User;
-    std::string content;               // 消息正文（可为空，当 tool_calls 非空时）
-    std::vector<ToolCall> tool_calls;  // 工具调用列表（仅 assistant 角色使用）
-    std::string tool_call_id;          // 关联的工具调用 ID（仅 tool 角色使用）
-    std::string name;                  // 可选参与者名称
-    std::string reasoning_content;     // DeepSeek thinking 模式的推理过程（工具调用循环中使用）
+    std::string content{};             // 消息正文（可为空，当 tool_calls 非空时）
+    std::vector<ToolCall> tool_calls{};// 工具调用列表（仅 assistant 角色使用）
+    std::string tool_call_id{};        // 关联的工具调用 ID（仅 tool 角色使用）
+    std::string name{};                // 可选参与者名称
+    std::string reasoning_content{};   // DeepSeek thinking 模式的推理过程（工具调用循环中使用）
     bool preserved = false;            // 内部标记：截断时优先保留（不参与 JSON 序列化）
     bool is_control = false;           // 控制消息标记（P6）：系统注入的占位消息（如取消提示），
                                        // 非真实对话；UI 据此过滤/特殊渲染。不进入 OpenAI 协议序列化。
@@ -279,6 +279,15 @@ struct LLMResponse {
     int total_tokens = 0;              // 总 token 数（省去手动相加）
     int cached_tokens = 0;             // prompt_tokens_details.cached_tokens — 缓存命中的 prompt token 数
     int reasoning_tokens = 0;          // completion_tokens_details.reasoning_tokens — 思维链消耗的 token 数
+
+    // 构造"仅结束原因"的拒绝响应（取消/并发满/会话不存在等非正常完成短路径）。
+    // 显式列出全部无默认初始化的字段：聚合初始化只写 finish_reason 会触发
+    // -Wmissing-field-initializers 警告刷屏（GCC 对设计式初始化漏字段告警）。
+    static LLMResponse rejected(std::string finish_reason) {
+        return LLMResponse{.id = {}, .model = {}, .system_fingerprint = {},
+                           .content = {}, .reasoning_content = {}, .tool_calls = {},
+                           .finish_reason = std::move(finish_reason)};
+    }
 };
 
 // LLMResponse 的 JSON 序列化（nlohmann ADL 钩子）。

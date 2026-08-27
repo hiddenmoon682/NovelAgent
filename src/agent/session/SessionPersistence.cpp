@@ -7,6 +7,7 @@
 #include "storage/SqliteStore.h"
 
 #include <SQLiteCpp/Statement.h>
+#include <chrono>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
@@ -85,6 +86,36 @@ std::string deriveTitle(const std::vector<llm::Message>& messages)
         return utf8Truncate(content, 30);
     }
     return {};
+}
+
+// "2026-08-27T15:16:00Z"（UTC，精确到秒，ProjectIO::nowTimestamp 产出）→ epoch 毫秒；
+// 格式不符或日期非法返回 -1。物化会话时用库内真实时间覆盖 runtime 的排序时间戳
+//（否则物化动作本身会把会话"最近活动时间"刷成现在，见点击会话导致列表跳动历史 bug）。
+int64_t parseIsoUtcToMs(const std::string& ts)
+{
+    if (ts.size() != 20 || ts[4] != '-' || ts[7] != '-' || ts[10] != 'T'
+        || ts[13] != ':' || ts[16] != ':' || ts[19] != 'Z')
+        return -1;
+    auto num = [&](size_t off, size_t n) -> int {
+        int v = 0;
+        for (size_t i = 0; i < n; ++i) {
+            const char c = ts[off + i];
+            if (c < '0' || c > '9') return -1;
+            v = v * 10 + (c - '0');
+        }
+        return v;
+    };
+    const int y = num(0, 4), mo = num(5, 2), d = num(8, 2);
+    const int h = num(11, 2), mi = num(14, 2), s = num(17, 2);
+    if (y < 0 || mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60)
+        return -1;
+    const std::chrono::year_month_day ymd{std::chrono::year{y},
+                                          std::chrono::month{static_cast<unsigned>(mo)},
+                                          std::chrono::day{static_cast<unsigned>(d)}};
+    if (!ymd.ok()) return -1;  // 如 2 月 30 日等非法日期
+    using namespace std::chrono;
+    const auto tp = sys_days{ymd} + hours{h} + minutes{mi} + seconds{s};
+    return duration_cast<milliseconds>(tp.time_since_epoch()).count();
 }
 
 } // namespace
@@ -244,6 +275,46 @@ std::vector<SessionInfo> SessionPersistence::listSessions()
         }
     });
     return result;
+}
+
+bool SessionPersistence::hasSession(const std::string& id)
+{
+    if (!sqlite_.isOpen()) {
+        spdlog::warn("[SessionPersistence] 库未打开，会话存在性检查 {} 失败", id);
+        return false;
+    }
+    return sqlite_.withLock([&](storage::SqliteStore& s) -> bool {
+        SQLite::Statement q(s.db(),
+            "SELECT 1 FROM sessions WHERE id = ? AND archived = 0");
+        q.bind(1, id);
+        return q.executeStep();
+    });
+}
+
+int64_t SessionPersistence::sessionUpdatedAtMs(const std::string& id)
+{
+    if (!sqlite_.isOpen()) return -1;
+    std::string updated_at;
+    sqlite_.withLock([&](storage::SqliteStore& s) {
+        SQLite::Statement q(s.db(), "SELECT updated_at FROM sessions WHERE id = ?");
+        q.bind(1, id);
+        if (q.executeStep()) updated_at = q.getColumn(0).getString();
+    });
+    if (updated_at.empty()) return -1;  // 无行（含已归档行）
+    return parseIsoUtcToMs(updated_at);
+}
+
+bool SessionPersistence::sessionIdExists(const std::string& id)
+{
+    if (!sqlite_.isOpen()) {
+        spdlog::warn("[SessionPersistence] 库未打开，会话 id 查重 {} 失败", id);
+        return false;
+    }
+    return sqlite_.withLock([&](storage::SqliteStore& s) -> bool {
+        SQLite::Statement q(s.db(), "SELECT 1 FROM sessions WHERE id = ?");
+        q.bind(1, id);
+        return q.executeStep();
+    });
 }
 
 std::string SessionPersistence::createSession()

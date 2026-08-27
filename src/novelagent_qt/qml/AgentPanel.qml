@@ -454,7 +454,10 @@ Rectangle {
             }
         }
 
-        function onErrorOccurred(message) {
+        function onErrorOccurred(sessionId, message) {
+            // 会话维度过滤：空串 = 会话无关错误（显示在当前查看会话）；
+            // 非空 = 仅正在查看该会话才展示（后台会话报错不污染当前视图）
+            if (sessionId.length > 0 && sessionId !== bridge.currentSessionId) return
             root.finalizeRunningTools("error")
             var idx = root.lastStreamingAssistant()
             if (idx >= 0)

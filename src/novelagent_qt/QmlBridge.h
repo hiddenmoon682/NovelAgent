@@ -70,7 +70,6 @@ public:
     // ── 会话交互（既有）──
     Q_INVOKABLE void sendMessage(const QString& text);
     Q_INVOKABLE void cancelRequest();
-    Q_INVOKABLE void newSession();
     // 多会话并行（阶段 4）：当前查看会话 id（pool 会话）。
     QString currentSessionId() const { return current_session_id_; }
     // 新建一个多会话池会话并设为当前，返回其 id（空串 = 未就绪）。
@@ -83,8 +82,6 @@ public:
     Q_INVOKABLE bool deletePoolSession(const QString& sessionId);
     // 会话列表（按最近使用降序）：[{id, title, active, updatedAt}, ...]；未就绪返回空。
     Q_INVOKABLE QVariantList sessionList() const;
-    // 切换到指定会话（保存当前会话后重载）；生成中/未就绪返回 false。
-    Q_INVOKABLE bool switchSession(const QString& sessionId);
     // 删除指定会话（内容归档到 archive/）；删除 active 会话时自动切换。
     Q_INVOKABLE bool deleteSession(const QString& sessionId);
     // 当前内存中的对话历史（启动恢复后供 QML 重建聊天流）：
@@ -159,8 +156,10 @@ signals:
     void toolCallStarted(const QString& sessionId, const QString& toolName);
     void toolCallFinished(const QString& sessionId, const QString& toolName, bool ok);
     void responseComplete(const QString& sessionId, const QString& fullText);
-    // 聊天/Agent 运行时错误（发送消息失败、生成异常等），由 AgentPanel 展示在对话区
-    void errorOccurred(const QString& message);
+    // 聊天/Agent 运行时错误（发送消息失败、生成异常等），由 AgentPanel 展示在对话区。
+    // sessionId 空串 = 会话无关错误（始终显示在当前查看会话）；非空则仅当正在查看该
+    // 会话时显示（后台会话报错不污染当前视图）。
+    void errorOccurred(const QString& sessionId, const QString& message);
     // UI 操作失败（删除/创建/打开项目、Provider 配置、重建索引、读取章节等），
     // 与聊天错误通道分离：由全局 Toast 就地提示，不进对话区（对齐原型：提示就地显示）
     void uiErrorOccurred(const QString& message);
