@@ -88,3 +88,6 @@ scripts/
 
 # DSH 项目技能与本地 agent 配置（个人环境相关，不跟踪）
 .dsh/
+
+# SDD 工作区（计划执行脚手架，不跟踪）
+.superpowers/

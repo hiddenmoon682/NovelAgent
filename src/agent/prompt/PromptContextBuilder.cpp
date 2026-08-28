@@ -60,9 +60,12 @@ std::optional<PromptContext> PromptContextBuilder::buildForChapter(
     payload["task"] = options.task;
     payload["chapter_id"] = chapter->id;
 
-    // 5a. 项目级摘要
+    // 5a. 项目级摘要。
+    // 注意 exclude：allow_auto_overwrite/format_version 为内部配置/实现字段，
+    // 不进入模型可见输出（模型看到字段名会误当工具参数传入——历史踩坑）。
     if (options.include_project_summary) {
-        payload["project"] = filterObject(project, options.include_metadata, {"title"});
+        payload["project"] = filterObject(project, options.include_metadata,
+                                          {"title"}, {"allow_auto_overwrite", "format_version"});
     }
 
     // 5b. 风格指南
@@ -211,9 +214,11 @@ std::optional<PromptContext> PromptContextBuilder::buildLightweight(
     payload["task"] = options.task;
     payload["chapter_id"] = chapter->id;
 
-    // 只保留最核心的信息：项目概要 + 风格 + 章节元数据 + 卷
+    // 只保留最核心的信息：项目概要 + 风格 + 章节元数据 + 卷。
+    // 同样排除内部配置字段（见 buildForChapter 的注释）。
     if (options.include_project_summary) {
-        payload["project"] = filterObject(project, options.include_metadata, {"title"});
+        payload["project"] = filterObject(project, options.include_metadata,
+                                          {"title"}, {"allow_auto_overwrite", "format_version"});
     }
     if (options.include_style) {
         payload["style"] = filterObject(project.style, options.include_metadata);

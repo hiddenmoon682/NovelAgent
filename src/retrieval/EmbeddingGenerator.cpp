@@ -82,12 +82,15 @@ std::vector<std::vector<float>> EmbeddingGenerator::generateEmbeddings(
 
     std::vector<std::vector<float>> all_embeddings;
 
-    // 按 max_batch_size 分批
-    for (size_t offset = 0; offset < texts.size();
-         offset += embed_config_.max_batch_size) {
-        size_t batch_size = std::min(
-            static_cast<size_t>(embed_config_.max_batch_size),
-            texts.size() - offset);
+    // 单请求批量上限由配置决定（DashScope 千问嵌入服务端限制为最多 20 条，
+    // 配置时在该服务的 max_batch_size 填 20——实测 21 条起返回 400
+    // "batch size should not be larger than 20"）。不再按协议开关特判：
+    // 上限绑定服务商而非协议格式（compatible-mode 标准协议同样受限）。
+    const size_t batch_limit = static_cast<size_t>(embed_config_.max_batch_size);
+
+    // 按 batch_limit 分批
+    for (size_t offset = 0; offset < texts.size(); offset += batch_limit) {
+        size_t batch_size = std::min(batch_limit, texts.size() - offset);
 
         std::vector<std::string> batch(
             texts.begin() + offset,
@@ -136,10 +139,16 @@ json EmbeddingGenerator::sendEmbeddingRequest(
 {
     json request_body;
     request_body["model"] = embed_config_.model;
-    request_body["input"] = texts;
+    if (embed_config_.dashscope_style) {
+        // DashScope 千问嵌入协议：input 为 {"texts": [...]} 对象
+        request_body["input"] = {{"texts", texts}};
+    } else {
+        // OpenAI 兼容协议：input 为字符串数组
+        request_body["input"] = texts;
+    }
 
-    // 委托 HttpClient 处理 URL/认证/重试/错误
-    return http_->post("/v1/embeddings", request_body);
+    // 委托 HttpClient 处理 URL/认证/重试/错误（endpoint 与 base_url 前缀拼接）
+    return http_->post(embed_config_.endpoint, request_body);
 }
 
 // ===========================================================================
@@ -151,6 +160,31 @@ std::vector<std::vector<float>> EmbeddingGenerator::parseEmbeddingsResponse(
 {
     std::vector<std::vector<float>> results;
 
+    // DashScope 千问嵌入：output.embeddings[].embedding（按数组顺序即请求顺序）
+    if (embed_config_.dashscope_style) {
+        if (!response.contains("output") || !response["output"].is_object()
+            || !response["output"].contains("embeddings")
+            || !response["output"]["embeddings"].is_array()) {
+            throw std::runtime_error(
+                "[EmbeddingGenerator] DashScope 响应中缺少 output.embeddings 字段");
+        }
+        for (const auto& item : response["output"]["embeddings"]) {
+            if (!item.contains("embedding") || !item["embedding"].is_array()) {
+                spdlog::warn("[EmbeddingGenerator] DashScope 响应条目缺少 embedding 字段");
+                continue;
+            }
+            std::vector<float> embedding;
+            for (const auto& val : item["embedding"]) {
+                if (val.is_number()) {
+                    embedding.push_back(val.get<float>());
+                }
+            }
+            results.push_back(std::move(embedding));
+        }
+        return results;
+    }
+
+    // OpenAI 兼容协议：data[].embedding
     if (!response.contains("data") || !response["data"].is_array()) {
         throw std::runtime_error("[EmbeddingGenerator] 响应中缺少 data 字段");
     }

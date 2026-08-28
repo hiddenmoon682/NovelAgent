@@ -64,6 +64,12 @@ QtObject {
     readonly property int radiusMd:    10
     readonly property int radiusToast: 8    // toast 提示
 
+    // ── 行高 ──
+    readonly property real lineHeightBody: 1.3  // 正文行高（阅读区；段内每行均按此行高渲染，与段距 readerParagraphGap 相互独立）
+
+    // ── 阅读区段距 ──
+    readonly property int readerParagraphGap: 16  // 章节正文段落空隙（固定像素，与行高 lineHeightBody 相互独立）
+
     // ── 选中标条 ──
     readonly property real markBar: 2.5     // 朱砂选中标条宽度（原型 2.5px）
 

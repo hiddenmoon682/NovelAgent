@@ -28,7 +28,10 @@ public:
     // 装配全部组件：初始化 LLM 客户端、记忆、持久化、技能注册表与内置工具，
     // 并恢复上次会话。内置工具禁用列表由工具配置（tools.json）驱动，
     // 不再由调用方传入。
-    NovelAgentApp(const ProviderConfig& provider, std::shared_ptr<Project> project);
+    // @param embedding 嵌入专用设置（可选）：enabled 时向量索引/检索的嵌入生成
+    //                  使用该服务（如 DashScope 千问），否则回退对话 provider。
+    NovelAgentApp(const ProviderConfig& provider, std::shared_ptr<Project> project,
+                  const EmbeddingSettings& embedding = {});
     ~NovelAgentApp();
 
     agent::Agent& agent() { return agent_; }                           // 核心对话代理

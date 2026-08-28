@@ -7,6 +7,8 @@
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 
+#include <unordered_map>
+
 namespace agent {
 
 namespace {
@@ -203,16 +205,24 @@ CoreLoopResult CoreLoop::runImpl(
         if (state_) state_->transition(AgentState::AwaitingTool);
 
         for (const auto& tc : response.tool_calls)
-            if (callbacks.on_tool_start) callbacks.on_tool_start(tc.function_name);
+            if (callbacks.on_tool_start)
+                callbacks.on_tool_start(tc.function_name, tc.arguments);
 
         try {
             auto diff = pipeline_.execute(response.tool_calls);
             memory.apply(diff);
+            // 结果按 tool_call_id 配对：随回调带给显示层（UI 展开工具详情/历史恢复用）
+            std::unordered_map<std::string, std::string> results;
+            for (const auto& m : diff.added)
+                if (m.role == llm::MessageRole::Tool)
+                    results[m.tool_call_id] = m.content;
             for (const auto& tc : response.tool_calls)
-                if (callbacks.on_tool_finish) callbacks.on_tool_finish(tc.function_name, true);
+                if (callbacks.on_tool_finish)
+                    callbacks.on_tool_finish(tc.function_name, true, results[tc.id]);
         } catch (...) {
             for (const auto& tc : response.tool_calls)
-                if (callbacks.on_tool_finish) callbacks.on_tool_finish(tc.function_name, false);
+                if (callbacks.on_tool_finish)
+                    callbacks.on_tool_finish(tc.function_name, false, "");
             memory.popBack();
             throw;
         }

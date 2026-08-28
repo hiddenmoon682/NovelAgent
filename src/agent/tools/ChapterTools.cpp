@@ -110,7 +110,7 @@ json ReadChapterTool::execute(const json& args) {
 json WriteChapterTool::parameters() const {
     return utils::schema::object({
         {"chapter_id", utils::schema::stringProp("章节 ID")},
-        {"content", utils::schema::stringProp("章节 Markdown 完整内容")}
+        {"content", utils::schema::stringProp("章节纯文本正文（禁止 Markdown 标记，按小说正文自然分段）")}
     }, {"chapter_id", "content"});
 }
 
@@ -142,8 +142,9 @@ json WriteChapterTool::execute(const json& args) {
         return {
             {"action", "confirm_overwrite"},
             {"message", "章节 " + chapter_id + " 已有 " + std::to_string(existing.size())
-                      + " 字内容。如需覆写请将 allow_auto_overwrite 设为 true 后重试，"
-                        "或使用 append_to_chapter 追加内容。"},
+                      + " 字内容。覆写保护为项目级配置，模型无法通过任何参数"
+                        "修改。可改用 append_to_chapter 追加内容；确需覆写时，"
+                        "请向用户说明需在项目配置中开启覆写。"},
             {"preview", existing.substr(0, 200)}
         };
     }
@@ -189,7 +190,7 @@ json WriteChapterTool::execute(const json& args) {
 json AppendChapterTool::parameters() const {
     return utils::schema::object({
         {"chapter_id", utils::schema::stringProp("章节 ID")},
-        {"content", utils::schema::stringProp("要追加的 Markdown 内容")}
+        {"content", utils::schema::stringProp("要追加的纯文本正文（禁止 Markdown 标记）")}
     }, {"chapter_id", "content"});
 }
 
@@ -373,7 +374,8 @@ json CreateChapterTool::execute(const json& args) {
     project_->addChapter(new_ch);
     project_->save();
 
-    std::string init_content = "# " + title + "\n\n";
+    // 初始化正文为纯文本标题（正文非 Markdown，不得写 "# 标题" 这类标记头）
+    std::string init_content = title + "\n\n";
     ProjectIO::writeChapter(project_->path(), new_ch.file_path, init_content);
 
     spdlog::info("[create_chapter] {} '{}' → {}", new_ch.id, title, new_ch.file_path);

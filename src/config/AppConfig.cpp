@@ -41,6 +41,11 @@ AppConfig AppConfig::loadFromFile(const std::string& path) {
                 config.providers[name] = pj.get<ProviderConfig>();
             }
         }
+
+        // 嵌入专用服务（可选段）：缺省时保持默认空配置（回退对话 provider 行为）
+        if (j.contains("embedding") && j["embedding"].is_object()) {
+            config.embedding = j["embedding"].get<EmbeddingSettings>();
+        }
     } catch (const std::exception& e) {
         // 配置损坏时不让程序崩溃，记录警告后继续使用空配置。
         spdlog::warn("Failed to load config from {}: {}", path, e.what());
@@ -59,6 +64,8 @@ void AppConfig::save(const std::string& path) const {
     for (const auto& [name, provider] : providers) {
         j["providers"][name] = provider;
     }
+    // 嵌入专用服务（可选段）：未配置时仍写出空段，方便用户在 GUI 外手工填写
+    j["embedding"] = embedding;
     utils::file::createDirs(utils::file::dirName(path));
     utils::file::writeText(path, j.dump(2));
 }

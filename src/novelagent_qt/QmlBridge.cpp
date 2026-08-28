@@ -18,6 +18,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -40,6 +42,18 @@ bool isPlaceholderKey(const std::string& key) {
     return key.find("请替换") != std::string::npos ||
            key.find("your-") != std::string::npos ||
            key.find("placeholder") != std::string::npos;
+}
+
+// 工具结果是否为"错误形状"：结果 JSON 顶层含 "error" 成员（参数解析失败/校验失败/
+// 工具执行失败均产出 {"error": ..., "retryable": ...} 形态）。实时信号与历史恢复
+// （conversationHistory）共用此判据，保证运行中卡片与重启后回放的状态一致。
+bool isToolResultError(const std::string& result) {
+    try {
+        auto j = nlohmann::json::parse(result);
+        return j.is_object() && j.contains("error");
+    } catch (...) {
+        return false;
+    }
 }
 
 } // namespace
@@ -127,7 +141,9 @@ bool QmlBridge::rebuildApp(const std::string& providerName,
     app_.reset();
 
     try {
-        app_ = std::make_unique<NovelAgentApp>(*prov, std::move(project));
+        // 嵌入专用设置随装配传入：config.json 配置 embedding 段后，向量索引/
+        // 语义检索的嵌入生成走专用服务（如 DashScope 千问），否则回退对话 provider。
+        app_ = std::make_unique<NovelAgentApp>(*prov, std::move(project), config_.embedding);
     } catch (const std::exception& e) {
         if (error) *error = QStringLiteral("初始化失败: ") + QString::fromUtf8(e.what());
         emit agentReadyChanged();
@@ -536,13 +552,56 @@ QVariantList QmlBridge::conversationHistory() const {
     }
     if (!mem) mem = &app_->agent().memory();
 
-    for (const auto& msg : mem->snapshot()) {
+    // 历史回放同时重建工具调用条目（重启/切会话后仍能看到工具卡片）：
+    // memory 中工具调用以"assistant(带 tool_calls) + 紧随其后的 tool 结果消息"成组存储，
+    // 这里把每组还原为 UI 的 tool 条目（toolName/toolStatus/toolArgs/toolResult），
+    // 按 tool_call_id 与结果配对；配对不到（异常回滚等）按失败展示。
+    const auto snap = mem->snapshot();
+    for (size_t i = 0; i < snap.size(); ++i) {
+        const llm::Message& msg = snap[i];
+        if (msg.is_control) continue;                   // 控制消息（取消占位等）不显示
         const bool isUser = msg.role == llm::MessageRole::User;
         const bool isAssistant = msg.role == llm::MessageRole::Assistant;
-        if (!isUser && !isAssistant) continue;          // 跳过 tool 结果消息
-        if (msg.content.empty()) continue;              // 跳过纯 tool_calls 占位消息
-        if (msg.is_control) continue;                   // P6：控制消息（取消占位）不显示
+
+        if (isAssistant && !msg.tool_calls.empty()) {
+            // 本轮既输出文本又调用工具：先出正文气泡，再出工具条目
+            if (!msg.content.empty() || !msg.reasoning_content.empty()) {
+                QVariantMap m;
+                m.insert(QStringLiteral("type"), QStringLiteral("message"));
+                m.insert(QStringLiteral("role"), QStringLiteral("assistant"));
+                m.insert(QStringLiteral("content"), QString::fromStdString(msg.content));
+                m.insert(QStringLiteral("reasoning"), QString::fromStdString(msg.reasoning_content));
+                list.push_back(m);
+            }
+            for (const auto& tc : msg.tool_calls) {
+                QVariantMap t;
+                t.insert(QStringLiteral("type"), QStringLiteral("tool"));
+                t.insert(QStringLiteral("toolName"), QString::fromStdString(tc.function_name));
+                t.insert(QStringLiteral("toolArgs"), QString::fromStdString(tc.arguments));
+                // 工具结果按 id 紧随其后连续排列（同轮注入），遇到非 tool 角色即止
+                QString resultText;
+                bool found = false;
+                for (size_t k = i + 1; k < snap.size()
+                        && snap[k].role == llm::MessageRole::Tool; ++k) {
+                    if (snap[k].tool_call_id == tc.id) {
+                        resultText = QString::fromStdString(snap[k].content);
+                        found = true;
+                        break;
+                    }
+                }
+                t.insert(QStringLiteral("toolResult"), resultText);
+                t.insert(QStringLiteral("toolStatus"),
+                         (found && !isToolResultError(resultText.toStdString()))
+                             ? QStringLiteral("ok") : QStringLiteral("error"));
+                list.push_back(t);
+            }
+            continue;
+        }
+
+        if (!isUser && !isAssistant) continue;          // tool 结果/系统消息不单独成条目
+        if (msg.content.empty()) continue;              // 空占位（纯 tool_calls 等）已在上分支处理
         QVariantMap m;
+        m.insert(QStringLiteral("type"), QStringLiteral("message"));
         m.insert(QStringLiteral("role"), isUser ? QStringLiteral("user")
                                                 : QStringLiteral("assistant"));
         m.insert(QStringLiteral("content"), QString::fromStdString(msg.content));
@@ -710,18 +769,22 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
         }, Qt::QueuedConnection);
     };
 
-    cb.on_tool_start = [this, sid](const std::string& name) {
+    cb.on_tool_start = [this, sid](const std::string& name, const std::string& arguments) {
         QString n = QString::fromStdString(name);
-        QMetaObject::invokeMethod(this, [this, sid, n]() {
+        QString a = QString::fromStdString(arguments);
+        QMetaObject::invokeMethod(this, [this, sid, n, a]() {
             setStatus(QStringLiteral("调用工具: ") + n);
-            emit toolCallStarted(sid, n);
+            emit toolCallStarted(sid, n, a);
         }, Qt::QueuedConnection);
     };
 
-    cb.on_tool_finish = [this, sid](const std::string& name, bool ok) {
+    cb.on_tool_finish = [this, sid](const std::string& name, bool ok, const std::string& result) {
         QString n = QString::fromStdString(name);
-        QMetaObject::invokeMethod(this, [this, sid, n, ok]() {
-            emit toolCallFinished(sid, n, ok);
+        QString r = QString::fromStdString(result);
+        QMetaObject::invokeMethod(this, [this, sid, n, ok, r]() {
+            // 与历史恢复同一判据：结果含 error 形状 → 显示为失败（工具内部错误，
+            // 如参数校验失败，即使管道整体未抛异常也要按失败展示）
+            emit toolCallFinished(sid, n, ok && !isToolResultError(r.toStdString()), r);
         }, Qt::QueuedConnection);
     };
 

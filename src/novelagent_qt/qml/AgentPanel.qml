@@ -25,7 +25,8 @@ Rectangle {
 
     function appendAssistant(content, reasoning) {
         chatModel.append({ type: "message", role: "assistant", content: content,
-                           reasoning: reasoning, streaming: true, toolName: "", toolStatus: "" })
+                           reasoning: reasoning, streaming: true, toolName: "", toolStatus: "",
+                           toolArgs: "", toolResult: "", toolExpanded: false })
     }
 
     function finalizeRunningTools(status) {
@@ -48,9 +49,19 @@ Rectangle {
         if (!bridge.agentReady) return
         var hist = bridge.conversationHistory()
         for (var i = 0; i < hist.length; ++i) {
-            chatModel.append({ type: "message", role: hist[i].role, content: hist[i].content,
-                               reasoning: hist[i].reasoning, streaming: false,
-                               toolName: "", toolStatus: "" })
+            if (hist[i].type === "tool") {
+                // 历史回放重建工具调用条目（重启/切会话后仍显示工具卡片）：
+                // status 为终态（ok/error），参数/结果来自持久化的 tool_calls 与结果消息
+                chatModel.append({ type: "tool", role: "", content: "", reasoning: "",
+                                   streaming: false, toolName: hist[i].toolName,
+                                   toolStatus: hist[i].toolStatus, toolArgs: hist[i].toolArgs,
+                                   toolResult: hist[i].toolResult, toolExpanded: false })
+            } else {
+                chatModel.append({ type: "message", role: hist[i].role, content: hist[i].content,
+                                   reasoning: hist[i].reasoning, streaming: false,
+                                   toolName: "", toolStatus: "", toolArgs: "", toolResult: "",
+                                   toolExpanded: false })
+            }
         }
         // 视口定位与加载解耦（文档依据 doc.qt.io Qt6 ListView/Flickable 协议）：
         // 启动早期 SplitView 首帧布局晚于 agentReadyChanged，chatView 宽高可能尚未
@@ -85,7 +96,8 @@ Rectangle {
         if (text.length === 0 || bridge.sessionBusy) return
 
         chatModel.append({ type: "message", role: "user", content: text,
-                           reasoning: "", streaming: false, toolName: "", toolStatus: "" })
+                           reasoning: "", streaming: false, toolName: "", toolStatus: "",
+                           toolArgs: "", toolResult: "", toolExpanded: false })
         appendAssistant("", "")
 
         inputField.text = ""
@@ -120,6 +132,9 @@ Rectangle {
                 required property bool streaming
                 required property string toolName
                 required property string toolStatus
+                required property string toolArgs
+                required property string toolResult
+                required property bool toolExpanded
                 // required property 会关闭隐式 index/modelData 上下文注入，须显式声明
                 required property int index
                 width: chatView.width - chatView.leftMargin - chatView.rightMargin
@@ -157,6 +172,21 @@ Rectangle {
                         ToolCallCard {
                             toolName: delegateRoot.toolName
                             status: delegateRoot.toolStatus
+                            toolArgs: delegateRoot.toolArgs
+                            toolResult: delegateRoot.toolResult
+                            // 展开态存 model 条目：ListView 滚动回收 delegate 时组件
+                            // 实例会被复用，局部状态会残留到别的条目上；写入模型可
+                            // 保证每个条目的展开态独立且随历史重建归零。
+                            expanded: delegateRoot.toolExpanded
+                            onExpandedToggled: {
+                                // 防模型清空/切换会话期间 index 越界（与 newTurn 同守卫）
+                                if (delegateRoot.index >= 0 && delegateRoot.index < chatModel.count) {
+                                    var it = chatModel.get(delegateRoot.index)
+                                    if (it && it.type === "tool")
+                                        chatModel.setProperty(delegateRoot.index, "toolExpanded",
+                                                              !delegateRoot.toolExpanded)
+                                }
+                            }
                         }
                     }
                 }
@@ -469,7 +499,7 @@ Rectangle {
                 root.appendAssistant("", delta)
         }
 
-        function onToolCallStarted(sessionId, toolName) {
+        function onToolCallStarted(sessionId, toolName, toolArgs) {
             if (sessionId !== bridge.currentSessionId) return
             var idx = root.lastStreamingAssistant()
             if (idx >= 0) {
@@ -480,15 +510,17 @@ Rectangle {
                     chatModel.setProperty(idx, "streaming", false)
             }
             chatModel.append({ type: "tool", role: "", content: "", reasoning: "",
-                               streaming: false, toolName: toolName, toolStatus: "running" })
+                               streaming: false, toolName: toolName, toolStatus: "running",
+                               toolArgs: toolArgs, toolResult: "", toolExpanded: false })
         }
 
-        function onToolCallFinished(sessionId, toolName, ok) {
+        function onToolCallFinished(sessionId, toolName, ok, result) {
             if (sessionId !== bridge.currentSessionId) return
             for (var i = chatModel.count - 1; i >= 0; --i) {
                 var it = chatModel.get(i)
                 if (it && it.type === "tool" && it.toolName === toolName && it.toolStatus === "running") {
                     chatModel.setProperty(i, "toolStatus", ok ? "ok" : "error")
+                    chatModel.setProperty(i, "toolResult", result)
                     return
                 }
             }
@@ -517,7 +549,8 @@ Rectangle {
                 chatModel.setProperty(idx, "streaming", false)
             chatModel.append({ type: "message", role: "assistant",
                                content: "⚠ " + message, reasoning: "",
-                               streaming: false, toolName: "", toolStatus: "" })
+                               streaming: false, toolName: "", toolStatus: "",
+                               toolArgs: "", toolResult: "", toolExpanded: false })
         }
     }
 }

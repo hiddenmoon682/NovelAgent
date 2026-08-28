@@ -23,8 +23,13 @@ namespace retrieval {
 // 嵌入生成请求配置。
 struct EmbeddingConfig {
     std::string model = "text-embedding-3-small";  // 嵌入模型名称
-    int max_batch_size = 100;                       // 单次 API 调用最大文本数
-    int max_text_length = 8000;                     // 单条文本最大字符数（超长截断）
+    int max_batch_size = 100;                      // 单次 API 调用最大文本数
+    int max_text_length = 8000;                    // 单条文本最大字符数（超长截断）
+    std::string endpoint = "/v1/embeddings";       // 请求路径（与 HttpClient 的 base_url 前缀拼接；
+                                                   // DashScope 千问嵌入为完整路径）
+    bool dashscope_style = false;                  // DashScope 千问嵌入协议开关：
+                                                   // 请求体 input 为 {"texts":[...]}，
+                                                   // 响应向量位于 output.embeddings[].embedding
 };
 
 // 嵌入向量生成器 — OpenAI /v1/embeddings API 实现。
@@ -88,8 +93,9 @@ private:
     nlohmann::json sendEmbeddingRequest(
         const std::vector<std::string>& texts) const;
 
-    // 从 API 响应的 JSON 中提取嵌入向量列表。
-    static std::vector<std::vector<float>> parseEmbeddingsResponse(
+    // 从 API 响应的 JSON 中提取嵌入向量列表（OpenAI 兼容 data[].embedding 或
+    // DashScope 风格 output.embeddings[].embedding，按请求顺序返回）。
+    std::vector<std::vector<float>> parseEmbeddingsResponse(
         const nlohmann::json& response);
 
     // 预处理文本：截断超长文本。

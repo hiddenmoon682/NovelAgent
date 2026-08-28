@@ -158,8 +158,10 @@ signals:
     // 流式输出（逐 token 推送到 QML）
     void tokenReceived(const QString& sessionId, const QString& delta);
     void reasoningReceived(const QString& sessionId, const QString& delta);
-    void toolCallStarted(const QString& sessionId, const QString& toolName);
-    void toolCallFinished(const QString& sessionId, const QString& toolName, bool ok);
+    void toolCallStarted(const QString& sessionId, const QString& toolName, const QString& arguments);
+    // ok 为"执行结果可用性"：异常/结果为空时为 false；内含 error 形状的结果也折算为 false，
+    // 与历史恢复（conversationHistory）共用同一判据，保证实时与回放状态一致。
+    void toolCallFinished(const QString& sessionId, const QString& toolName, bool ok, const QString& result);
     void responseComplete(const QString& sessionId, const QString& fullText);
     // 聊天/Agent 运行时错误（发送消息失败、生成异常等），由 AgentPanel 展示在对话区。
     // sessionId 空串 = 会话无关错误（始终显示在当前查看会话）；非空则仅当正在查看该

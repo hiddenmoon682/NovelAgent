@@ -73,9 +73,50 @@ inline void from_json(const nlohmann::json& j, ProviderConfig& c) {
     }
 }
 
+// 嵌入专用配置（可选）：配置且 api_key 非空后，向量索引/语义检索的嵌入
+// 生成走此服务（与对话 provider 解耦）；未配置时回退使用对话 provider。
+// 支持两种协议：OpenAI 兼容（默认，endpoint=/v1/embeddings）与
+// DashScope 千问嵌入（dashscope_style=true，请求 input.texts / 响应
+// output.embeddings，endpoint 为完整路径）。
+// 注意：单请求批量上限与服务商相关（DashScope 千问嵌入实测最多 20 条），
+// 由 max_batch_size 显式配置，不绑定协议开关。
+struct EmbeddingSettings {
+    std::string base_url;                               // 服务根地址，如 https://dashscope.aliyuncs.com/compatible-mode/v1
+    std::string api_key;                                // 嵌入专用 API Key
+    std::string model = "text-embedding-3-small";       // 嵌入模型名
+    std::string endpoint = "/v1/embeddings";            // 请求路径（与 base_url 前缀拼接）
+    bool dashscope_style = false;                       // DashScope 千问原生协议开关（请求/响应格式）
+    int max_batch_size = 100;                           // 单请求最大文本数（DashScope 千问 ≤20）
+
+    // 是否启用嵌入专用服务：api_key 与 base_url 均非空才视为配置完成。
+    bool enabled() const { return !api_key.empty() && !base_url.empty(); }
+};
+
+inline void to_json(nlohmann::json& j, const EmbeddingSettings& c) {
+    j = nlohmann::json{
+        {"base_url", c.base_url},
+        {"api_key", c.api_key},
+        {"model", c.model},
+        {"endpoint", c.endpoint},
+        {"dashscope_style", c.dashscope_style},
+        {"max_batch_size", c.max_batch_size},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, EmbeddingSettings& c) {
+    c.base_url        = j.value("base_url", std::string{});
+    c.api_key         = j.value("api_key", std::string{});
+    c.model           = j.value("model", std::string{"text-embedding-3-small"});
+    c.endpoint        = j.value("endpoint", std::string{"/v1/embeddings"});
+    c.dashscope_style = j.value("dashscope_style", false);
+    c.max_batch_size  = j.value("max_batch_size", 100);
+}
+
 struct AppConfig {
     std::string default_provider = "deepseek";
     std::map<std::string, ProviderConfig> providers;
+    // 嵌入专用服务（可选）：配置后向量索引/检索的嵌入生成不再依赖对话 provider。
+    EmbeddingSettings embedding;
 
     // ── GUI 持久化字段 ──
     std::string last_project_path;  // 上次打开的项目目录，启动时自动恢复

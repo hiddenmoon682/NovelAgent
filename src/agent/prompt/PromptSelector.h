@@ -43,17 +43,22 @@ inline bool isMeaningfulValue(const nlohmann::json& value) {
 ///   - 可选跳过 "metadata" 字段
 ///   - alwaysInclude 中的字段强制保留（即使为空值）
 ///   - 其余字段仅在有意义的值时才保留
+///   - exclude 中的内部配置/实现字段一律剔除（绝不进入模型可见输出）
 template<typename T>
 nlohmann::json filterObject(
     const T& object,
     bool includeMetadata,
-    const std::set<std::string>& alwaysInclude = {})
+    const std::set<std::string>& alwaysInclude = {},
+    const std::set<std::string>& exclude = {})
 {
     nlohmann::json raw = object;
     nlohmann::json filtered = nlohmann::json::object();
 
     for (auto it = raw.begin(); it != raw.end(); ++it) {
         const std::string key = it.key();
+        // 内部配置/实现字段（如覆写开关、格式版本）不暴露给模型：
+        // 模型一旦看到字段名就会尝试当参数传入（历史踩坑：allow_auto_overwrite）
+        if (exclude.count(key)) continue;
         if (key == "metadata" && !includeMetadata) continue;
         if (!alwaysInclude.count(key) && !isMeaningfulValue(it.value())) continue;
         filtered[key] = it.value();

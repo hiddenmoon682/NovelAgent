@@ -1,5 +1,358 @@
 # Changelog
 
+## [2026-08-28] 章节导航方案调研 + HTML 交互预览
+
+- 背景：章节数增多后，标题栏"章节名 + ▾"弹层只能滚动查找，定位成本陡增。
+- 调研：成熟阅读器（微信读书等）与 NNGroup 目录设计指南均指向
+  四件套——① 搜索 ② 卷/分组 ③ 当前章节强调 ④ 上一章/下一章快捷翻章。
+- 产出：`docs/design/previews/chapter-nav-preview.html` 交互式预览（墨染主题
+  复刻、3 卷 60 章示例数据），含三个候选方案：
+  - A 可搜索目录弹窗（改动最小）：弹窗内搜索框 + 卷分组 sticky 吸顶 +
+    当前章节高亮自动定位 + ↑↓/Enter/Esc 键盘操作；
+  - B 目录侧抽屉（最沉浸）：全高抽屉滑入 + 变暗遮罩 + 卷折叠 +
+    底部页脚与方案 C 弹出层同款（左"共 60 章"、右朱砂"当前 · 第 x 章"，
+    经用户三轮回合计确认最终形态）；
+  - C 标题栏工具条（推荐）：`‹ 上一章 | 章节名 | 下一章 ›` + 目录按钮，
+    翻章一步直达，弹窗内核同 A，后续可再挂抽屉形态平滑升级。
+- Qt 落地要点已在预览内注释（ViewSection 分组、positionViewAtIndex 需
+  completed 后调用、Popup 默认 Esc/点外关闭、Drawer 控件边界、卷字段
+  由 bridge 输出或按 order 归卷）；方案与实现未定，等用户审阅预览后
+  再进入实现。
+
+## [2026-08-28] 阅读区左右留白修复 + 委托模式收敛
+
+### 现象
+- 正文文字贴着阅读区左边缘（无间隙），右侧却有一段较长的空隙。
+
+### 根因（实测确认）
+- 把左右留白写在委托根元素的 `x` 上无效：**ListView 接管委托根元素的 x/y**
+  （垂直列表 x 恒为 0）——探针实测 `x:40` 被覆盖为 `item.x = 0`，宽度绑定正常
+  （400−80），于是文字贴左、右侧空 48px。
+- 修复：委托根改为 `Item { width: ListView.view.width; height: 委托文字高 }`，
+  左右留白放在根内 `Text` 的 `anchors { left/right; margins: gapXl }`——
+  实测 text.x=24、两侧留白对称 24px，与原 Flickable 版视觉一致。
+
+### 委托模式实证结论（顺带收敛）
+- `ListView.view` 附加属性读**标准属性**（view.width/currentIndex）可靠；
+- **自定义成员**（自定义信号/函数）经附加视图调用**不可靠**——实测委托内
+  `ListView.view.picked()` 命中 null（`Cannot call method 'picked' of null`），
+  官方文档也只承诺经 view 读取视图属性 → 面板函数调用仍走外层 id
+  （与项目其它面板一致，运行时有效；qmllint 静态告警为已知风格债，已注释说明）；
+- 弹出层列表 `currentIndex` 单向同步面板选中，委托内经
+  `ListView.view.currentIndex` 比对高亮；`modelData.*` 经委托根 id 限定。
+
+### 验证
+- 探针实测：委托根 x=0（视图接管）、内部文字 x=24、右留白 24（对称）；
+- 委托自定义成员经附加视图调用命中 null（已否决该模式）；
+- qmllint：ReaderPanel 仅剩 3 条项目规范留白的布局告警 + 2 条 bridge 上下文
+  属性告警（全面板共有）+ 1 条委托外层 id 风格债（已注释文档化）；
+- test/release 两个预设 GUI 构建通过；界面复验由用户手动执行。
+
+## [2026-08-28] 阅读区段距再收紧：18 → 16px（行高保持 1.3 独立）
+
+### 修改
+- `Theme.readerParagraphGap`: 18 → **16px**；段内行高 1.3 不受影响。
+
+### 验证
+- qml.exe 布局公式自洽（3 段：24+3×29.9+2×16+24=169.7）；
+  test/release 两个预设 GUI 构建通过；界面复验由用户手动执行。
+
+## [2026-08-28] 阅读区段距收紧：22 → 18px（行高保持 1.3 独立）
+
+### 修改
+- `Theme.readerParagraphGap`: 22 → **18px**（段落间空隙，固定像素）；
+  段内行高 1.3 不受影响。
+
+### 验证
+- qml.exe 实测布局公式自洽；test/release 两个预设 GUI 构建通过；
+  界面复验由用户手动执行。
+
+## [2026-08-28] 正文段内行距再次收紧：1.5 → 1.3（段距保持 22px 独立）
+
+### 修改
+- `Theme.lineHeightBody`: 1.5 → **1.3**，段内每行高度进一步收紧
+  （16px 字号下约 34.5px → 29.9px）；段距 22px 不受影响。
+
+### 验证
+- qml.exe 实测 lineHeight 1.3 单行 ≈ 29.9px、布局公式自洽；
+  test/release 两个预设 GUI 构建通过；界面复验由用户手动执行。
+
+## [2026-08-28] 正文段内行距收紧：1.65 → 1.5（段距保持 22px 独立）
+
+### 修改
+- `Theme.lineHeightBody`: 1.65 → **1.5**，段内每行高度随之收紧（16px 字号下
+  行盒约 37.95px → 34.5px）；段间空隙由 `readerParagraphGap: 22` 控制，
+  与行高相互独立（分段委托模型，spacing 固定像素），不受本次调整影响。
+
+### 验证
+- qml.exe 实测：lineHeight 1.5 下 1 行 ≈ 34.5px、3 段 + spacing 22 布局公式
+  自洽；test/release 两个预设 GUI 构建通过；界面复验由用户手动执行。
+
+## [2026-08-28] 阅读器实现按 Qt 官方文档合规修正（superpowers 审查）
+
+### 审查依据（doc.qt.io/qt-6 ListView / Text / Models / Performance / Repeater）
+- `ListView.view` 附加属性：官方文档明示附着于"每个委托实例、以及 header/footer/
+  section/highlight 委托"——委托与 header/footer 内取视图宽度应使用它，
+  而非引用外层 id（未限定访问，Qt 6 组件边界下不可靠，qmllint 告警）；
+- ListView 文档属性清单不含 topMargin/bottomMargin——更正：二者是 **Flickable 页**的
+  官方属性（ListView 继承），语义为"内容四周额外保留的边距"（"reserved in addition
+  to the contentWidth and contentHeight"）；本实现改用官方 `header/footer` 机制
+  （headerPositioning/footerPositioning 默认 InlineHeader/InlineFooter，随内容滚动；
+  positionViewAtBeginning 明确 "taking into account any header or footer"），
+  语义更贴合"阅读区上下留白"；
+- 委托模式：官方 Models 文档示例即 `required property` + 数组模型 `modelData`；
+- 定位 API：官方原文 "It is not recommended to use contentX or contentY to
+  position the view"——换章回顶用 `positionViewAtBeginning()`（实测换模型后
+  立即调用稳定归零，无陈旧布局跳变）；
+- Text：官方定位"Text provides read-only text"；性能页明言
+  "You should prefer using Text.PlainText… they offer better performance" 且
+  "The RichText mode should not be used"——正文保持 PlainText、放弃富文本
+  段落边距方案，与此完全一致；TextArea 官方定位为编辑器（"not scrollable
+  by itself"），非只读阅读器；
+- 大量项分段渲染：Repeater 文档明言大量项应用 ListView（"only creates
+  delegate items when they are scrolled into view"）。
+- 已知取舍（文档警告）：段落委托高度参差 → ListView 对 ScrollBar/位置估算
+  有偏差（"Variable delegate sizes might lead to resizing and skipping of any
+  attached ScrollBar"），章节体量小可忽略，必要时 cacheBuffer 缓解。
+
+### 修改
+- `ReaderPanel` 委托宽度改 `ListView.view.width`（正文委托与章节弹出列表
+  委托一并修正）；弹出列表委托补 `required property var modelData` /
+  `required property int index`（消除隐式 modelData 未限定访问告警）；
+- 上/下留白由 topMargin/bottomMargin 改为官方 `header`/`footer`（高度
+  gapXl，Inline 定位随内容滚动，视觉与原来一致）。
+
+### 验证
+- qmllint：ReaderPanel 未限定访问告警清零（仅剩项目规范刻意为之的
+  "布局内显式高度"风格告警）；
+- qml.exe：header/footer 计入 contentHeight 公式精确一致
+  （3 段 205.85 = 24+113.85+44+24；真实 29 段 3560.95 自洽）；
+- positionViewAtBeginning 换模型后立即调用实测 contentY 恒为 0；
+- test/release 两个预设 GUI 构建通过；全量回归 33/33；
+- 界面复验由用户手动执行。
+
+## [2026-08-28] 正文排版收紧：段落间距与初始化正文去 Markdown
+
+### 现象
+- 阅读区每一段之间的空隙显得过大（视觉上像占了近一整行）；
+- 章节正文文件开头出现 "# 雨夜来客" 这类 Markdown 残留标题。
+
+### 根因
+- 文件本身段落间**恰好一个空行**（实测 29 处连续双换行、0 处三连、无 \r）；
+  空隙来自渲染：Qt Text 中空行按 `lineHeight` 撑满整行高（行高 1.9、16px
+  字号下空行约 38~40px，qml.exe 实测空行与文字行同高）。
+- " # 标题 " 头来自 `create_chapter` 的初始化正文（"# " + 标题），
+  而正文约定为纯文本、禁用 Markdown 标记。
+
+### 修改
+- `Theme.qml` 新增两档：行高 `lineHeightBody: 1.65`、阅读区段距
+  `readerParagraphGap: 22`（≈ 字形高度，用户口径"空行 = 文本高度"）；
+- `ReaderPanel` 正文改为 **"每段一个 ListView 委托项"** 渲染（Qt Quick 长文本
+  阅读惯用方案）：段距 = `spacing: 22` 精确控制、行高 1.65 保持原有阅读节奏、
+  上下留白 `topMargin/bottomMargin = gapXl`、左右留白在委托内 `x+width`；
+  换章/自动打开回顶端用 `positionViewAtBeginning()`；
+- 为什么换结构（调查结论）：QML `Text` 的 RichText **实测不兑现段落边距**
+  （`margin-bottom` 无效、块间另有约 12px 额外高度）——官方文档
+  [Supported HTML Subset](https://doc.qt.io/qt-6/richtext-html-subset.html)
+  声明的 `margin-top/bottom`、`line-height` 是 QTextDocument 层行为，QML Text
+  渲染不遵守；纯文本空行只能按"整行行盒"渲染（行高 1.65 下 16px 字号空行
+  ≈ 整行 38px，两个字形高）。分段委托是唯一能精确控制段距的文档化方案；
+- `CreateChapterTool` 初始化正文改为纯文本标题（不再写 "# " 头）；
+- 清理现有测试项目 ch-001 的 "# 雨夜来客" 残留头行（用户确认）。
+
+### 验证
+- qml.exe 标定：ListView 分段 + spacing 22 的总高与公式逐项精确一致
+  （3 段 157.85 = 3×37.95+2×22；5 行 233.75；真实 29 段内容 3512.95 自洽）；
+- 全栈纵向空间清点：除"空行 = 整行高"外无其它来源（选择栏 48、分割线 1、
+  留白 gapXl、字数栏 26 均与段距无关；聊天气泡 Markdown 段距实测紧凑，排除）；
+- `qmllint` 无语法错误；test/release 两个预设 GUI 构建通过；
+- 全量回归通过；界面复验由用户手动执行。
+
+## [2026-08-28] 右侧阅读面板：章节存在时自动选中第一章（不再误显示"暂无章节"）
+
+### 现象
+- Agent 已成功创建章节（create_chapter/write_chapter 均 success），磁盘
+  outline.json 与正文文件都在，但右侧阅读面板仍显示"暂无章节"。
+
+### 根因
+- 数据链路完好（`ProjectIO::load` 实测能读到章节，下拉菜单里也有条目）；
+- `ReaderPanel` 的 `currentIndex` 初始为 -1，且**从不自动选中**任何章节——
+  `currentTitle` 在"未选中"时恒回退到"暂无章节"占位文案，让用户误以为
+  章节没有生成。
+
+### 修改
+- `ReaderPanel.reload()`：无选中且章节列表非空时，自动选中第一章并载入正文；
+- 已选中章节的刷新仍按 id 跟随列表（keepId 逻辑不变），不打断阅读滚动、
+  不重新加载正文。
+
+### 验证
+- 探针测试（临时，不入库）用与 GUI 相同的加载路径实测：
+  `chapters=1`、ch-001 雨夜来客、正文 2929 字节均在；
+- `qmllint` 对 ReaderPanel 无语法错误（仅历史布局告警）；
+- 全量回归与 GUI 构建通过；界面复验由用户手动执行。
+
+## [2026-08-28] 嵌入端点切换到 DashScope compatible-mode + 批量上限可配置化
+
+### 背景
+- 上一条修复把"20 条批量上限"硬绑在 `dashscope_style`（协议开关）上——错误假设：
+  实测 compatible-mode（OpenAI 兼容协议）同样受限 20 条，若配置走标准协议该
+  限制会失效并再次 400。上限应绑定服务商而非协议格式。
+
+### 修改
+- `EmbeddingSettings` / `EmbeddingConfig` 增加 `max_batch_size` 配置字段
+  （默认 100）；`EmbeddingGenerator` 按配置分批，不再按协议特判上限。
+- 用户配置切换到 DashScope **compatible-mode 标准协议**：
+  base_url=`.../compatible-mode/v1`、endpoint=`/embeddings`（避免 /v1 重复）、
+  `dashscope_style=false`、`max_batch_size=20`（服务端实测限制，21 条起 400）。
+- `dashscope_style` 保留（原生端点仍需），但仅管请求/响应格式。
+
+### 验证
+- 实测 compatible-mode 端点：1/20 条 200（1024 维，OpenAI 格式）、21/100 条 400
+  （批量上限）——与配置一致；
+- 全量回归 33/33 通过；构建零警告；界面复验由用户手动执行。
+
+## [2026-08-28] 修复 DashScope 嵌入 400（批量上限）+ 内部配置字段不再暴露给模型
+
+### 现象
+- 接入 DashScope 千问嵌入后，自动索引仍失败，但错误从 404 变为
+  "API 错误: 请求参数错误 (400)"；
+- 模型仍会尝试把 `allow_auto_overwrite` 当作工具参数传入（理论上该内部配置
+  字段不应出现在任何模型可见文本中）。
+
+### 根因
+- **嵌入 400**：DashScope 千问嵌入实测单请求最多 **20 条文本**
+  （21+ 条返回 `batch size should not be larger than 20`），而
+  `EmbeddingGenerator` 的 `max_batch_size=100`，索引批量一次发送超限 → 400。
+- **字段泄漏**：`filterObject`（PromptSelector.h）全量序列化 Project 后只做
+  "滤空值/可选 metadata"，**无内部字段黑名单**；`isMeaningfulValue(false)` 返回
+  true，因此 `allow_auto_overwrite` 即使为 false 也会随上下文注入出现在
+  prompt 中——模型看到字段名后自然尝试当参数传入。`confirm_overwrite` 旧文案
+  也直接写明该字段名，双重诱导。
+
+### 修复
+- **批量上限**（EmbeddingGenerator.cpp）：协议自适应——`dashscope_style` 时
+  单请求最多 20 条，OpenAI 兼容协议不受限。
+- **字段隔离**（PromptSelector.h / PromptContextBuilder.cpp）：
+  `filterObject` 新增 `exclude` 参数；Project 摘要输出排除
+  `allow_auto_overwrite`、`format_version`（内部配置/实现字段，绝不进模型
+  可见输出）。`get_project_status` 本就不含该字段（手工列字段），不变。
+- **文案**（ChapterTools.cpp）：`confirm_overwrite` 消息不再出现
+  `allow_auto_overwrite` 字段名，只描述"覆写保护为项目级配置，模型无法通过
+  任何参数修改"。
+
+### 验证
+- 全量回归 33/33 通过；构建零警告；
+- DashScope 批量上限以真实 API 请求验证（20 条 200 / 21 条起 400，附服务端
+  错误体）；索引重建与检索的界面复验由用户手动执行。
+
+## [2026-08-27] 嵌入专用服务配置（DashScope 千问嵌入接入，修复向量索引 404）
+
+### 背景
+- 向量索引/语义检索的嵌入生成一直复用对话 provider（deepseek），而 DeepSeek
+  无 /v1/embeddings 端点 → 每次自动索引更新报 "API 端点不存在 (404)"，检索不可用。
+
+### 修复
+- **配置层**（config/AppConfig）：新增可选 `embedding` 段（base_url / api_key /
+  model / endpoint / dashscope_style）；段存在且 api_key 非空即启用，否则回退
+  对话 provider（旧行为不变）。load/save 同步读写。
+- **协议适配**（retrieval/EmbeddingGenerator）：支持两种嵌入协议——
+  - OpenAI 兼容（默认，`/v1/embeddings`，input 为数组）；
+  - DashScope 千问嵌入（`dashscope_style=true`：请求体 `input:{"texts":[...]}`、
+    响应取 `output.embeddings[].embedding`、endpoint 为完整路径）；
+  已用真实 API 请求验证响应结构。
+- **装配**（NovelAgentApp/QmlBridge）：启用嵌入专用设置时，EmbeddingGenerator
+  改用专用 base_url/api_key/model 构造。
+- **用户配置**：`~/.novelagent/config.json` 已写入 DashScope 嵌入段
+  （qwen3.7-text-embedding，key 仅用于向量计算）。
+
+### 验证
+- 全量回归 33/33 通过；构建零警告；
+- 嵌入 API 实测：DashScope 返回 200，向量解析字段与实现一致；
+- 索引重建与语义检索的界面复验由用户手动执行。
+
+## [2026-08-27] 章节正文全面去 Markdown 化（工具描述 / 默认规则 / 阅读器渲染）
+
+### 背景
+- 项目领域规则：小说正文是纯文本（一大段一大段的连续文字），不含 markdown 标记。
+- 但工具定义里多处把章节内容描述为 "Markdown"，等于引导模型用 Markdown 写正文，
+  与用户"正文绝不用 markdown"的意图冲突；阅读器也按 MarkdownText 渲染章节。
+
+### 修改
+- **工具描述/参数描述**（模型直接可见）：`read_chapter` / `write_chapter` /
+  `append_to_chapter` / `create_chapter` 的 description 与参数 `content` 描述中的
+  "Markdown 内容/文件" 全部改为"纯文本正文/章节正文文件"，并在 write/append
+  参数描述中显式标注"禁止 Markdown 标记"。
+- **规则层**：`~/.novelagent/rules.md`（用户全局）与 `kDefaultRulesMd`（出厂默认，
+  `BuiltinSkills.cpp`）新增「正文格式规范」：正文一律纯文本、禁 Markdown 标记、
+  空行分段、元数据走章节工具字段不进正文。
+- **阅读器**（ReaderPanel.qml）：章节正文渲染由 `Text.MarkdownText` 改为
+  `Text.PlainText`；`mdWithHardBreaks` 更名为 `withHardBreaks`（纯文本下仅保留
+  "单换行转硬换行"保段落的逻辑，去 md 前缀）。
+
+### 验证
+- `test_chapter_tools` 通过（无 description 文本断言，不受措辞影响）；
+- 完整构建通过（GUI QML 资源重编）；界面复验由用户手动执行。
+
+## [2026-08-27] write_chapter 覆写提示措辞修正（不再误导模型传 allow_auto_overwrite 参数）
+
+### 现象
+- 测试项目会话 s-multi-4 中连续两次 write_chapter 未写入：第一次返回
+  `confirm_overwrite`，第二次模型把项目配置 `allow_auto_overwrite` 当作工具参数
+  传入，被参数 Schema 严格校验（additionalProperties=false）拒绝，报
+  `{"error":"参数校验失败"}`。
+
+### 根因
+- `confirm_overwrite` 的提示原文"请将 allow_auto_overwrite 设为 true 后重试"
+  引导模型去设置一个**它无法控制的配置项**（该字段是 novel.json 项目级配置，
+  不是 write_chapter 参数）——模型照做即踩参数校验，日志上表现为"调用失败"。
+
+### 修复
+- `ChapterTools.cpp` confirm_overwrite 提示改为：明确标注该开关为项目级配置、
+  模型无法通过参数修改、请勿传入该字段；给出模型可执行的替代路径
+  （`append_to_chapter` 追加）与用户侧路径（在项目配置中开启覆写）。
+
+### 验证
+- `test_chapter_tools` 通过；构建零警告。
+
+## [2026-08-27] 修复工具调用在重启后不显示 + 工具卡片样式对齐"思考过程"折叠条
+
+### 现象
+- 首次启动会话中工具调用以卡片实时显示；重启程序（或同一会话切走再切回）恢复
+  历史后工具调用消失，只剩文本消息。
+
+### 根因（数据链路审查结论）
+- 工具调用数据本身完好：`CoreLoop` 把 assistant(tool_calls)（含参数 JSON）与
+  tool 结果（含 tool_call_id）成组注入 memory，`SessionPersistence` 全量落盘
+  （messages.tool_calls 列 + tool 角色结果行），加载/归档均能还原。
+- 断点在 UI 历史接口 `QmlBridge::conversationHistory()`：按设计跳过 tool 角色消息、
+  跳过 content 为空的 assistant(tool_calls) 占位消息 → 历史回放从不重建工具条目；
+  实时卡片走的是另一条"信号 → chatModel 临时 append"通道，重启后自然消失。
+
+### 修复
+- **历史恢复工具条目**：`conversationHistory()` 对带 tool_calls 的 assistant 消息
+  输出 tool 条目（toolName / arguments 原文 / 按 tool_call_id 与紧随结果配对 /
+  status 终态 ok|error），`AgentPanel.reloadHistory()` 分派到 tool 条目；
+  切会话与重启后工具卡片均恢复显示。
+- **实时信号携带详情**：`StreamCallbacks.on_tool_start` 增加参数原文、
+  `on_tool_finish` 增加结果正文（CoreLoop 按 tool_call_id 汇总结果下发）；
+  `toolCallStarted/toolCallFinished` 信号相应扩展。工具内部失败（结果 JSON 顶层
+  含 "error"，如参数校验失败）统一折算为失败态，与历史恢复共用同一判据
+  （`isToolResultError`），实时与回放状态一致。
+- **样式与"思考过程"卡片逐参数同构**：`ToolCallCard` 重写为与
+  `ChatBubble.qml:57-125` 完全一致的结构——折叠条纯文本标题 +
+  ▸/▾（sizeCaption/textFaint、height24/radiusSm、hover bgHover、AlignLeft+gapSm），
+  工具名与状态直接拼在标题上（"工具调用 · write_chapter · 完成"，收起即可见）；
+  展开区为左竖线 + 单一弱化小字 Text（参数/结果组装进正文，pretty JSON、
+  12 行截断防撑爆）；展开态存模型条目（防 delegate 回收复用后状态错乱），
+  历史重建后默认收起。
+- 明确不做：生成中重启恢复中途轮（进行中一轮未落盘是设计使然——半轮快照可能
+  产出协议非法的 tool 调用序列，恢复代价值高于收益），保持"整轮完成后落盘"。
+
+### 验证
+- `test_core_loop.cpp` 回调断言扩展（参数原文下发 / 结果正文下发），全量回归通过；
+- 构建零警告；界面复验由用户手动执行（重启后工具卡片恢复 / 折叠条样式 /
+  展开参数与结果）。
+
 ## [2026-08-27] 修复对话区启动/全屏时的视口错位（顶部空白、停在中间、不显示最新）
 
 ### 现象

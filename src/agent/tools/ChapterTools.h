@@ -14,7 +14,7 @@ public:
     explicit ReadChapterTool(std::shared_ptr<ProjectAccess> p) : project_(p) {}
     std::string name() const override { return "read_chapter"; }
     std::string description() const override {
-        return "读取指定章节的 Markdown 全文内容";
+        return "读取指定章节的纯文本正文全文";
     }
     std::string brief() const override { return "读取章节全文"; }
     nlohmann::json parameters() const override;
@@ -32,7 +32,7 @@ public:
     explicit WriteChapterTool(std::shared_ptr<ProjectAccess> p) : project_(p) {}
     std::string name() const override { return "write_chapter"; }
     std::string description() const override {
-        return "覆写指定章节的 Markdown 内容（会替换原有全部内容）";
+        return "覆写指定章节的纯文本正文（会替换原有全部内容）";
     }
     std::string brief() const override { return "覆写章节内容"; }
     nlohmann::json parameters() const override;
@@ -49,7 +49,7 @@ public:
     explicit AppendChapterTool(std::shared_ptr<ProjectAccess> p) : project_(p) {}
     std::string name() const override { return "append_to_chapter"; }
     std::string description() const override {
-        return "在指定章节末尾追加 Markdown 内容，保留原有内容";
+        return "在指定章节末尾追加纯文本正文，保留原有内容";
     }
     std::string brief() const override { return "在章节末尾追加内容"; }
     nlohmann::json parameters() const override;
@@ -85,7 +85,7 @@ public:
     explicit CreateChapterTool(std::shared_ptr<ProjectAccess> p) : project_(p) {}
     std::string name() const override { return "create_chapter"; }
     std::string description() const override {
-        return "创建新章节：在 outline 中新增条目并创建对应的 Markdown 文件。"
+        return "创建新章节：在 outline 中新增条目并创建对应的章节正文文件。"
                "可选填写叙事简报字段（目标、冲突、转折点、伏笔等）。";
     }
     std::string brief() const override { return "创建新章节"; }

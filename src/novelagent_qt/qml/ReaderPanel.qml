@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 // ReaderPanel — 右栏：章节选择 + 只读阅读视图。
-// Markdown 渲染，衬线字体，行高 1.9，左右留白书页效果。
+// 正文纯文本渲染（小说正文非 Markdown），衬线字体，行高 Theme.lineHeightBody，左右留白书页效果。
 Rectangle {
     id: root
     color: Theme.bgReader
@@ -11,20 +11,22 @@ Rectangle {
     property var chapters: []
     property int currentIndex: -1
     property string chapterContent: ""
+    property var paragraphs: []
 
-    // 同 ChatBubble：代码块外的单换行转硬换行，避免正文分段被 CommonMark 软换行规则合并。
-    function mdWithHardBreaks(src) {
-        var nl = String.fromCharCode(10)
-        var parts = src.split("```")
-        for (var i = 0; i < parts.length; i += 2) {
-            var lines = parts[i].split(nl)
-            for (var j = 0; j < lines.length - 1; ++j) {
-                if (lines[j].length > 0 && lines[j + 1].length > 0)
-                    lines[j] += "  "
-            }
-            parts[i] = lines.join(nl)
+    // 正文为纯文本（非 Markdown），按"空行"切成段落数组，每段一个 ListView 委托项。
+    // 为什么不用富文本：QML Text 的 RichText 实测不兑现段落边距（margin-bottom 无效、
+    // 块间还有约 12px 额外高度），官方文档（Supported HTML Subset）声明的块属性是
+    // QTextDocument 层行为，QML Text 渲染不遵守；而"行高=整行盒"使纯文本空行
+    // 只能按整行高渲染。ListView 分段是 Qt Quick 长文本阅读的惯用方案：
+    // 委托 spacing 精确控制段距（≈ 字形高度而非整行高），大章节还天然虚拟化。
+    function splitParagraphs(src) {
+        var out = []
+        var parts = src.split(/\n\s*\n+/)
+        for (var i = 0; i < parts.length; ++i) {
+            var p = parts[i].trim()
+            if (p.length > 0) out.push(p)
         }
-        return parts.join("```")
+        return out
     }
 
     readonly property string currentTitle:
@@ -32,6 +34,8 @@ Rectangle {
             ? chapters[currentIndex].title : "暂无章节"
 
     // 刷新章节列表；保持当前选中（按 id 对齐），选中项被删则回到占位。
+    // 无选中且存在章节时自动选中第一章并载入正文：此前 currentIndex 恒为 -1，
+    // 标题栏永远显示"暂无章节"占位，Agent 刚创建的章节在右侧面板"看不到"（历史反馈）。
     function reload() {
         var keepId = (currentIndex >= 0 && currentIndex < chapters.length)
                      ? chapters[currentIndex].id : ""
@@ -42,16 +46,31 @@ Rectangle {
                 if (chapters[i].id === keepId) { idx = i; break }
             }
         }
+        var autoPick = false
+        if (idx < 0 && chapters.length > 0) {
+            idx = 0
+            autoPick = true
+        }
         currentIndex = idx
-        if (idx < 0)
+        if (idx >= 0 && autoPick) {
+            // 仅"此前无选中"时自动打开：已选中章节的刷新只跟随列表，不打断阅读滚动
+            openChapter(chapters[idx].id)
+        } else if (idx < 0) {
             chapterContent = ""
+            paragraphs = []
+        }
+    }
+
+    function openChapter(id) {
+        chapterContent = bridge.loadChapter(id)
+        paragraphs = splitParagraphs(chapterContent)
+        chapterList.positionViewAtBeginning()
     }
 
     function selectChapter(i) {
         currentIndex = i
-        chapterContent = bridge.loadChapter(chapters[i].id)
+        openChapter(chapters[i].id)
         chapterPopup.close()
-        flick.contentY = 0
     }
 
     Component.onCompleted: reload()
@@ -136,11 +155,22 @@ Rectangle {
                         spacing: 2
                         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
+                        // 面板选中态单向同步给视图：委托内经标准附加属性 ListView.view.currentIndex
+                        // 读取（官方文档仅承诺经 ListView.view 读取视图属性；实测自定义成员经
+                        // 附加视图调用会命中 null，不可靠，故面板函数仍走外层 id——与项目
+                        // 其它面板一致，运行时有效，qmllint 静态告警为已知风格债）
+                        currentIndex: root.currentIndex
+
                         delegate: Rectangle {
-                            width: chapterListView.width
+                            // 官方委托模式：required property 显式声明角色（含 index），
+                            // 宽度与视图状态经 ListView.view 附加属性访问
+                            id: chapterRow
+                            required property var modelData
+                            required property int index
+                            width: ListView.view.width
                             height: 36
                             radius: Theme.radiusSm
-                            color: (index === root.currentIndex || itemMa.containsMouse)
+                            color: (index === ListView.view.currentIndex || itemMa.containsMouse)
                                    ? Theme.bgHover : "transparent"
 
                             RowLayout {
@@ -148,7 +178,7 @@ Rectangle {
                                 spacing: Theme.gapSm
 
                                 Label {
-                                    text: modelData.title
+                                    text: chapterRow.modelData.title
                                     font.family: Theme.fontUi
                                     font.pixelSize: Theme.sizeUi
                                     color: Theme.textPrimary
@@ -156,7 +186,7 @@ Rectangle {
                                     Layout.fillWidth: true
                                 }
                                 Label {
-                                    text: modelData.wordCount > 0 ? modelData.wordCount + " 字" : ""
+                                    text: chapterRow.modelData.wordCount > 0 ? chapterRow.modelData.wordCount + " 字" : ""
                                     font.family: Theme.fontUi
                                     font.pixelSize: Theme.sizeCaption
                                     color: Theme.textFaint
@@ -168,7 +198,7 @@ Rectangle {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: root.selectChapter(index)
+                                onClicked: root.selectChapter(chapterRow.index)
                             }
                         }
 
@@ -192,34 +222,59 @@ Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            Flickable {
-                id: flick
+            // 分段阅读列表：每段一个委托项，段距 = spacing（精确控制，不再是整行高的空行）。
+            // 左/右留白在委托内用 x+width；上/下留白用官方 header/footer 机制
+            // （doc.qt.io ListView：headerPositioning/footerPositioning 默认 InlineHeader/
+            // InlineFooter，随内容滚动；positionViewAtBeginning 明确 "taking into account
+            // any header or footer"）。
+            // 注：topMargin/bottomMargin 是 Flickable 页定义的官方属性（ListView 继承），
+            // 语义为"内容四周额外保留的边距"；此处采用 header/footer 是因其语义更贴合
+            // "阅读区上下留白"且官方定位 API 明文计入，行为完全可预期。
+            ListView {
+                id: chapterList
                 anchors.fill: parent
-                contentWidth: width
-                contentHeight: readerText.implicitHeight + Theme.gapXl * 2
                 clip: true
+                model: root.paragraphs
+                spacing: Theme.readerParagraphGap
                 boundsBehavior: Flickable.StopAtBounds
+
+                header: Item {
+                    width: ListView.view.width
+                    height: Theme.gapXl   // 顶部留白（随内容滚动，与 topMargin 视觉一致）
+                }
+                footer: Item {
+                    width: ListView.view.width
+                    height: Theme.gapXl   // 底部留白（随内容滚动）
+                }
 
                 ScrollBar.vertical: ScrollBar {
                     policy: ScrollBar.AsNeeded
                 }
 
-                Text {
-                    id: readerText
-                    anchors {
-                        top: parent.top
-                        left: parent.left
-                        right: parent.right
-                        margins: Theme.gapXl
+                // 官方委托模式：required property + ListView.view 附加属性
+                // （doc.qt.io Models：数组模型经 modelData 提供数据，委托内取视图宽度
+                // 用 ListView.view.width，而非引用外层 id——后者属未限定访问，Qt 6
+                // 组件边界下不可靠，qmllint 亦告警）。
+                // 注意：ListView 会接管委托根元素的 x/y（垂直列表 x 恒为 0），
+                // 在根上写 x 无效（实测被覆盖、文字贴左边缘）；左右留白必须放在
+                // 根内子项上，用 anchors + margins 实现。
+                delegate: Item {
+                    id: paraItem
+                    required property string modelData
+                    width: ListView.view.width
+                    height: paraText.implicitHeight
+
+                    Text {
+                        id: paraText
+                        anchors { left: parent.left; right: parent.right; margins: Theme.gapXl }
+                        text: paraItem.modelData
+                        font.family: Theme.fontDisplay
+                        font.pixelSize: Theme.sizeBody + 1
+                        lineHeight: Theme.lineHeightBody
+                        wrapMode: Text.Wrap
+                        textFormat: Text.PlainText
+                        color: Theme.textPrimary
                     }
-                    visible: root.chapterContent.length > 0
-                    text: root.mdWithHardBreaks(root.chapterContent)
-                    font.family: Theme.fontDisplay
-                    font.pixelSize: Theme.sizeBody + 1
-                    lineHeight: 1.9
-                    wrapMode: Text.Wrap
-                    textFormat: Text.MarkdownText
-                    color: Theme.textPrimary
                 }
             }
 
