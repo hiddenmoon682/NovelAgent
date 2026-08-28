@@ -29,6 +29,9 @@ import QtQuick.Layouts
 //   ListView.view.currentIndex 派生，不存委托（"State should never be stored in
 //   a delegate"）；章节行等高 36px（"It is recommended to have equally-sized
 //   delegates"，ScrollBar 估算稳定的官方推荐）。
+// 注：委托内经附加属性 ListView.view 访问视图属性，在 popup 关闭/重开生命周期中
+// 可能取到 null（实测 279 行 TypeError）——本项目先例已证附加视图"不可靠"；
+// 同文件 id（root/listView）访问恒非 null，qmllint 在 ComponentBehavior: Bound 下放行。
 // - 键盘与焦点：QML 焦点不自动归还（Keyboard Focus 文档原文）→ onClosed 显式
 //   归还（由 Task 5 接线实现）；Esc 关闭需 popup 持焦（Popup Back/Escape 原文）→ focus:true +
 //   搜索框 forceActiveFocus；搜索框持焦点会吞掉列表 ↑↓（ScrollBar 也不过滤按键，
@@ -239,7 +242,7 @@ Popup {
             section.delegate: Rectangle {
                 id: secRow
                 required property string section
-                width: ListView.view.width
+                width: root.width
                 height: 30
                 color: Theme.bgElevated
                 Rectangle {
@@ -261,11 +264,11 @@ Popup {
                 id: chapterRow
                 required property var model
                 required property int index
-                width: ListView.view.width
+                width: root.width
                 height: 36
                 radius: Theme.radiusSm
                 // 选中/悬停均派生自视图状态（委托无状态，官方规则）
-                color: (index === ListView.view.currentIndex || rowMa.containsMouse)
+                color: (index === listView.currentIndex || rowMa.containsMouse)
                        ? Theme.bgHover : "transparent"
                 Behavior on color { ColorAnimation { duration: Theme.animFast } }
 
@@ -276,7 +279,7 @@ Popup {
                     height: 16
                     radius: 2
                     color: Theme.accent
-                    visible: chapterRow.index === ListView.view.currentIndex
+                    visible: chapterRow.index === listView.currentIndex
                 }
 
                 RowLayout {
