@@ -146,6 +146,7 @@ if(BUILD_GUI)
         src/novelagent_qt/qml/AgentPanel.qml
         src/novelagent_qt/qml/ChatBubble.qml
         src/novelagent_qt/qml/ToolCallCard.qml
+        src/novelagent_qt/qml/ChapterDrawer.qml
         src/novelagent_qt/qml/ReaderPanel.qml
         src/novelagent_qt/qml/StatusBar.qml
         src/novelagent_qt/qml/SettingsDialog.qml
