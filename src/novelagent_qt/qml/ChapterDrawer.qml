@@ -30,9 +30,9 @@ import QtQuick.Layouts
 //   a delegate"）；章节行等高 36px（"It is recommended to have equally-sized
 //   delegates"，ScrollBar 估算稳定的官方推荐）。
 // - 键盘与焦点：QML 焦点不自动归还（Keyboard Focus 文档原文）→ onClosed 显式
-//   归还；Esc 关闭需 popup 持焦（Popup Back/Escape 原文）→ focus:true +
+//   归还（由 Task 5 接线实现）；Esc 关闭需 popup 持焦（Popup Back/Escape 原文）→ focus:true +
 //   搜索框 forceActiveFocus；搜索框持焦点会吞掉列表 ↑↓（ScrollBar 也不过滤按键，
-//   官方原文）→ 官方同款解法 Keys.onUpPressed/DownPressed 转发
+//   官方原文）→ 官方同款解法 Keys.onUpPressed/DownPressed 转发（本文件在 Task 4 实现）
 //   increment/decrementCurrentIndex；输入法组合期间（preeditText 非空）不转发。
 Popup {
     id: root
@@ -104,7 +104,8 @@ Popup {
             if (!hit) continue
             listModel.append({
                 cid: it.id, title: it.title, words: it.wordCount,
-                volume: it.volumeOrder >= 0 ? it.volumeTitle : "", num: it.num
+                volume: it.volumeOrder >= 0 ? it.volumeTitle
+                       : (root._grouped ? "未分卷" : ""), num: it.num
             })
         }
         var newIdx = -1
@@ -193,7 +194,12 @@ Popup {
             }
         }
 
-        // 搜索框：ThemedField 复用（Task 4 挂过滤与键盘）
+        // 搜索框：即时过滤（重建 ListModel，官方性能页建议 filtered model 而非
+        // visible 隐藏——"the space it occupied in the view will remain"）；
+        // 键盘：↑↓ 驱动列表 currentIndex（官方 ScrollBar 示例同款转发模式：
+        // ScrollBar 不过滤按键；搜索框持焦时 ListView 自带导航收不到方向键），
+        // 输入法组合期间（preeditText 非空）不转发，避免吞候选翻页；
+        // Enter 走 TextField 官方 onAccepted 信号选中当前行
         ThemedField {
             id: searchField
             Layout.fillWidth: true
@@ -201,6 +207,19 @@ Popup {
             Layout.rightMargin: Theme.gapLg
             Layout.bottomMargin: Theme.gapSm
             placeholder: "搜索章节（支持章节号/标题）"
+            onTextEdited: root._refreshModel(searchField.text)
+
+            Keys.onUpPressed: {
+                if (searchField.preeditText.length > 0) return
+                if (listView.currentIndex > 0) listView.decrementCurrentIndex()
+            }
+            Keys.onDownPressed: {
+                if (searchField.preeditText.length > 0) return
+                if (listView.currentIndex < listView.count - 1) listView.incrementCurrentIndex()
+            }
+            onAccepted: {
+                if (listView.currentIndex >= 0) root._pick(listView.currentIndex)
+            }
         }
 
         // 章节列表
