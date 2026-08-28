@@ -70,6 +70,9 @@ QtObject {
     // ── 阅读区段距 ──
     readonly property int readerParagraphGap: 16  // 章节正文段落空隙（固定像素，与行高 lineHeightBody 相互独立）
 
+    // ── 阅读区尺寸 ──
+    readonly property int readerDrawerWidth: 300  // 目录抽屉宽度（方案 B；尺寸档位，禁内联魔法值）
+
     // ── 选中标条 ──
     readonly property real markBar: 2.5     // 朱砂选中标条宽度（原型 2.5px）
 
