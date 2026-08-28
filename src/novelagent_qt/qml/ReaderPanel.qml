@@ -67,10 +67,15 @@ Rectangle {
         chapterList.positionViewAtBeginning()
     }
 
-    function selectChapter(i) {
-        currentIndex = i
-        openChapter(chapters[i].id)
-        chapterPopup.close()
+    // 按 id 选章（目录抽屉回调）：设选中并载入正文；id 不存在则忽略
+    function selectChapterById(id) {
+        for (var i = 0; i < chapters.length; ++i) {
+            if (chapters[i].id === id) {
+                currentIndex = i
+                openChapter(id)
+                return
+            }
+        }
     }
 
     Component.onCompleted: reload()
@@ -84,132 +89,90 @@ Rectangle {
         anchors.fill: parent
         spacing: 0
 
-        // ── 章节选择栏 ──
+        // ── 章节选择栏（方案 B：标题 chip + 目录按钮 → 打开目录抽屉）──
         Rectangle {
             Layout.fillWidth: true
             height: 48
             color: "transparent"
 
-            Rectangle {
-                id: selectorBtn
-                anchors { left: parent.left; leftMargin: Theme.gapLg; verticalCenter: parent.verticalCenter }
-                width: Math.min(selectorRow.implicitWidth + Theme.gapMd * 2,
-                                parent.width - Theme.gapLg * 2)
-                height: 32
-                radius: Theme.radiusSm
-                color: (selectorMa.containsMouse || chapterPopup.visible) ? Theme.bgHover : "transparent"
-                Behavior on color { ColorAnimation { duration: Theme.animFast } }
+            RowLayout {
+                anchors {
+                    left: parent.left; leftMargin: Theme.gapLg
+                    right: parent.right; rightMargin: Theme.gapSm
+                    verticalCenter: parent.verticalCenter
+                }
+                spacing: Theme.gapSm
 
-                RowLayout {
-                    id: selectorRow
-                    anchors { left: parent.left; leftMargin: Theme.gapMd; verticalCenter: parent.verticalCenter }
-                    spacing: Theme.gapSm
+                // 章节标题 chip：点击打开目录抽屉（无章节时禁用）
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 32
+                    radius: Theme.radiusSm
+                    color: (chipMa.containsMouse || chapterDrawer.opened) ? Theme.bgHover : "transparent"
+                    Behavior on color { ColorAnimation { duration: Theme.animFast } }
 
-                    Label {
-                        text: root.currentTitle
-                        font.family: Theme.fontDisplay
-                        font.pixelSize: Theme.sizeTitle
-                        font.weight: Font.DemiBold
-                        color: Theme.textPrimary
-                        elide: Text.ElideRight
-                        Layout.maximumWidth: root.width - 120
+                    RowLayout {
+                        anchors {
+                            left: parent.left; leftMargin: Theme.gapMd
+                            right: parent.right; rightMargin: Theme.gapSm
+                            verticalCenter: parent.verticalCenter
+                        }
+                        spacing: Theme.gapSm
+
+                        Label {
+                            text: root.currentTitle
+                            font.family: Theme.fontDisplay
+                            font.pixelSize: Theme.sizeTitle
+                            font.weight: Font.DemiBold
+                            color: Theme.textPrimary
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                        Label {
+                            text: "\u25be"
+                            visible: root.chapters.length > 0
+                            font.pixelSize: Theme.sizeUi
+                            color: Theme.textSecondary
+                        }
                     }
+
+                    MouseArea {
+                        id: chipMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        enabled: root.chapters.length > 0
+                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: chapterDrawer.open()
+                    }
+                }
+
+                // 目录按钮（☰，Segoe MDL2 \uE700）
+                Rectangle {
+                    id: tocBtn
+                    Layout.preferredWidth: 32
+                    Layout.preferredHeight: 32
+                    radius: Theme.radiusSm
+                    visible: root.chapters.length > 0
+                    color: (tocMa.containsMouse || chapterDrawer.opened) ? Theme.bgHover : "transparent"
+                    Behavior on color { ColorAnimation { duration: Theme.animFast } }
+
                     Label {
-                        text: "\u25be"
-                        visible: root.chapters.length > 0
+                        anchors.centerIn: parent
+                        text: "\uE700"
+                        font.family: Theme.fontUi
                         font.pixelSize: Theme.sizeUi
                         color: Theme.textSecondary
                     }
-                }
+                    ToolTip.visible: tocMa.containsMouse
+                    ToolTip.text: "目录"
+                    ToolTip.delay: 300
 
-                MouseArea {
-                    id: selectorMa
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    enabled: root.chapters.length > 0
-                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: chapterPopup.open()
-                }
-
-                Popup {
-                    id: chapterPopup
-                    y: selectorBtn.height + Theme.gapXs
-                    width: 300
-                    height: Math.min(Math.max(chapterListView.contentHeight, 48) + Theme.gapSm * 2, 360)
-                    padding: Theme.gapSm
-
-                    enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.animNormal } }
-                    exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.animFast } }
-
-                    background: Rectangle {
-                        radius: Theme.radiusMd
-                        color: Theme.bgElevated
-                        border.width: 1
-                        border.color: Theme.divider
-                    }
-
-                    contentItem: ListView {
-                        id: chapterListView
-                        clip: true
-                        model: root.chapters
-                        spacing: 2
-                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-                        // 面板选中态单向同步给视图：委托内经标准附加属性 ListView.view.currentIndex
-                        // 读取（官方文档仅承诺经 ListView.view 读取视图属性；实测自定义成员经
-                        // 附加视图调用会命中 null，不可靠，故面板函数仍走外层 id——与项目
-                        // 其它面板一致，运行时有效，qmllint 静态告警为已知风格债）
-                        currentIndex: root.currentIndex
-
-                        delegate: Rectangle {
-                            // 官方委托模式：required property 显式声明角色（含 index），
-                            // 宽度与视图状态经 ListView.view 附加属性访问
-                            id: chapterRow
-                            required property var modelData
-                            required property int index
-                            width: ListView.view.width
-                            height: 36
-                            radius: Theme.radiusSm
-                            color: (index === ListView.view.currentIndex || itemMa.containsMouse)
-                                   ? Theme.bgHover : "transparent"
-
-                            RowLayout {
-                                anchors { fill: parent; leftMargin: Theme.gapMd; rightMargin: Theme.gapMd }
-                                spacing: Theme.gapSm
-
-                                Label {
-                                    text: chapterRow.modelData.title
-                                    font.family: Theme.fontUi
-                                    font.pixelSize: Theme.sizeUi
-                                    color: Theme.textPrimary
-                                    elide: Text.ElideRight
-                                    Layout.fillWidth: true
-                                }
-                                Label {
-                                    text: chapterRow.modelData.wordCount > 0 ? chapterRow.modelData.wordCount + " 字" : ""
-                                    font.family: Theme.fontUi
-                                    font.pixelSize: Theme.sizeCaption
-                                    color: Theme.textFaint
-                                }
-                            }
-
-                            MouseArea {
-                                id: itemMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.selectChapter(chapterRow.index)
-                            }
-                        }
-
-                        Label {
-                            anchors.centerIn: parent
-                            visible: root.chapters.length === 0
-                            text: "暂无章节"
-                            font.family: Theme.fontUi
-                            font.pixelSize: Theme.sizeUi
-                            color: Theme.textFaint
-                        }
+                    MouseArea {
+                        id: tocMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: chapterDrawer.open()
                     }
                 }
             }
@@ -309,6 +272,35 @@ Rectangle {
                 font.pixelSize: Theme.sizeCaption
                 color: Theme.textFaint
             }
+        }
+    }
+
+    // 抽屉实例：parent 缺省即 root（Popup 坐标相对 parent，官方文档）；
+    // chapters 由 bridge 提供（含卷字段），currentChapterId 单向同步当前选中
+    ChapterDrawer {
+        id: chapterDrawer
+        chapters: root.chapters
+        currentChapterId: (root.currentIndex >= 0 && root.currentIndex < root.chapters.length)
+                          ? root.chapters[root.currentIndex].id : ""
+        onChapterSelected: (id) => root.selectChapterById(id)
+        onClosed: {
+            // QML 焦点不自动归还（Keyboard Focus 官方原文），显式还给目录按钮
+            tocBtn.forceActiveFocus()
+        }
+    }
+
+    // 抽屉遮罩：只盖阅读面板（官方 Overlay 遮罩为窗口级，故面板内自绘；
+    // 叠于面板内容之上、抽屉 Popup 之下——Popup 内容挂窗口 overlay 天然最上）
+    Rectangle {
+        id: drawerDim
+        anchors.fill: parent
+        visible: chapterDrawer.opened
+        color: Theme.overlayDim
+        z: 10
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: chapterDrawer.close()
         }
     }
 }
