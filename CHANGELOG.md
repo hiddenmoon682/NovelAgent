@@ -1,5 +1,25 @@
 # Changelog
 
+## [2026-08-28] 阅读面板目录抽屉（方案 B）
+
+- 交互升级：标题栏「章节名 + ▾」弹窗 → 「chip + ☰」打开目录抽屉；
+  抽屉自面板右缘滑入（Popup + enter/exit 220ms 官方过渡）、面板变暗
+  （自绘遮罩：官方 Overlay 遮罩为窗口级，无法只盖面板）、搜索即时过滤、
+  卷分组（官方 ListView.section/ViewSection；仅 ≥2 卷时显示分区头）、
+  **未分卷章节在分组模式下归入「未分卷」分区（标签回退，Task 3 审查裁决）**、
+  当前章节定位（官方 positionViewAtIndex + onOpened 时机）、
+  页脚「共 N 章 | 当前 · 第 x 章」（与方案 C 弹出层同款）、
+  ↑↓/Enter/Esc 键盘（官方 Keys 转发模式，IME 组合期豁免）、
+  焦点显式归还（官方：QML 焦点不自动归还）。
+- 数据：QmlBridge::chapterList 补带 volumeId/volumeTitle/volumeOrder
+  （数据模型本就支持卷，QML 侧此前零接入）；分组按真实卷，无卷项目平铺。
+- 依据：doc.qt.io/qt-6.8 官方文档核验后落地（三份子代理研究报告），
+  组件内注释固化原文出处；Drawer 控件弃用（动画时长无文档化属性 +
+  modal 遮罩窗口级）。
+- 验证：探针 9 项全 PASS（data/open-position/pick/filter/filter-miss/search/search-num/search-empty/search-reset 共 9 项）；
+  qmllint 无新增告警；全量回归通过；release 构建通过；界面复验由用户手动执行。
+  **门禁：全量回归 33/33、release 构建通过；界面与键盘路径由用户手动复验。**
+
 ## [2026-08-28] 章节导航方案调研 + HTML 交互预览
 
 - 背景：章节数增多后，标题栏"章节名 + ▾"弹层只能滚动查找，定位成本陡增。
