@@ -11,6 +11,7 @@
 #include "utils/FileUtils.h"
 
 #include <QDateTime>
+#include <QHash>
 #include <QMetaObject>
 #include <QRegularExpression>
 #include <QTimeZone>
@@ -24,6 +25,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <utility>
 
 namespace qtui {
 
@@ -652,6 +654,14 @@ QVariantList QmlBridge::chapterList() const {
 
     // 锁内读取章节元数据（GUI 线程与池线程工具并发，防撕裂读）
     app_->projectAccess()->withReadLock([&](const Project& p) {
+        // 卷索引（id → {标题, 卷序}）：供目录抽屉按卷分组；卷序取 volumes 数组下标
+        QHash<QString, std::pair<QString, int>> volMeta;
+        for (int i = 0; i < int(p.outline.volumes.size()); ++i) {
+            const Volume& v = p.outline.volumes[i];
+            volMeta.insert(QString::fromStdString(v.id),
+                           {QString::fromStdString(v.title), i});
+        }
+
         std::vector<const Chapter*> sorted;
         sorted.reserve(p.outline.chapters.size());
         for (const auto& ch : p.outline.chapters)
@@ -667,6 +677,19 @@ QVariantList QmlBridge::chapterList() const {
                          : QString::fromStdString(ch->title));
             m.insert(QStringLiteral("order"), ch->order);
             m.insert(QStringLiteral("wordCount"), ch->word_count);
+            // 卷信息：无卷或卷引用失效（volumes 中找不到）时 volumeOrder=-1，
+            // QML 端据此把该章归入"未分卷"并排在末尾
+            QString volId, volTitle;
+            int volOrder = -1;
+            const auto it = volMeta.constFind(QString::fromStdString(ch->volume_id));
+            if (it != volMeta.constEnd()) {
+                volId = it.key();
+                volTitle = it.value().first;
+                volOrder = it.value().second;
+            }
+            m.insert(QStringLiteral("volumeId"), volId);
+            m.insert(QStringLiteral("volumeTitle"), volTitle);
+            m.insert(QStringLiteral("volumeOrder"), volOrder);
             list.push_back(m);
         }
     });
