@@ -1,5 +1,351 @@
 # Changelog
 
+## [2026-09-24] 对话列表正文改用无衬线 MiSans：与阅读区衬线明确分工
+
+- **诉求**：小说正文（阅读区）保留 Noto Serif SC，**对话列表的消息正文换成其他字体**。
+- **改动**（两处，字体决策单一路径）：
+  - `Theme.qml` 新增字体档位 `fontChat: "MiSans"`（遵守"禁内联魔法值"规则），注释写明
+    "阅读区衬线 / 对话区无衬线"的分工理由与选型依据（对照图路径）。
+  - `ChatBubble.qml`：气泡正文 `Text` 由 `font.family: Theme.fontDisplay` 改为新属性
+    `bodyFont`（默认 `Theme.fontChat`）。抽成属性是为了能用**真组件**在同一次渲染里并列
+    多款候选字体出对照图，避免手搓仿制品与真实气泡走形。
+- **选型过程**：先出真机对照图再由用户选定 MiSans——
+  `docs/design/previews/chat-font-compare.png`（上半：真气泡 15px 实况；下半：3× 放大字形）、
+  `docs/design/previews/chat-font-glyph-detail.png`（110px 原尺寸字形细节）。
+  四款候选的 FontMetrics 度量（110px，来自字体文件本身）：
+  | 字体 | 行高 | xHeight | 「永」墨迹 | 「Aa 200」墨迹宽 |
+  |---|---|---|---|---|
+  | Noto Serif SC（原） | 158.1 | 56.5 | 103.1 × 100.9 | 343.3 |
+  | Noto Sans SC | 159.3 | 59.7 | 102.7 × 101.0 | 334.7 |
+  | **MiSans（选中）** | **145.9** | 58.3 | **99.4 × 101.7** | **356.7** |
+  | Microsoft YaHei UI | 139.7 | 59.4 | 108.3 × 105.4 | 358.7 |
+  → 15px 下每行行高由 **22px 变为 19.9px**：气泡随之变矮、列表竖向节奏略紧；
+  **断行位置不变**（中文全角字宽恒为 1em，换字体不改变折行点）。
+- **踩坑（值得记住）**：
+  1. **验代理指标 ≠ 验本体**。首版对照图四行"看起来一模一样"：给 `ChatBubble` 加了 `bodyFont`
+     属性，却**忘了把气泡里那个 `Text` 的 `font.family` 接上去**（仍硬编码衬线）；而我的
+     "自检日志"读的是每行**标签文字**的 `fontInfo`——标签确实按候选字体渲染，于是日志全绿、
+     图却是同一款字体。**自检必须读被验对象本身**。
+  2. **Markdown 排版下 `Text.fontInfo.family` 不可信**：Agent 气泡（`Text.MarkdownText`）设定
+     `MiSans` 却回读 `Microsoft YaHei UI`（用户气泡纯文本则设定 = 实得）。判断字体是否生效
+     必须以**渲染结果**为准（像素比对），不能靠 `fontInfo`。
+  3. `grabToImage` **不含 `Window.color`**：抓裸 `Item` 得到全透明背景（A=0），浅色文字在
+     查看器合成的白底上几乎不可见，极易被误判成"配色反了"。抓图内容须自带不透明底色。
+  4. QML `FontMetrics` 在 Qt 6.8.3 **没有** `horizontalAdvance()`（抛 TypeError 并中断整条日志），
+     改用 `boundingRect` / `tightBoundingRect` / `averageCharacterWidth`。
+  5. 对照图过大会被查看器二次缩放：3480px 宽导出时 45px 字形实际只显示约 28px，
+     字形差异被抹平（用户据此质疑"②③④是不是同一款"）。**字形对比图要按原尺寸导出**
+     （本次 110px 字形 + 1410px 宽）。经 `FontMetrics` 度量 + 对齐容错像素比对
+     （自比对基准 0，四行两两对齐后仍有 35.6%–40.7% 像素不同）确认确为四款不同字体。
+- **验证**：`qmllint` Theme.qml **0**、ChatBubble.qml **0 = HEAD 基线**；`./scripts/verify.sh`
+  全量回归 **33/33 通过**；release 重链（`build-release/novelagent_gui.exe` 10:16:18，
+  rcc 已重新打包 QML）后真机启动：`stdout 5 行 / stderr 0 字节`，**无任何 QML 告警**；
+  抓图 `docs/design/previews/chat-font-applied.png` 目视确认**对话区无衬线、阅读区衬线**。
+- **未改变**：阅读区正文仍是 `Theme.fontDisplay`（Noto Serif SC）；思考过程、工具调用卡片、
+  输入框等仍是 `fontUi`（Microsoft YaHei UI）。
+
+## [2026-09-24] 首次发消息时首条气泡贴死上边缘：`contentY = 0` 根本不是"顶部"（越界 16px）
+
+- **症状**：首次发出请求时，对话区首条消息**贴着上边缘**（`topMargin` 的 16px 留白不生效）；
+  往上滚一下，留白才出现。用户截图复现。
+- **定位（探针实测，短内容与可滚动内容结论一致）**：`snapToEnd()` 里"内容不足一屏"分支写的是
+  `chatView.contentY = 0`，注释称其为"回顶部"——但 **0 不是顶部**：
+  | 赋值 | 可见偏移 `contentItem.y` | 官方 `verticalOvershoot` | `atYBeginning` |
+  |---|---|---|---|
+  | `contentY = -topMargin`（-16） | **16（留白可见）** | **0（合法）** | **true** |
+  | `contentY = 0`（原实现） | 0（首条贴死上边缘） | **+16（越界 16px）** | false |
+  | `contentY = -24` | 24 | -8（越过 8px） | true |
+- **文档依据**：margin 是"内容之外**额外**保留的空间（reserved in addition to contentHeight）"，
+  因此合法上界恰为 `-topMargin`。原写法把视口停在**越界**位置 → 首条贴死；用户往上滚时
+  Qt 自身的钳制把越界位置拉回 -16 → 于是"留白突然出现"。附带影响：该越界状态与 ListView 钳制
+  互相拉扯，启动读数里 `contentY` 在 **-16↔0 之间抖**（残留抖动源之一，本次一并消除）。
+- **修法**：该分支改为 `chatView.contentY = -chatView.topMargin`——与上一节 `bottomMargin` 同源：
+  **官方定位 API 不含 margin，Qt 自身钳制含 margin，必须显式对齐**。
+- **验证**：真机短内容会话（2 条消息，`contentHeight 434 < 视口 716`）读数
+  `contentItem.y = 16.00`、`contentY = -16.00`、`verticalOvershoot = 0.00`、`atYBeginning = true`；
+  抓帧像素扫描：首个非背景行 = **24 设备像素 ÷ DPR 1.5 = 16 逻辑像素 = topMargin** ✔；
+  帧图目视确认首条气泡完整、上方留白存在（不再被裁切）。
+- **未改变的行为（避免误解）**：内容高于一屏时仍按"贴底跟随最新"锚定
+  （`contentY = positionViewAtEnd + bottomMargin`），此时顶部被滚掉、首条消息可能被裁，
+  这是聊天列表的正常语义；往上滚到顶即显示完整 16px 留白。
+- **验证门**：`./scripts/verify.sh` 全量回归 **33/33 通过**；`qmllint AgentPanel.qml` **35 条 = 基线**；
+  临时探针与抓帧脚本已全部删除。
+
+## [2026-09-24] 边界硬停补完：锚点未含 bottomMargin，贴底后滚轮仍会再挪 16px
+
+- **背景**：上一节修掉了"滚轮越界回弹"造成的剧烈抖动（`StopAtBounds`）。但帧级复验发现**边界处
+  仍有 16px 的可见位移**：画面不是纹丝不动，而是"停住 → 再挪 16px → 跳回"。用户诉求是"到边界
+  就不能再往下滚"，所以这 16px 必须一并解决。
+- **定位（帧级 + 单变量）**：
+  1. 新增判据 `contentItem.y`（= 视口内内容的真实可见偏移，`contentY` 单独变化可能被 `originY`
+     同步抵消）：初始静止为 **-1717.00**，注入滚轮后变为 **-1733.00**，且此时
+     `positionViewAtEnd()` 计数**没变**——说明这 16px **不是**重锚造成的，而是 **ListView 自身的
+     滚轮钳制**把视口推到 **-1733**。
+  2. 单变量对照：摘掉 `onContentHeightChanged → snapToEnd()` 挂钩后，滚轮独自滚到 **-1674 后
+     连续 10+ 帧纹丝不动** → **StopAtBounds 下 ListView 自身就是完美硬停**，问题出在"我们的锚点
+     与它的钳制末端不一致"。
+  3. 差值 **16px == `Theme.gapLg` == `bottomMargin`**。官方文档明确 margin 是"内容之外**额外**保留的
+     空间（reserved in addition to contentHeight）"，即必须多滚这一段才算到底；`positionViewAtEnd()`
+     停在这段预留**之前**，而 ListView 的滚轮钳制**包含**它 → 贴底后继续滚，视口才会再挪 16px。
+- **修法（一行）**：`snapToEnd()` 在 `positionViewAtEnd()` 之后补 `chatView.contentY += chatView.bottomMargin`，
+  使锚点与官方钳制末端对齐（相加不会越界：`StopAtBounds` 下由 ListView 自行钳到真实末端）。
+- **帧级证据（两级）**：
+  1. 最小复现（`qml.exe` + 真实 `ChatBubble`/`ToolCallCard` + 真实滚轮，边界滚 100 次）：
+     **57/57 帧哈希完全一致**、`contentItem.y` 恒为 -1733.00、`contentY` 零变化、`verticalOvershoot` 恒 0。
+  2. 真机（37 条消息的真实会话，边界滚 60 次）：**`app_011..app_037` 共 27 帧哈希一致，
+     完整覆盖 3 秒注入窗口**；`contentItem.y` 恒为 -818.00、`contentY` 零变化、`verticalOvershoot` 恒 0。
+- **跟随回归（真机）**：注入后追加一条消息 → `contentHeight 2404→2504`、`contentY 818→896`
+  （恰为新末端 880 + 16）→ **自动跟随仍正常**；`bottomMargin` 计入锚点不改变"是否贴底"的语义。
+- **验证**：`./scripts/verify.sh` 全量回归 **33/33 通过**、`--build` 退出码 0；
+  `qmllint AgentPanel.qml` **35 条 = HEAD 基线**（零新增）；探针与抓帧脚本已全部删除。
+- **方法沉淀**：判断"画面有没有动"不能只看 `contentY`——必须看 `contentItem.y`，并用
+  `grabToImage` 逐帧哈希做像素级佐证；两者结合才能区分"真的移动"和"内部索引补偿/亚像素重绘"。
+
+## [2026-09-24] 对话区滚到底部边界时的剧烈上下抖动：根因是滚轮越界回弹，改 StopAtBounds
+
+- **症状**：在对话区用鼠标滚轮一直向下滚，到达底部边界后画面剧烈上下抖动。
+- **定性（先查官方文档）**：`doc.qt.io Flickable#boundsBehavior` 四档语义——默认
+  `DragAndOvershootBounds`（可拖出边界、甩动越界后回弹）、`StopAtBounds`（硬边界）。
+  本仓库四个列表里，`ReaderPanel` / `ChapterDrawer` / `SkillPopup` 都显式写了 `StopAtBounds`，
+  **唯独对话列表 `chatView` 没写**（吃默认值）——这是"能正常工作的相似代码 vs 出问题的代码"的第一处差异。
+- **根因（实测，不是推断）**：文档只说"拖动/甩动"会越界，**实测滚轮滚动在末端同样越界**——
+  官方只读属性 `verticalOvershoot` 峰值 **56px**，`contentY` 冲到合法末端之外 **72px**，
+  于是**每个滚轮刻度都触发一次"越界 → 回弹"**；滚轮连续滚动时回弹还没结束就被下一次越界顶回去，
+  表现为剧烈抖动。加剧因素：越界/回弹迫使 ListView 反复测量委托，`contentHeight` 随之抖动，
+  经 `onContentHeightChanged → snapToEnd() → positionViewAtEnd()` 把"越界—回弹"放大——
+  真机实测该定位在一次 80 刻度滚动中被调用 **72 次**（修复后 **2 次**）。
+- **修法（一行）**：`chatView` 补 `boundsBehavior: Flickable.StopAtBounds`，与本仓库其余三个列表一致
+  （越界恒为 0，末端为硬停）。
+- **证据链（两级）**：
+  1. **最小复现**（`qml.exe` + 真实 `ChatBubble`/`ToolCallCard` + 真实滚轮事件，脚本注入 Win32
+     `mouse_event`）：边界继续滚 40 刻度，修复前 **79 次方向反转 / 越界带 35px / overshoot 峰值 19px**，
+     修复后 **1 次反转 / overshoot 恒 0**。
+  2. **真机 before/after**（同一个 37 条消息的真实会话，滚轮注入 80 刻度）：
+     `verticalOvershoot` 采样 **635 → 0**、峰值 **56px → 0**、`positionViewAtEnd` 调用 **72 → 2**；
+     在边界继续滚 40 刻度：越界带 72px/11 次反转 → 16px/3 次反转（残留 16px 为委托测量引起的
+     `originY` 微调，方向单调、非抖动）。
+- **单变量排除（都不是原因）**：只补这一行 `StopAtBounds` 即可消除抖动；另测"仅摘掉
+  `onContentHeightChanged` 挂钩"仍残留 23 次反转/20px 回弹（说明 Qt 自身的越界回弹是主因，
+  重锚只是放大器）；`ListView.add` 过渡、delegate 高度绑定环、`ToolCallCard`/`ChatBubble` 布局均无关
+  （真机探针显示注入期间 `moving=1`、越界来自 ListView 自身）。
+- **顺带更正一处过期注释**：原注释断言"`moving`/`flicking` 仅在拖动/甩动期间为 true，滚轮不会置位它们"，
+  实测**相反**（滚轮滚动采样 221/227 为真）。逻辑结论不受影响（末端越界阶段 `moving` 为假且 `atYEnd`
+  仍为真，不会把跟随状态误翻成"暂停"），但注释已按实测改写，避免后续维护者据此做错判断。
+- **回归验证（自动跟随未被破坏）**：真机加临时探针——在底部追加内容 → 视口跟随到新末端（`contentY`
+  -382→-320，`positionViewAtEnd` 1 次）；先上翻 15 刻度再追加 → **视口完全不动**（无 dump、无重锚），
+  即"用户上翻阅读后不被拽回底部"的既有行为保持。
+- **验证**：`./scripts/verify.sh` 全量回归 **33/33 通过**（exit 0）、`--build` 退出码 0；
+  `qmllint AgentPanel.qml` **35 条 = HEAD 基线**（零新增）；移除全部临时探针后 `git diff` 仅剩
+  `boundsBehavior` 一行 + 注释，清洁版真机启动无 QML 告警。
+- **工具坑记录（复用价值）**：`SendInput` 的 `INPUT` 结构体在 x64 下必须正好 **40 字节**，
+  自己手写 padding 会变成 48 字节并**静默失败**（返回 0、无异常）；改用 `mouse_event`
+  （`MOUSEEVENTF_WHEEL`）注入滚轮即可。另外 **QML 的 JS 解析器把 `long` 当保留字**
+  （报 `Expected token identifier`），临时脚本里不能用它当变量名。
+
+## [2026-09-24] 会话切换卡顿：定位到 delegate 重复排版，稳态耗时降约 2.5 倍
+
+- **先量后改**（真机探针，同一项目真实会话，A/B 往返 13 次）：切换一次 **84–130ms**，其中
+  `chatModel = next` 触发的 delegate 实例化占 **62–88ms**；切到 2 条消息的小会话 26ms。
+  首次切换另有 ~250ms 一次性预热（组件编译/字体加载/JIT，与切换逻辑无关）。
+  C++ 侧全部可忽略：物化 0.2–2ms、`sessionList()` 0.1ms、`conversationHistory()` ~0ms。
+- **根因：三处"折叠态/隐藏态也在干重活"**（既有浪费，与本次多会话缺陷修复无关）——
+  1. **气泡里那个隐藏的测量 Text**：为算"未换行时的自然宽度"，把**整段正文用 NoWrap 再排版
+     一遍**。置空它后 setModel 从 62–88ms 掉到 26–29ms —— 单项占一半以上。改法：**删掉该 Text**，
+     正文以固定上限宽度排版，气泡宽度直接取已排版内容的 `contentWidth`（单行短文本 = 自然宽度；
+     换行长文本 = 上限）。正文宽度只依赖面板宽度，不构成 `bubbleText.width ↔ bubbleRect.width`
+     绑定环；渲染等价（已抓帧核对气泡宽窄、列表缩进、短消息气泡）。
+  2. **ToolCallCard 折叠态仍组装详情**：展开区 `text: root.detailText()` 会对参数/结果做
+     `JSON.parse` + 缩进美化（单条结果上限 32KB），而父项 `implicitHeight` 绑定又强制这个隐藏
+     Text 排版——历史回放中工具卡片往往占多数。改为**仅在展开时**求值。
+  3. **ChatBubble 折叠态仍归一化并排版思考过程**：`displayReasoning` 作为 property 会无条件求值
+     （正则归一化 reasoning，本会话单条实测达 2520 字符），隐藏 Text 同样被强制排版。改为在
+     展开态绑定里内联求值。
+- **效果（稳态，真实 delegate）**：切到 37 条消息的会话 **84–130ms → 50–54ms**（setModel
+  62–88ms → 28–35ms）；切回 2 条消息的小会话 **26ms → 21ms**。
+- **顺带排除的猜想（单变量实测，均非原因）**：`ListView.reuseItems`（更差：一次建 38 个 delegate，
+  134ms）；`ListView.add` 过渡（关掉无改善）；`forceLayout`/手写 `contentY`（只是把成本挪位置）；
+  "只测量最长一行"（该会话正文多为单段长句，最长行≈全文，无收益）。
+- **遗留（未做，需要时按同一流程实施）**：彻底消除切换成本要"每个会话保留自己的视图"——切换只换
+  可见项、完全不重建 delegate（代价：内存随会话数增长、后台会话流式写入需按会话路由、删除会话要
+  销毁对应视图）。首次切换的 ~250ms 一次性预热（Qt 组件编译/字体加载）也不在此列。
+- **验证**：`./scripts/verify.sh` 全量回归 **33/33 通过**、`--build` 退出码 0；`qmllint` 四个改动
+  文件与 HEAD 基线逐条一致（AgentPanel 35 / ChatBubble 2 / ToolCallCard 2 / SidebarPanel 33，
+  零新增）；清洁版（移除全部临时探针后）启动无 QML 告警。
+
+## [2026-09-22] 多会话 P1/P2 逐条定性：7 项真缺陷已修 + 4 项判定为设计取舍
+
+先判定后动手：P1/P2 清单逐条读代码定性，**只改真缺陷**；设计取舍与不可达的 latent 风险不动行为，只补注释固化约束。
+
+### 已修（真缺陷）
+
+- **F 状态栏用量不随会话变（一般）**：`totalTokens`/`contextPercent` 是"当前会话"的量，但新建/切换/
+  删除会话都不发 `usageChanged`，且物化历史会话从不刷新 `usage_`（只在 process 结束时更新）→ 状态栏
+  显示上一个会话的数值、点开旧会话恒为 0。修复：三条会话路径补发 `usageChanged`；
+  `SessionRuntime::loadSessionState()` 载入成功且有消息时顺带 `refreshUsage()`（一次 TokenCounter
+  单遍统计，毫秒级）。
+- **H 历史载入失败静默（一般）**：`loadSessionState()` 吞异常只 warn，`materializeSession` 仍返回 true
+  → "列表里有该会话、点开对话区空白、无任何提示"，与真数据损坏无从区分（症状与本次修的空白缺陷同形）。
+  修复：`loadSessionState()` 返回 bool 并向上传播（`materializeSession` 载入失败即移除刚建的 runtime、
+  不切焦点、返回 false），桥接层提示语覆盖"已被删除 / 历史载入失败"两类原因。
+- **I 失败路径无 UI 反馈（一般）**：删除会话时 `deleteSessionRuntime` 失败（运行中 2s 未退场）只写日志、
+  QML 又忽略返回值；`rebuildIndex` 被 busy 拒绝同样只写日志 → 用户看到"点了没反应"。两处改走
+  `uiErrorOccurred` 就地 Toast。
+- **J 标题截断两套口径（一般）**：库内 `deriveTitle` 按 **30 字节**（中文仅 10 字+…），池内按 **30 字符**
+  → 同一会话"未物化 / 已物化"标题长度突变。修复：新增共享工具 `utils::utf8::truncateChars`（按**码点**
+  截断），两端共用；upsert 的标题由"仅空标题时写入"改为"每轮用最新推导值刷新（推导为空则保留旧值）"，
+  让历史会话在下一轮保存时收敛到统一口径。**存量行的库内标题要等该会话下一次保存才收敛**——本轮探针里
+  `s-multi-4` 仍显示旧值属预期，非未修复。
+- **C 删除闸门过宽（一般）**：`deleteSession` 用全局 `busy()`，任一会话生成中（或索引重建中）就删不掉
+  任何会话，连完全空闲的也不行。修复：闸门按**目标会话**判定（`isSessionBusy(target)`）；落盘本就按
+  session_id 隔离，归档 UPDATE 与会话写入经同一 SqliteStore 串行，互不破坏。
+- **G 列表取标题整段深拷贝（一般·性能）**：`sessionList()` 为取首条 user 消息首行，对每个池会话做
+  `snapshot()` 整段 `vector<Message>` 深拷贝（单条工具结果上限 32KB），而列表在 `sessionsChanged`/
+  `sessionBusyChanged` 时都会重建。修复：`Memory::firstUserLine()`（内部加锁、只扫首条 user、不拷贝
+  整段），与 snapshot 口径一致并有测试固化。
+- **P 纯思考过程消息重放丢失（建议→实为实时/回放不一致）**：`conversationHistory` 把"无正文"的消息一律
+  当空占位丢弃，而 ChatBubble 对"正文空 + reasoning 非空"会渲染「思考过程」折叠条 → 实时可见、
+  重启/切会话后消失。修复：保留"有 reasoning 的 assistant"消息，仍跳过真正空占位。
+
+### 判定为非 BUG（设计取舍 / 不可达 latent，仅补注释）
+
+- **L** `contextWarnings()`/`currentState()`/`stateMachine()` 读池线程写的非原子状态、`Agent` 非 const
+  访问器会自动建会话：产品内**无调用方**，属接口脆弱性；真修需要给这些 runtime 状态统一加锁/改原子，
+  是重构不是缺陷修复，本轮不动。
+- **M** `ThreadPool::submit` 在池停止后改为调用线程内联执行，若任务体再自锁调用方持有的
+  `in_flight_mutex_` 会自死锁：`stop_` 仅由 `~ThreadPool` 置位、提交只在 GUI 线程 → 不可达。已在
+  `submit` 处写明约束。
+- **N** `cancelAllAndWait` 置位的 `deleteRequested` 不复位：该函数语义即"应用正在关闭"，产品只在退出/
+  整体重建调用。已在声明处写明"复用于非销毁场景前必须先清标志，否则相关会话此后每轮都被拒绝"。
+- **O** `message_history` 只写不读、随压缩无界增长（"完整历史层"的设计意图）与
+  `SessionPersistence::createSession()` 仅测试在用（已在该声明处标注）。
+- **R** 会话/runtime 无上限（每个 runtime 自带 client + 2 个工具管道线程）：需要产品决策
+  （LRU 驱逐/空闲回收阈值），不在缺陷修复范围。
+
+### 验证
+
+- `./scripts/verify.sh`（全量回归）**33/33 通过**、`--build` 退出码 0；
+- 新增/加强测试：`test_session_sqlite::标题 30 字符口径`（40 字→30 字+… = 93 字节；恰好 30 字不截断
+  ——旧实现必失败）、`test_memory::firstUserLine`（与 snapshot 口径逐字一致）、
+  `test_agent::物化后 contextUsage 非 0`；
+- **真机探针**（真实项目、真实会话，只切换不发消息）实测：启动 `tokens=1091 pct=1` → 切到 40 条消息的
+  旧会话 **`tokens=11134 pct=16`**（载入即刷新；修复前是陈旧值或 0）→ 切回 `tokens=1091 pct=1`；
+  两次切换渲染均正常（`children=3`、`itemAtIndex(0)` 有值），运行日志 QML 告警 0 条；
+  `qmllint AgentPanel.qml` 35 条 = HEAD 基线零新增。
+
+## [2026-09-22] 多会话 P0 缺陷修复（退出期 UAF ×2 / 线程池析构序 / 运行态信号时序）
+
+来源：多会话实现专项评审（四路：桥接层 / 池与持久化 / 线程与生命周期 / QML 消费方）后的优先修复。
+四项均先复核源码再改，逐项单变量。
+
+- **A1 退出期析构序 UAF（阻断）**：`NovelAgentApp` 成员按声明逆序析构，而 `agent_` 原声明在第 3 位
+  → 最后析构；`persistence_`/`sqlite_store_`/`project_access_`/`vector_store_` 全部先死。会话池任务
+  收尾会写 novel.db（`SessionRuntime::saveSessionState`）并访问项目访问层，`cancelAllAndWait` 2s
+  超时后的残留任务即在此时踩已析构对象（关窗即触发；取消是协作式的，等待下一个流片段才生效）。
+  修复：`agent_` 移到成员表**最后**（= 最先析构，其线程池析构 join 兜住残留任务，而此时依赖全部存活），
+  并在 `~NovelAgentApp` 中先 `agent_.shutdown()` 再关库；成员顺序契约写进头文件注释。
+- **A2 生命周期令牌覆盖不全（阻断）**：`runAgent` 只给 `on_complete` 装了令牌，`on_content`/
+  `on_reasoning`/`on_tool_call_start`/`on_tool_start`/`on_tool_finish`/`on_error` 六个流式回调裸捕获
+  `this` 并直接 `invokeMethod` → 同一 2s 窗口内悬垂 `this`。修复：令牌改为 `shared_ptr` **强拷贝**
+  按值捕获（回调内不读成员 `alive_`），六个回调统一"先验令牌再触碰 this"；`on_complete` 与索引
+  进度回调同步改用同一令牌。
+- **D 线程池析构序（严重）**：`ThreadPool` 的 `workers_` 声明在最前 → 最后析构，而 `~ThreadPool`
+  只置 `stop_` + `notify_all`，join 被推迟到 `mutex_/cv_/tasks_` 已销毁之后；worker 退出前仍会对
+  `mutex_` 加锁 → 析构期 UAF。修复：析构函数体内显式 `join()`（join 与"同步原语存活"窗口严格重合），
+  并补 `test_thread_pool` 的析构契约测试。
+- **B 运行态信号时序（严重，用户可见）**：`runAgent` 在 `submitProcess` **之前**发
+  `busyChanged`/`sessionBusyChanged`，而 `sessionBusy()` 只看 `running_`（由池线程在 `process` 开头
+  置位）→ 整轮生成期间 QML 读到 false 且无后续刷新：**「取消」按钮不出现**；此时回车会被
+  `sendMessageToSession` 静默丢弃（QML 已本地追加用户气泡 + 空占位 → 消息"没反应"、回复错位）。
+  修复：① 判据升级为"运行中 ∨ 已提交未启动/收尾中"（新增 `SessionPool::isBusy`/`Agent::isSessionBusy`，
+  GUI 与侧栏运行圆点同一判据）；② 运行态信号改到提交**之后**发射；③ 重复提交不再静默，改走聊天错误
+  通道提示并补发运行态信号（`AgentPanel` 会显示 ⚠ 说明）。
+- **验证**：`./scripts/verify.sh`（全量回归）**33/33 通过**、`--build` 退出码 0；新增两个确定性测试
+  ——`test_agent::isBusy 覆盖提交窗口`（提交同步返回瞬间即为忙、他会话不受影响、退场后回到空闲）、
+  `test_thread_pool::析构等待运行中任务`；真机端到端探针（新建会话 → 发消息 → 生成中退出）实测：
+  `busyAfterSend=true btn=取消 status=思考中...`（修复前为 false/发送），生成中 `Qt.quit()` 后进程
+  **退出码 0**、日志显示流式中断 → 状态回"就绪" → **`会话 s-multi-6 已保存`**（即残留任务在
+  persistence/sqlite 仍存活时安全收尾，正是 A1 修复要保证的路径）；`qmllint AgentPanel.qml` 35 条
+  = HEAD 基线零新增；探针遗留的测试会话已按 app 内删除语义归档（`archived=1`），用户数据无残留。
+
+## [2026-09-22] 多会话严重缺陷：切回旧会话对话区整片空白（真机复现 + 根因定位）
+
+- **症状**（用户反馈）：新建会话并对话一次后，点回之前的会话，聊天区内容完全显示不出来；
+  侧栏高亮/标题/字数统计都正常，只有对话流是空的。
+- **证据链（先复现再改代码）**：写临时诊断钩子驱动真实 `bridge.switchPoolSession()` 并抓帧，
+  确认是**会话切换后必然出现**（池内切换 100% 复现，一次运行内不复原）：
+  - 数据库侧数据完好（`s-multi-4` 有 40 条消息，DB 标题/列表顺序/`updated_at` 均正常）；
+  - `bridge.conversationHistory()` 返回 37 条、`chatModel` 行内容与健康态逐字节相同
+    （`#0 user clen=2 / #1 assistant clen=284`）→ **不是数据层问题**；
+  - 视图侧异常：`chatView.contentItem.children` 只剩 2 个 **孤儿 delegate**
+    （`h=30`、`y` 仍是上一会话的 1508 等陈旧坐标、内容为空），且 `itemAtIndex(0) === null`
+    （索引→delegate 映射已失效）→ 无任何可见条目 = 整片空白。
+- **根因**：`AgentPanel.reloadHistory()` 在**同一轮事件循环内**对同一个 `ListModel` 先
+  `clear()` 再逐条 `append()`（切换会话时 37 条），而此刻 `ListView` 正处于上一会话的
+  深滚动位置（`contentY≈1520`）；QQuickListView 的 delegate 复用/布局在这一次"重置 + 重填"
+  中错乱，留下陈旧 delegate 且不再生成新 delegate。抓帧对照：修复前 4.7KB（纯背景），
+  修复后 173KB（内容正常）。
+- **修复**：改为**整体替换 model**（官方"换模型 = 视图全量重建"语义）：`Component { ListModel {} }`
+  + `property ListModel chatModel`，`reloadHistory()` 在**新 model 上**填好历史后一次赋值
+  `root.chatModel = next` 并 `destroy()` 旧 model。同轮 `clear()+append()` 的写法彻底移除。
+- **排除项（单变量验证，均非根因）**：`ListView.add` 过渡（`from: 0` 淡入）注释掉后症状不变；
+  `forceLayout()` / `positionViewAtBeginning()` / 手写 `contentY` 只能"救活"当次渲染，
+  下一次切换依旧空白 → 属症状级规避，故未采纳。
+- **验证**：`./scripts/verify.sh --build` 退出码 0；`qmllint AgentPanel.qml` 35 条告警
+  （与 HEAD 基线逐条一致，零新增）；真机端到端复验——切到另一会话再切回，
+  `contentItem.children=3`、`itemAtIndex(0)` 正常、抓帧有内容，运行日志 QML 告警为 0；
+  清洁版（移除诊断钩子后）启动无告警、正常恢复上次会话。
+- 影响面：多会话切换（`sessionReset` 的全部路径：新建 / 切换 / 删除当前会话）共用
+  `reloadHistory()`，故一并修复。
+
+## [2026-09-22] 阅读区排版：段间距 16→8px、行距 30→24px/行
+
+- 反馈两轮：先"每一段文本之间的间距有点大"，再"一个段落有两行，这两行之间的高度有点高"。
+- **行距（根因是 Qt 的语义，不是取值大小）**：QML `Text.lineHeight` 在默认
+  `Text.ProportionalHeight` 下乘的是**字体自身行盒**而不是字号——Noto Serif SC 在 16px
+  字号下字体行盒 23px，故 `lineHeight: 1.3` 实得 **30px/行（= 1.875 倍字号）**，比原型
+  HTML 的 `line-height: 1.3`（CSS 语义 = 1.3 倍字号 ≈ 20.8px）高出 44%。
+  改为 `lineHeightMode: Text.FixedHeight` + `Theme.readerLineHeight: 24`（= 1.5 倍字号，
+  主流阅读器行高区间下沿；对照图四档实测 30/27/24/22 后选定）：两行一段从 60px 降到 48px。
+  档位 `lineHeightBody`（倍数语义）随之改名 `readerLineHeight`（像素语义），单位变更显式化。
+- **段间距**：`Theme.readerParagraphGap` 16 → 8。原状（30px 行 + 16px 段距）下段间节奏
+  46px、段内行间 14px，视觉上等于每段之间空一整行；8px 下段间比段内多 8px 空白
+  （约 2 倍分隔度），保留段落辨识又不空行。
+- 产出两张对照图（同一段真实章节文字、与阅读区同字体/字号/留白，均由 qml.exe 探针渲染）：
+  `docs/design/previews/paragraph-spacing-compare.png`（段距 16 / 8 / 4 / 0+首行缩进）、
+  `docs/design/previews/reader-line-height-compare.png`（行距 30 / 27 / 24 / 22）。
+- 附带结论：QML 的 `Text` **没有 `text-indent`**，要"中文书排法"（段距 0 + 首行缩进 2 字符）
+  需按段前置两个 U+3000；量测行几何走官方 `Text.lineLaidOut(line)` 信号（Qt 6 的 `Text`
+  没有 `positionToRectangle`，官方 Methods 只有 `forceLayout`/`linkAt`）。
+- 验证：`./scripts/verify.sh --build` 退出码 0；qmllint 对 Theme.qml 零告警、ReaderPanel
+  仅历史 5 条告警；`lineHeightBody` 无残留引用；真实 ReaderPanel + 真实章节正文渲染复验
+  （行距 24px/段距 8px 生效，行间无叠字，标题栏/☰/页脚不受影响）。
+
+## [2026-09-18] 阅读面板目录入口与视觉对齐参考稿
+
+- **修复图标整体消失（根因：图标字体用错）**：`☰` 目录按钮与抽屉 `✕` 关闭按钮
+  此前用 `Theme.fontUi`（Microsoft YaHei UI）渲染私有区字形 `\uE700`/`\uE8BB`，
+  渲染为空白（无警告、无 fallback）；改为 `Theme.fontIcon`（Segoe MDL2 Assets）。
+  最小复现抓帧实证：同一字形 YaHei 空白 / MDL2 正常出图，普通 Unicode `▾` 两者均正常。
+- `Theme.qml` 新增 `fontIcon` 档位（图标字体单一事实来源），并把 MainWindow、
+  SidebarPanel 里 3 处内联 `"Segoe MDL2 Assets"` 一并收敛到该档位——此前没有档位，
+  新代码才会误用 `fontUi`。
+- **标题块不再触发目录**（用户反馈）：标题栏「章节名 + ▾」chip 的点击/hover/箭头
+  全部移除，改为纯展示文本「第 N 章 · 标题」；目录唯一入口是右侧 `☰` 按钮，
+  避免"看着可点、点开却是覆盖正文的抽屉"的误导。
+- 标题栏序号与抽屉同源：`ChapterDrawer` 新增只读 `currentNum`（"第 N 章"），
+  并使其展示模型随 `chapters` 入参自动重建（此前只在 `onOpened` 建序，标题栏在
+  抽屉关闭时拿不到）；排序与编号只在 `_buildOrdered()` 一处定义，行内前缀、
+  页脚「当前 · 第 x 章」、标题栏三处必然一致。
+- 抽屉列表对齐预览稿：行文案补「第 N 章 · 标题」前缀；当前章改朱砂半透明底
+  `accentTint` + 朱砂「当前」徽标（与 hover 的 `bgHover` 区分）。「当前」徽标按
+  `currentChapterId`（已载入正文那章）判定，朱砂标条仍跟随键盘光标行——抽屉里
+  ↑↓ 只移动光标、Enter 才载入章节，徽标跟光标会显示"当前"却未切换，属撒谎。
+- 验证：`./scripts/verify.sh --build` 退出码 0；qmllint 无新增告警
+  （ReaderPanel 仍为历史 3 条布局留白告警 + 2 条 bridge 上下文，ChapterDrawer 零告警）；
+  抽屉探针 12/12 PASS（原 9 项 + 新增 current-num / current-num-reactive /
+  current-num-empty）；临时视觉探针抓帧复验真实组件渲染（标题栏、☰/✕、行内前缀、
+  当前章样式）后已删除。
+
 ## [2026-09-07] 新增 README（项目定位 / 功能 / 架构 / 构建说明）
 
 - 公开仓库新增 `README.md`：项目定位、功能特性（创作对话 / 项目管理 / RAG / 墨染 GUI）、

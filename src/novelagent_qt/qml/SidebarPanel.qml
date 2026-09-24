@@ -78,7 +78,7 @@ Rectangle {
                     // ▾ 展开箭头：随展开态旋转 180°
                     Label {
                         text: "\uE70D"  // Segoe MDL2 Assets ChevronDown
-                        font.family: "Segoe MDL2 Assets"
+                        font.family: Theme.fontIcon
                         font.pixelSize: 20
                         color: Theme.textFaint
                         rotation: root.projectListOpen ? 180 : 0
@@ -186,7 +186,7 @@ Rectangle {
                         Label {
                             text: "\uE74D"
                             visible: projRowHover.hovered
-                            font.family: "Segoe MDL2 Assets"
+                            font.family: Theme.fontIcon
                             font.pixelSize: 14
                             color: delMa.containsMouse ? Theme.warning : Theme.textFaint
                             MouseArea {

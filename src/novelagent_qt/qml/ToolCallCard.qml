@@ -111,7 +111,11 @@ ColumnLayout {
                 leftMargin: Theme.gapMd
                 topMargin: Theme.gapSm
             }
-            text: root.detailText()
+            // 只在展开时组装与排版详情：detailText() 会对参数/结果做 JSON.parse +
+            // 缩进美化（单条结果上限 32KB），而父项的 implicitHeight 绑定会强制这个
+            // Text 排版——即使 visible:false 也一样。历史回放时工具卡片往往占多数，
+            // 折叠态白干这些活是切换会话卡顿的主要来源之一（实测占 setModel 耗时约一半）。
+            text: root.expanded ? root.detailText() : ""
             wrapMode: Text.Wrap
             font.family: Theme.fontUi
             font.pixelSize: Theme.sizeCaption + 1

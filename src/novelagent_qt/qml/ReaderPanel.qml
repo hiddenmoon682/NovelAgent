@@ -3,7 +3,8 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 // ReaderPanel — 右栏：章节选择 + 只读阅读视图。
-// 正文纯文本渲染（小说正文非 Markdown），衬线字体，行高 Theme.lineHeightBody，左右留白书页效果。
+// 正文纯文本渲染（小说正文非 Markdown），衬线字体，行距 Theme.readerLineHeight（固定像素），
+// 左右留白书页效果。
 Rectangle {
     id: root
     color: Theme.bgReader
@@ -32,6 +33,16 @@ Rectangle {
     readonly property string currentTitle:
         (currentIndex >= 0 && currentIndex < chapters.length)
             ? chapters[currentIndex].title : "暂无章节"
+
+    // 标题栏文案：「第 N 章 · 标题」。序号取目录抽屉的统一编号
+    // （ChapterDrawer.currentNum，与抽屉行内序号、页脚"当前 · 第 x 章"同源），
+    // 避免标题栏与抽屉各算一套排序而互相对不上；抽屉尚未建好时退化为纯标题。
+    readonly property string headerTitle:
+        (currentIndex >= 0 && currentIndex < chapters.length)
+            ? (chapterDrawer.currentNum !== ""
+               ? chapterDrawer.currentNum + " · " + currentTitle
+               : currentTitle)
+            : "暂无章节"
 
     // 刷新章节列表；保持当前选中（按 id 对齐），选中项被删则回到占位。
     // 无选中且存在章节时自动选中第一章并载入正文：此前 currentIndex 恒为 -1，
@@ -89,7 +100,7 @@ Rectangle {
         anchors.fill: parent
         spacing: 0
 
-        // ── 章节选择栏（方案 B：标题 chip + 目录按钮 → 打开目录抽屉）──
+        // ── 章节标题栏（方案 B：标题展示 + 目录按钮 → 打开目录抽屉）──
         Rectangle {
             Layout.fillWidth: true
             height: 48
@@ -103,47 +114,21 @@ Rectangle {
                 }
                 spacing: Theme.gapSm
 
-                // 章节标题 chip：点击打开目录抽屉（无章节时禁用）
-                Rectangle {
+                // 章节标题：纯展示文本（"第 N 章 · 标题"），**不承担打开目录的职责**。
+                // 目录的唯一入口是右侧 ☰ 按钮——标题若带 hover 高亮 + ▾ 箭头，会让人以为
+                // 点开有下拉/弹层，实际却弹出覆盖正文的抽屉，属误导（用户反馈）。
+                Label {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 32
-                    radius: Theme.radiusSm
-                    color: (chipMa.containsMouse || chapterDrawer.opened) ? Theme.bgHover : "transparent"
-                    Behavior on color { ColorAnimation { duration: Theme.animFast } }
-
-                    RowLayout {
-                        anchors {
-                            left: parent.left; leftMargin: Theme.gapMd
-                            right: parent.right; rightMargin: Theme.gapSm
-                            verticalCenter: parent.verticalCenter
-                        }
-                        spacing: Theme.gapSm
-
-                        Label {
-                            text: root.currentTitle
-                            font.family: Theme.fontDisplay
-                            font.pixelSize: Theme.sizeTitle
-                            font.weight: Font.DemiBold
-                            color: Theme.textPrimary
-                            elide: Text.ElideRight
-                            Layout.fillWidth: true
-                        }
-                        Label {
-                            text: "\u25be"
-                            visible: root.chapters.length > 0
-                            font.pixelSize: Theme.sizeUi
-                            color: Theme.textSecondary
-                        }
-                    }
-
-                    MouseArea {
-                        id: chipMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        enabled: root.chapters.length > 0
-                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: chapterDrawer.open()
-                    }
+                    Layout.alignment: Qt.AlignVCenter
+                    // 左留白 gapLg(容器) + gapMd(此) = 28，与旧 chip 内文位置一致，
+                    // 保持标题左缘相对正文左缘（gapXl）的关系不漂移
+                    Layout.leftMargin: Theme.gapMd
+                    text: root.headerTitle
+                    font.family: Theme.fontDisplay
+                    font.pixelSize: Theme.sizeTitle
+                    font.weight: Font.DemiBold
+                    color: Theme.textPrimary
+                    elide: Text.ElideRight
                 }
 
                 // 目录按钮（☰，Segoe MDL2 \uE700）
@@ -159,7 +144,7 @@ Rectangle {
                     Label {
                         anchors.centerIn: parent
                         text: "\uE700"
-                        font.family: Theme.fontUi
+                        font.family: Theme.fontIcon
                         font.pixelSize: Theme.sizeUi
                         color: Theme.textSecondary
                     }
@@ -233,7 +218,10 @@ Rectangle {
                         text: paraItem.modelData
                         font.family: Theme.fontDisplay
                         font.pixelSize: Theme.sizeBody + 1
-                        lineHeight: Theme.lineHeightBody
+                        // 固定像素行距：默认的 ProportionalHeight 乘的是"字体行盒"（23px）而非
+                        // 字号，lineHeight 1.3 会实得 30px/行（见 Theme.readerLineHeight 注释）
+                        lineHeightMode: Text.FixedHeight
+                        lineHeight: Theme.readerLineHeight
                         wrapMode: Text.Wrap
                         textFormat: Text.PlainText
                         color: Theme.textPrimary

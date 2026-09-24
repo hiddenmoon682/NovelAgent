@@ -11,7 +11,14 @@ Rectangle {
     //   type: "message" | "tool"
     //   role/content/reasoning/streaming — message 条目使用
     //   toolName/toolStatus("running"|"ok"|"error") — tool 条目使用
-    ListModel { id: chatModel }
+    //
+    // 会话切换（reloadHistory）时**整体换成一个全新的 ListModel**，而不是对同一个
+    // ListModel 先 clear() 再逐条 append()：同一轮事件循环内的"清空 + 重填"会让
+    // QQuickListView 留下陈旧 delegate（旧坐标/空内容、索引映射失效），表现为切换
+    // 会话后对话区整片空白（已用真机复现：contentItem 里只剩 h=30 的孤儿条目、无
+    // 新 delegate 生成）。替换 model 是官方的"整体重建"语义，视图会完整重置。
+    Component { id: chatModelComp; ListModel {} }
+    property ListModel chatModel: chatModelComp.createObject(root) as ListModel
 
     // 仅当「最后一条」是 streaming 中的 assistant 消息时返回其下标，否则 -1。
     // （工具卡片插入后，后续 token 应开启新气泡，而非回写旧气泡。）
@@ -44,25 +51,31 @@ Rectangle {
     }
 
     // 从 bridge 重建聊天流（启动恢复上次对话 / 切换项目后刷新）。
+    // 走"换新 model"而不是 clear()+append()：见 chatModel 属性处的说明。
     function reloadHistory() {
-        chatModel.clear()
-        if (!bridge.agentReady) return
-        var hist = bridge.conversationHistory()
-        for (var i = 0; i < hist.length; ++i) {
-            if (hist[i].type === "tool") {
-                // 历史回放重建工具调用条目（重启/切会话后仍显示工具卡片）：
-                // status 为终态（ok/error），参数/结果来自持久化的 tool_calls 与结果消息
-                chatModel.append({ type: "tool", role: "", content: "", reasoning: "",
-                                   streaming: false, toolName: hist[i].toolName,
-                                   toolStatus: hist[i].toolStatus, toolArgs: hist[i].toolArgs,
-                                   toolResult: hist[i].toolResult, toolExpanded: false })
-            } else {
-                chatModel.append({ type: "message", role: hist[i].role, content: hist[i].content,
-                                   reasoning: hist[i].reasoning, streaming: false,
-                                   toolName: "", toolStatus: "", toolArgs: "", toolResult: "",
-                                   toolExpanded: false })
+        var next = chatModelComp.createObject(root)
+        if (!next) return
+        if (bridge.agentReady) {
+            var hist = bridge.conversationHistory()
+            for (var i = 0; i < hist.length; ++i) {
+                if (hist[i].type === "tool") {
+                    // 历史回放重建工具调用条目（重启/切会话后仍显示工具卡片）：
+                    // status 为终态（ok/error），参数/结果来自持久化的 tool_calls 与结果消息
+                    next.append({ type: "tool", role: "", content: "", reasoning: "",
+                                  streaming: false, toolName: hist[i].toolName,
+                                  toolStatus: hist[i].toolStatus, toolArgs: hist[i].toolArgs,
+                                  toolResult: hist[i].toolResult, toolExpanded: false })
+                } else {
+                    next.append({ type: "message", role: hist[i].role, content: hist[i].content,
+                                  reasoning: hist[i].reasoning, streaming: false,
+                                  toolName: "", toolStatus: "", toolArgs: "", toolResult: "",
+                                  toolExpanded: false })
+                }
             }
         }
+        var previous = root.chatModel
+        root.chatModel = next     // 视图整表切换（旧 delegate 全量销毁重建）
+        if (previous) previous.destroy()
         // 视口定位与加载解耦（文档依据 doc.qt.io Qt6 ListView/Flickable 协议）：
         // 启动早期 SplitView 首帧布局晚于 agentReadyChanged，chatView 宽高可能尚未
         // 定型（甚至为 0——0 宽高下 ListView 不加载任何 delegate，contentHeight=0，
@@ -83,13 +96,33 @@ Rectangle {
     function snapToEnd() {
         if (!chatView.userAtBottom) return
         if (chatView.width <= 0 || chatView.height <= 0) return
-        if (chatView.contentHeight > chatView.height)
+        if (chatView.contentHeight > chatView.height) {
             chatView.positionViewAtEnd()
-        else
-            chatView.contentY = 0
+            // 再补上 bottomMargin：官方文档明确 margin 是"内容之外**额外**保留的空间"
+            // （reserved in addition to contentHeight），必须多滚这一段才真正到底；
+            // positionViewAtEnd() 停在这段预留之前（真机实测差 16px = Theme.gapLg），
+            // 而 ListView 自身的滚轮钳制包含它——两者不一致的后果是：已经"贴底"的视口在
+            // 用户继续向下滚时还会再挪 16px（帧级实测：内容可见偏移 contentItem.y
+            // 从 -1717 跳到 -1733），看起来就像"到了边界还能再滚一点"。
+            // 补上后锚点与官方钳制末端一致：边界处继续滚动内容逐像素不动
+            // （最小复现 57/57 帧哈希完全一致、contentY 零变化、verticalOvershoot 恒 0）。
+            // 直接相加不会越界：StopAtBounds 下由 ListView 自行钳到它的真实末端。
+            chatView.contentY += chatView.bottomMargin
+        } else {
+            // 不足一屏时回到顶部——但"顶部"是 **-topMargin**，不是 0：官方文档里 margin 是
+            // 内容之外**额外**保留的空间，合法上界恰为 -topMargin。qml.exe 探针实测（短内容与
+            // 可滚动内容结论一致）：contentY=-16 → 留白 16px 可见、verticalOvershoot=0、
+            // atYBeginning=true；contentY=0 → 首条贴死上边缘、overshoot=+16（越界16px）、
+            // atYBeginning=false；contentY=-24 → overshoot=-8（越过 8px）。
+            // 原写法 contentY = 0 让视口停在越界位置，症状即"首次发消息时首条气泡贴着上边缘、
+            // 往上滚一下才出现间距"——因为 Qt 自身的钳制会把越界位置拉回 -topMargin；
+            // 且该越界状态与 ListView 的钳制互相拉扯（启动时 contentY 在 -16↔0 之间抖）。
+            chatView.contentY = -chatView.topMargin
+        }
     }
 
     Component.onCompleted: reloadHistory()
+
 
     function sendCurrentMessage() {
         var text = inputField.text.trim()
@@ -114,13 +147,20 @@ Rectangle {
             Layout.fillHeight: true
             clip: true
             interactive: true
+            // 边界硬停。官方四档语义见 doc.qt.io Flickable#boundsBehavior：默认
+            // DragAndOvershootBounds 允许内容拖出边界、甩动越界后回弹。文档只提到
+            // "拖动/甩动"越界，但**实测滚轮滚动在末端同样越界**——官方只读属性
+            // verticalOvershoot 峰值 56px，每个滚轮刻度都会触发一次"越界→回弹"，
+            // 表现为"滚到底部后对话区剧烈上下抖动"。StopAtBounds 后越界恒为 0。
+            // 与本项目其余三个列表（ReaderPanel / ChapterDrawer / SkillPopup）取值一致。
+            boundsBehavior: Flickable.StopAtBounds
             spacing: Theme.gapXs
             topMargin: Theme.gapLg
             bottomMargin: Theme.gapLg
             leftMargin: Theme.gapLg
             rightMargin: Theme.gapLg
 
-            model: chatModel
+            model: root.chatModel
             delegate: Item {
                 id: delegateRoot
                 // 显式声明模型角色（required property）：替代隐式 model.* 作用域链，
@@ -196,10 +236,13 @@ Rectangle {
                 NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.animNormal }
             }
 
-            // 底部跟随开关（初始贴底）。官方语义：moving/flicking 仅在用户拖动/甩动
-            // 期间为 true——程序化定位（positionViewAtEnd 等）、布局变化、动画、
-            // 流式文本增长都不会置位它们。因此只有用户手势能让状态切到"上翻暂停"
-            // （离开底部）或"翻回底部恢复跟随"，杜绝自动跟随被误关。
+            // 底部跟随开关（初始贴底）。官方语义：moving/flicking 表示"内容正因用户操作
+            // 而移动"——程序化定位（positionViewAtEnd 等）、布局变化、动画、流式文本增长
+            // 都不会置位它们。因此只有用户手势能让状态切到"上翻暂停"（离开底部）或
+            // "翻回底部恢复跟随"，杜绝自动跟随被程序化定位误关。
+            // 实测补充（qml.exe 探针采样统计）：滚轮滚动**同样会置位 moving**
+            // （居中滚动 221/227 个采样点为真），所以滚轮用户上翻也会正确切到"上翻暂停"；
+            // 末端越界回弹阶段 moving 为假且 atYEnd 为真，故不会误翻成"暂停跟随"。
             property bool userAtBottom: true
 
             onContentYChanged: {
@@ -225,7 +268,7 @@ Rectangle {
             // ── 空状态 ──
             Column {
                 anchors.centerIn: parent
-                visible: chatModel.count === 0
+                visible: root.chatModel.count === 0
                 spacing: Theme.gapLg
 
                 Label {

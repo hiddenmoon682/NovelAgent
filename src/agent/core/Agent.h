@@ -88,6 +88,8 @@ public:
     std::vector<std::string> sessionIds() const { return session_pool_.sessionIds(); }
     // 是否存在任一运行中的会话（全局 busy 聚合信号）。
     bool anyRunning() const { return session_pool_.anyRunning(); }
+    // 指定会话是否忙（运行中，或已提交未启动/收尾中）：GUI 发送/取消按钮判据。
+    bool isSessionBusy(const std::string& id) const { return session_pool_.isBusy(id); }
     // 多会话 process：定位 session_id 对应 SessionRuntime 并执行（D1）。
     llm::LLMResponse process(const std::string& session_id,
                              const std::string& input,
@@ -126,7 +128,8 @@ public:
 
     // ── 会话持久化（转发 SessionPool）──
     void saveSessionState() { session_pool_.saveSessionState(); }
-    void loadSessionState() { session_pool_.loadSessionState(); }
+    // 载入当前会话历史；持久层异常返回 false（调用方须提示，不得静默按空会话继续）。
+    bool loadSessionState() { return session_pool_.loadSessionState(); }
     bool pendingNewSession() const { return session_pool_.pendingNewSession(); }
     bool discardPendingNewSession() { return session_pool_.discardPendingNewSession(); }
 

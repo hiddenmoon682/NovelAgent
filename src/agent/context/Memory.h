@@ -283,6 +283,20 @@ public:
         messages_.reserve(n);
     }
 
+    // 首条 User 消息的首行（供会话列表取标题）。加锁扫描，**不拷贝整段历史**：
+    // 此前取标题走 snapshot()（整段 vector<Message> 深拷贝，单条工具结果可达 32KB），
+    // 而列表在每次 sessionsChanged/sessionBusyChanged 都会重建，长会话下纯属浪费且卡 GUI。
+    // 找不到 User 消息返回空串。跨线程安全（与会话列表在 GUI 线程读取的场景配套）。
+    std::string firstUserLine() const {
+        std::lock_guard<std::mutex> lk(*mutex_);
+        for (const auto& m : messages_) {
+            if (m.role != MessageRole::User) continue;
+            const auto nl = m.content.find('\n');
+            return nl == std::string::npos ? m.content : m.content.substr(0, nl);
+        }
+        return {};
+    }
+
     auto begin() const { return messages_.begin(); }
     auto end()   const { return messages_.end(); }
 

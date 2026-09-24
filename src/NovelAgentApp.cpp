@@ -36,19 +36,28 @@ NovelAgentApp::NovelAgentApp(const ProviderConfig& provider,
                              std::shared_ptr<Project> project,
                              const EmbeddingSettings& embedding)
     : client_(provider)
-    , agent_(client_, registry_)
     , project_(project ? std::move(project) : std::make_shared<Project>())
     , project_access_(std::make_shared<ProjectAccess>(project_))
     , storage_(project_access_ ? project_access_->path() : "")
     , embedding_gen_(embeddingProvider(provider, embedding),
                      embeddingConfig(embedding))
     , rules_provider_(utils::file::configDir())
+    , agent_(client_, registry_)   // 初始化顺序须与声明顺序一致（agent_ 声明在最后）
 {
     setupAgent();
 }
 
 NovelAgentApp::~NovelAgentApp()
 {
+    // 顺序契约（防析构期 UAF）：会话池任务收尾会写 novel.db（SessionRuntime::saveSessionState）
+    // 并访问 project_access_/vector_store_，所以必须让池先停摆，再关库：
+    //   ① shutdown()：取消全部 in-flight 并最多等 2s；
+    //   ② agent_ 声明在成员表最后 → 紧接着最先析构，其 ThreadPool 的析构 join 会兜住
+    //      2s 超时后的残留任务；此时 project_access_/vector_store_/persistence_ 仍全部存活
+    //      （它们声明在前 → 析构在后）。
+    // 库先关也无碍：残留任务的落盘会走 SessionPersistence::save 的 isOpen 守卫安全跳过。
+    agent_.shutdown();
+
     // SQLite 单库生命周期收尾（未 open 时为 no-op）
     sqlite_store_.close();
 }

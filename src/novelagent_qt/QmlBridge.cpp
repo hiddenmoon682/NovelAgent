@@ -9,6 +9,7 @@
 #include "project/ProjectIO.h"
 #include "project/ProjectManager.h"
 #include "utils/FileUtils.h"
+#include "utils/Utf8Utils.h"
 
 #include <QDateTime>
 #include <QHash>
@@ -225,8 +226,9 @@ QString QmlBridge::providerName() const {
 
 bool QmlBridge::sessionBusy() const {
     if (!app_ || current_session_id_.isEmpty()) return false;
-    auto* rt = app_->agent().session(current_session_id_.toStdString());
-    return rt && rt->running();
+    // 判据 = 运行中 ∨ 已提交未启动/收尾中（Agent::isSessionBusy）。只看 running() 会漏掉
+    // 提交到启动之间的窗口（running_ 由池线程置位），使 QML 读不到忙碌态。
+    return app_->agent().isSessionBusy(current_session_id_.toStdString());
 }
 
 int QmlBridge::totalTokens() const {
@@ -275,6 +277,7 @@ QString QmlBridge::createPoolSession() {
     }
     emit currentSessionIdChanged();
     emit sessionsChanged();
+    emit usageChanged();   // 状态栏 token/百分比属于"当前会话"，切了会话必须重求值
     return current_session_id_;
 }
 
@@ -282,9 +285,10 @@ bool QmlBridge::switchPoolSession(const QString& sessionId) {
     if (!app_) return false;
     // P8 懒物化：点开会话才物化（已在池则切焦点；持久层历史会话则建 runtime+恢复历史）
     if (!app_->agent().materializeSession(sessionId.toStdString())) {
-        // 物化失败（DB 异常/会话已归档等）不得静默：按 UI 错误通道就地提示
+        // 物化失败有三类原因，提示须覆盖全部（不能只说"已被删除"）：会话已被删除/归档、
+        // 持久层异常、历史载入失败（SessionPool 内部已判并把失败原因写日志）。
         spdlog::warn("[QmlBridge] 物化会话失败: {}", sessionId.toStdString());
-        emit uiErrorOccurred(QStringLiteral("会话打开失败（可能已被删除）"));
+        emit uiErrorOccurred(QStringLiteral("会话打开失败（可能已被删除，或历史载入失败）"));
         return false;
     }
     current_session_id_ = sessionId;
@@ -297,6 +301,9 @@ bool QmlBridge::switchPoolSession(const QString& sessionId) {
     emit sessionsChanged();       // 切会话后侧栏 active 高亮/最近使用排序需即时刷新
     emit sessionBusyChanged();
     emit sessionReset();
+    // 状态栏 token/百分比是"当前会话"的量：切会话必须刷新，否则一直显示上一个会话的数值
+    //（新物化的会话更会一直显示 0——loadSessionState 已在此前刷新其 usage_）。
+    emit usageChanged();
     return true;
 }
 
@@ -310,7 +317,13 @@ void QmlBridge::sendMessageToSession(const QString& sessionId, const QString& te
     }
     // 按目标会话自身运行态检查（支持多会话并行：不同会话可同时提交）
     if (rt->running()) {
+        // 重复提交不得静默丢弃：上一次的实现只写日志就 return，而 QML 在调用前已本地追加
+        // 用户气泡 + 回复占位 → 用户看到"消息没反应/回复错位到下一个气泡"。
+        // 走聊天错误通道就地提示，并补发运行态信号让按钮即时切到"取消"。
         spdlog::warn("[QmlBridge] 会话 {} 正在生成中，忽略重复请求", sessionId.toStdString());
+        emit errorOccurred(sessionId, QStringLiteral(
+            "该会话正在生成中：请等待本轮完成，或点「取消」后重新发送"));
+        emit sessionBusyChanged();
         return;
     }
     // 发送即视为最近使用：立即刷新 runtime 排序时间戳（列表即刻置顶；
@@ -337,8 +350,13 @@ bool QmlBridge::deletePoolSession(const QString& sessionId) {
             spdlog::warn("[QmlBridge] 删除前查会话行失败: {}", e.what());
         }
     }
-    // 先等运行中会话退出并移除内存池，再从持久层删除（避免运行时读到写到一半的数据）
-    if (!app_->agent().deleteSessionRuntime(sid)) return false;
+    // 先等运行中会话退出并移除内存池，再从持久层删除（避免运行时读到写到一半的数据）。
+    // 失败（运行中且 2s 内未退场等）必须提示：QML 侧忽略返回值，只写日志用户完全无感知。
+    if (!app_->agent().deleteSessionRuntime(sid)) {
+        spdlog::warn("[QmlBridge] 移除会话 runtime {} 失败（可能仍在生成中）", sid);
+        emit uiErrorOccurred(QStringLiteral("会话删除失败：该会话可能仍在生成中，请先取消或稍后再试"));
+        return false;
+    }
     // 删除持久层会话：novel.db 的 sessions 表置 archived=1（数据保留、列表不可见），
     // 否则已删池会话重启后仍会从持久层复活。未打开项目（无持久化）时跳过。
     if (auto* persistence = app_->agent().persistence()) {
@@ -382,6 +400,7 @@ bool QmlBridge::deletePoolSession(const QString& sessionId) {
         emit currentSessionIdChanged();
         emit sessionReset();        // 仅删除当前会话才重置聊天流；删非当前不影响正在观看的会话
         emit sessionBusyChanged();  // 当前视图会话已变：发送/取消按钮状态重新求值
+        emit usageChanged();        // 焦点已换会话：状态栏 token/百分比随之重求值
     }
     emit sessionsChanged();
     return true;
@@ -466,18 +485,17 @@ QVariantList QmlBridge::sessionList() const {
             auto* rt = app_->agent().session(e.id.toStdString());
             if (!rt) continue;
             QString title = QStringLiteral("新会话");
-            // GUI 线程跨线程读运行中会话的 memory：必须走加锁快照（messages() 裸引用
-            // 与池线程的 vector 变异并发迭代是数据竞争）
-            for (const auto& msg : rt->memory().snapshot()) {
-                if (msg.role != llm::MessageRole::User) continue;
-                QString c = QString::fromStdString(msg.content);
-                c = c.section('\n', 0, 0);
-                if (c.size() > 30) c = c.left(30) + QStringLiteral("…");
-                title = c;
-                break;
-            }
+            // GUI 线程跨线程读运行中会话的 memory：走 Memory::firstUserLine()——内部加锁、
+            // 只取首条 User 消息的首行。此前为取标题做 snapshot() 整段深拷贝（工具结果单条
+            // 上限 32KB），而列表每次 sessionsChanged/sessionBusyChanged 都重建，长会话下
+            // 是白拷一份的开销。截断口径与库内 title 统一为 utils::utf8::truncateChars(30 码点)。
+            const QString c = QString::fromStdString(
+                utils::utf8::truncateChars(rt->memory().firstUserLine(), 30));
+            if (!c.isEmpty()) title = c;
             m.insert(QStringLiteral("title"), title);
-            m.insert(QStringLiteral("running"), rt->running());
+            // 运行圆点与按钮同一判据（运行中 ∨ 已提交未启动/收尾中），
+            // 否则提交瞬间到池线程启动之间圆点不亮（评审记录的历史 Minor）
+            m.insert(QStringLiteral("running"), app_->agent().isSessionBusy(e.id.toStdString()));
         } else {
             m.insert(QStringLiteral("title"), e.title);
             m.insert(QStringLiteral("running"), false);
@@ -497,10 +515,12 @@ QVariantList QmlBridge::sessionList() const {
 
 bool QmlBridge::deleteSession(const QString& sessionId) {
     if (!app_) return false;
-    if (busy()) {
-        // 生成/索引进行中删除会话会走失败路径且无反馈；按 UI 错误通道就地提示
-        // （对齐删除项目的既有做法），避免用户以为删除成功。
-        emit uiErrorOccurred(QStringLiteral("Agent 正在生成中，请稍后再删除会话"));
+    // 闸门按**目标会话**判定，而不是全局 busy()：后者在任一会话生成中（或索引重建中）
+    // 就禁止删除任何会话，连完全空闲的会话也删不掉（评审 C：过宽）。
+    // 删除空闲会话与别的会话生成互不干扰——落盘按 session_id 隔离，"归档 UPDATE" 与
+    // 会话写入经同一 SqliteStore 串行（见 withLock/inTransaction），不存在交叉破坏。
+    if (!sessionId.isEmpty() && app_->agent().isSessionBusy(sessionId.toStdString())) {
+        emit uiErrorOccurred(QStringLiteral("该会话正在生成中，请先取消或等本轮结束后再删除"));
         return false;
     }
     // 多会话池会话：走池删除（阶段 4）
@@ -601,7 +621,11 @@ QVariantList QmlBridge::conversationHistory() const {
         }
 
         if (!isUser && !isAssistant) continue;          // tool 结果/系统消息不单独成条目
-        if (msg.content.empty()) continue;              // 空占位（纯 tool_calls 等）已在上分支处理
+        // 纯思考过程（有 reasoning、无正文）的 assistant 消息也要重放：ChatBubble 对
+        // "正文为空但 reasoning 非空"会渲染「思考过程」折叠条（气泡本身不显示）。
+        // 此前一律按"空消息"丢弃 → 实时可见、重启/切会话后消失（实时与回放不一致）。
+        // 仍跳过既无正文又无思考的空占位（纯 tool_calls 轮已在上分支处理）。
+        if (msg.content.empty() && (!isAssistant || msg.reasoning_content.empty())) continue;
         QVariantMap m;
         m.insert(QStringLiteral("type"), QStringLiteral("message"));
         m.insert(QStringLiteral("role"), isUser ? QStringLiteral("user")
@@ -628,7 +652,9 @@ void QmlBridge::rebuildIndex() {
         return;
     }
     if (busy()) {
+        // 只写日志时 GUI 无感知（按钮看似可点、点了毫无反应），按 UI 错误通道就地提示
         spdlog::warn("[QmlBridge] 忽略重建索引请求（会话生成中或索引进行中）");
+        emit uiErrorOccurred(QStringLiteral("正在生成或索引中，请稍后再重建索引"));
         return;
     }
 
@@ -765,34 +791,43 @@ void QmlBridge::setStatus(const QString& text) {
 
 void QmlBridge::runAgent(const std::string& session_id, std::string input) {
     cancel_requested_.store(false);
-    emit busyChanged();  // 进入运行态：busy() 聚合到 anyRunning，此处通知 QML 重新求值
-    emit sessionBusyChanged();  // 当前会话进入运行态（按会话 busy）
     setStatus(QStringLiteral("思考中..."));
 
     const QString sid = QString::fromStdString(session_id);
     llm::StreamCallbacks cb;
 
-    cb.on_content = [this, sid](const std::string& delta) {
+    // 生命周期令牌（方案 B 全量覆盖）：所有池线程回调一律先验令牌再触碰 this。
+    // 用 shared_ptr **强拷贝**按值捕获（回调内不得读成员 alive_——~QmlBridge 复位令牌后
+    // 本对象可能已析构）；令牌为 false 时立即返回，不投递事件、不访问任何成员。
+    // 说明：投递给 this 的 QueuedConnection 事件由 this 拥有，对象析构时随之丢弃，
+    // 因此"验令牌后再投递"即足够（on_complete 同样改用强拷贝令牌）。
+    auto alive = alive_;
+
+    cb.on_content = [this, sid, alive](const std::string& delta) {
+        if (!alive->load()) return;  // 本对象已析构：不构造 QString、不触碰 this
         QString d = QString::fromStdString(delta);
         QMetaObject::invokeMethod(this, [this, sid, d]() {
             emit tokenReceived(sid, d);
         }, Qt::QueuedConnection);
     };
 
-    cb.on_reasoning = [this, sid](const std::string& delta) {
+    cb.on_reasoning = [this, sid, alive](const std::string& delta) {
+        if (!alive->load()) return;
         QString d = QString::fromStdString(delta);
         QMetaObject::invokeMethod(this, [this, sid, d]() {
             emit reasoningReceived(sid, d);
         }, Qt::QueuedConnection);
     };
 
-    cb.on_tool_call_start = [this]() {
+    cb.on_tool_call_start = [this, alive]() {
+        if (!alive->load()) return;
         QMetaObject::invokeMethod(this, [this]() {
             setStatus(QStringLiteral("调用工具中..."));
         }, Qt::QueuedConnection);
     };
 
-    cb.on_tool_start = [this, sid](const std::string& name, const std::string& arguments) {
+    cb.on_tool_start = [this, sid, alive](const std::string& name, const std::string& arguments) {
+        if (!alive->load()) return;
         QString n = QString::fromStdString(name);
         QString a = QString::fromStdString(arguments);
         QMetaObject::invokeMethod(this, [this, sid, n, a]() {
@@ -801,7 +836,8 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
         }, Qt::QueuedConnection);
     };
 
-    cb.on_tool_finish = [this, sid](const std::string& name, bool ok, const std::string& result) {
+    cb.on_tool_finish = [this, sid, alive](const std::string& name, bool ok, const std::string& result) {
+        if (!alive->load()) return;
         QString n = QString::fromStdString(name);
         QString r = QString::fromStdString(result);
         QMetaObject::invokeMethod(this, [this, sid, n, ok, r]() {
@@ -811,7 +847,8 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
         }, Qt::QueuedConnection);
     };
 
-    cb.on_error = [this, sid](const std::string& error) {
+    cb.on_error = [this, sid, alive](const std::string& error) {
+        if (!alive->load()) return;
         QString e = QString::fromStdString(error);
         QMetaObject::invokeMethod(this, [this, sid, e]() {
             emit errorOccurred(sid, e);  // 带会话维度：仅正在查看该会话时展示
@@ -822,11 +859,11 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
     //（回调内部再 QueuedConnection 投递到 GUI 线程发射信号）。
     app_->agent().submitProcess(
         session_id, std::move(input), std::move(cb),
-        [this, sid, alive = std::weak_ptr<std::atomic<bool>>(alive_)](
+        [this, sid, alive](
             const std::string&, llm::LLMResponse response) {
-            // 生命周期令牌：本对象已析构（alive_ 复位）则 lock 失败即跳过，兜底超时残留，
+            // 生命周期令牌：本对象已析构（令牌复位）则立即跳过，兜底超时残留任务，
             // 确保池线程不访问已析构的 this（方案 B）。
-            if (!alive.lock()) return;
+            if (!alive->load()) return;
             const QString fullText = QString::fromStdString(response.content);
             const QString finishReason = QString::fromStdString(response.finish_reason);
 
@@ -845,17 +882,17 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
                 && !app_->projectAccess()->path().empty()
                 && !cancel_requested_.load()
                 && !rejected_round
-                && alive.lock()) {
+                && alive->load()) {
                 auto flag = indexing_;
                 flag->store(true);
                 QMetaObject::invokeMethod(this, [this]() { emit busyChanged(); },
                                           Qt::QueuedConnection);
                 try {
-                    // 进度回调仅捕获 alive 弱引用（不触碰 this）：应用析构后
+                    // 进度回调仅捕获令牌（不触碰 this）：应用析构后令牌复位，
                     // indexAll 在阶段检查点抛"已取消"，安全中止，不访问悬垂成员
                     std::function<void(const std::string&)> cancel_progress =
                         [alive](const std::string&) {
-                            if (!alive.lock())
+                            if (!alive->load())
                                 throw std::runtime_error("索引已取消：应用正在关闭");
                         };
                     auto idx_result = app_->indexService()->indexAll(cancel_progress, /*force=*/false);
@@ -863,7 +900,7 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
                         spdlog::warn("[QmlBridge] 自动索引更新失败: {}", idx_result.error);
                         // 仅记日志时 GUI 无感知（状态仍"就绪"、搜索静默为空）；
                         // 应用仍存活则经 errorOccurred 上报一次，关闭导致的取消不打扰用户
-                        if (alive.lock()) {
+                        if (alive->load()) {
                             QString e = QString::fromStdString(idx_result.error);
                             QMetaObject::invokeMethod(this, [this, e]() {
                                 emit errorOccurred(QString(), QStringLiteral("自动索引更新失败: ") + e);
@@ -872,8 +909,8 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
                     }
                 } catch (const std::exception& e) {
                     spdlog::warn("[QmlBridge] 自动索引取消/失败: {}", e.what());
-                    // 关闭/切换导致的取消（alive 失效）不打扰用户；其余异常同样上报一次
-                    if (alive.lock()) {
+                    // 关闭/切换导致的取消（令牌复位）不打扰用户；其余异常同样上报一次
+                    if (alive->load()) {
                         QString msg = QString::fromStdString(e.what());
                         QMetaObject::invokeMethod(this, [this, msg]() {
                             emit errorOccurred(QString(), QStringLiteral("自动索引更新异常: ") + msg);
@@ -915,6 +952,13 @@ void QmlBridge::runAgent(const std::string& session_id, std::string input) {
                 emit sessionBusyChanged();  // 当前会话退出运行态（按会话 busy）
             }, Qt::QueuedConnection);
         });
+
+    // 运行态信号必须在提交**之后**发射（历史缺陷）：submitProcess 同步返回时该会话已登记在
+    // SessionPool::in_flight_ 中，此刻 sessionBusy()/busy() 读到的一定是 true。此前在提交前
+    // 发射，running_ 尚未由池线程置位 → QML 读到 false，且整轮生成期间再无信号刷新，
+    // 导致「取消」按钮不出现、生成中回车被静默丢弃。完成时另有一次发射（见上）。
+    emit busyChanged();
+    emit sessionBusyChanged();
 }
 
 void QmlBridge::runIndexUpdate(bool force) {

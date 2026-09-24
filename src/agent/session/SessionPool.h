@@ -80,6 +80,11 @@ public:
     std::vector<std::string> sessionIds() const;
     // 是否存在任一运行中的会话（全局 busy 聚合信号，D12/阶段 4）。
     bool anyRunning() const;
+    // 指定会话是否"忙"：运行中，或已提交但尚未启动/正在收尾（在 in_flight_ 中）。
+    // 判据必须含 in_flight_：submitProcess 返回时 running_ 仍为 false（由池线程在
+    // process 开头置位），只看 running() 会漏掉"已提交未启动"与排队窗口，
+    // 使 GUI 的发送/取消按钮读不到忙碌态（历史缺陷：取消按钮整轮不出现）。
+    bool isBusy(const std::string& id) const;
     // 释放所有非运行会话的 client 连接（D6 空闲休眠）。
     void releaseIdleClients();
 
@@ -102,6 +107,11 @@ public:
     // 取消所有 in-flight 会话并等待其退场（方案 A：退出/重建前调用，防 on_complete
     // 在调用方析构后访问其成员）。每任务最多等 timeout；超时后放弃等待（残留任务由
     // 池析构 join 兜底）。返回是否所有任务在超时内退场。
+    //
+    // 注意（评审 N）：本函数会为在跑的会话置 deleteRequested（防排队任务启动后仍跑完整轮），
+    // 且**故意不复位**——它是"应用正在关闭"的语义，只允许在退出/整体重建路径调用。
+    // 若将来要在"不销毁应用"的场景复用它，必须先为所有已退场会话 clearDeleteRequested()，
+    // 否则那些会话此后每轮 process 都会在开头直接拒绝（表现为"发消息永远没反应"）。
     bool cancelAllAndWait(std::chrono::milliseconds timeout = std::chrono::seconds(2));
 
     // ── 消息级操作（转发当前会话 runtime）──
@@ -123,7 +133,8 @@ public:
     // ── 持久化路由（转发当前会话 runtime）──
 
     void saveSessionState();
-    void loadSessionState();
+    // 载入当前会话历史；持久层异常返回 false（调用方须提示，不得静默按空会话继续）。
+    bool loadSessionState();
 
     // ── 装配配置（D11：共享源 + 创建时注入）──
 

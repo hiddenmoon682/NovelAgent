@@ -83,6 +83,8 @@ public:
     int64_t sessionUpdatedAtMs(const std::string& id);
 
     // 新建空会话，返回新会话 id（s-<时间戳> 格式）。
+    // 注意：产品路径**不使用**本方法——多会话池的 id 由 SessionPool::createSession 自生成
+    //（s-multi-N），且"先建 runtime、首轮结束才落盘"（方案 C）。本方法仅测试在用。
     std::string createSession();
 
     // 删除指定会话：置 sessions.archived=1（数据保留、列表不可见）。

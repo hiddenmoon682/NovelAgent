@@ -225,7 +225,14 @@ bool SessionPool::materializeSession(const std::string& id) {
     // 先构造后入池（异常安全，见 createSession）
     auto rt = makeRuntime(id);
     pool_.emplace(id, std::move(rt));
-    pool_[id]->loadSessionState();  // 恢复历史消息（无则保持空会话）
+    // 恢复历史消息（无则保持空会话）。载入失败（持久层异常）必须整体失败：否则列表里
+    // 能看到该会话、点开却是空白且无任何提示（评审 H）。失败时移除刚建的 runtime 并
+    // 保持池状态一致——此刻该 runtime 尚未暴露给任何调用方，也无 in-flight 任务，析构安全。
+    if (!pool_[id]->loadSessionState()) {
+        spdlog::error("[SessionPool] 会话 {} 载入失败，物化中止（不切换焦点）", id);
+        pool_.erase(id);
+        return false;
+    }
     // 排序时间戳恢复为库内真实 updated_at：runtime 构造会把"最近活动"刷成当前时刻，
     // 若不改回，每次物化（点开会话）都会让该会话跳到列表第一（"点击导致列表跳动"历史 bug）。
     if (persistence_) {
@@ -286,6 +293,15 @@ bool SessionPool::anyRunning() const {
         if (!in_flight_.empty()) return true;
     }
     return false;
+}
+
+bool SessionPool::isBusy(const std::string& id) const {
+    if (auto it = pool_.find(id); it != pool_.end() && it->second && it->second->running())
+        return true;
+    // 与 anyRunning() 同一理由：提交到收尾之间的窗口不在 running_ 上，
+    // 只看 running() 会让 GUI 在整轮生成期间读到"空闲"。
+    std::lock_guard<std::mutex> lock(in_flight_mutex_);
+    return in_flight_.count(id) > 0;
 }
 
 void SessionPool::releaseIdleClients() {
@@ -472,7 +488,7 @@ const llm::IMemory& SessionPool::kEmptyMemory() {
 // ===========================================================================
 
 void SessionPool::saveSessionState() { currentSession()->saveSessionState(); }
-void SessionPool::loadSessionState() { currentSession()->loadSessionState(); }
+bool SessionPool::loadSessionState() { return currentSession()->loadSessionState(); }
 
 // ===========================================================================
 // 装配配置（D11：共享源 + 创建时注入，仅新会话生效）

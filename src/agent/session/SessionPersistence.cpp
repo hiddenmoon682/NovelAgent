@@ -5,6 +5,7 @@
 #include "agent/context/Memory.h"
 #include "llm/Message.h"
 #include "storage/SqliteStore.h"
+#include "utils/Utf8Utils.h"
 
 #include <SQLiteCpp/Statement.h>
 #include <chrono>
@@ -66,16 +67,10 @@ llm::Message rowToMessage(SQLite::Statement& stmt)
     return m;
 }
 
-// UTF-8 安全截断：最多保留 max_bytes 字节，退到字符边界，截断时追加省略号。
-std::string utf8Truncate(const std::string& s, size_t max_bytes)
-{
-    if (s.size() <= max_bytes) return s;
-    size_t end = max_bytes;
-    while (end > 0 && (static_cast<unsigned char>(s[end]) & 0xC0) == 0x80) --end;
-    return s.substr(0, end) + "…";
-}
-
 // 从 messages 提取首条 user 消息的首行作为会话标题；无 user 消息返回空。
+// 截断口径 = 30 个**字符（码点）**，与 QmlBridge::sessionList 的内存口径共用
+// utils::utf8::truncateChars（此前这里按 30 字节截断 ≈10 个汉字，与内存侧 30 字符
+// 差 3 倍，表现为同一会话"未物化 / 已物化"标题长度突变）。
 std::string deriveTitle(const std::vector<llm::Message>& messages)
 {
     for (const auto& m : messages) {
@@ -83,7 +78,7 @@ std::string deriveTitle(const std::vector<llm::Message>& messages)
         std::string content = m.content;
         if (auto nl = content.find('\n'); nl != std::string::npos)
             content = content.substr(0, nl);
-        return utf8Truncate(content, 30);
+        return utils::utf8::truncateChars(content, 30);
     }
     return {};
 }
@@ -134,15 +129,19 @@ void SessionPersistence::save(const std::string& session_id, const llm::IMemory&
         const std::string ts = storage_.nowTimestamp();
         const auto& msgs = memory.messages();
 
-        // 1) 会话登记：upsert；已存在时仅刷新 updated_at 与空标题
+        // 1) 会话登记：upsert；已存在时刷新 updated_at 与标题
         // 取舍：upsert 刻意不重置 archived 列——归档是永久封存（数据保留、列表不可见），
         // 归档后同 id 再 save() 不会复活该会话，与规格一致。
+        // 标题：每轮都用最新推导值刷新（而非"仅空标题时写入"）——列表标题有两个来源
+        //（库内 title / 池内内存首条 user 消息），旧口径还会因截断规则不同而长度突变；
+        // 统一规则后仍需让库内值随内存收敛，否则历史会话永远停在旧口径。
+        // 推导值为空时（压缩已丢弃首条 user 消息等）保留库内旧值，避免标题被清空。
         {
             SQLite::Statement upsert(db,
                 "INSERT INTO sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 " updated_at = excluded.updated_at,"
-                " title = CASE WHEN sessions.title = '' THEN excluded.title ELSE sessions.title END");
+                " title = CASE WHEN excluded.title = '' THEN sessions.title ELSE excluded.title END");
             upsert.bind(1, session_id);
             upsert.bind(2, deriveTitle(msgs));
             upsert.bind(3, ts);

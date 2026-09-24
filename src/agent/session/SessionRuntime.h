@@ -154,7 +154,11 @@ public:
     // 全量保存本会话到 <session_id>.json（D3，按 id 隔离）。
     void saveSessionState();
     // 从 <session_id>.json 恢复本会话消息（保留当前 system prompt）。
-    void loadSessionState();
+    // @return 成功（含"会话本就为空"）为 true；持久层抛异常为 false——调用方必须据此
+    //         向用户提示，不得静默按空会话继续（否则表现为"列表里有会话、点开对话区空白"
+    //         且无任何反馈，与数据损坏难以区分）。
+    //         成功且确有消息时顺带刷新上下文用量（物化历史会话后状态栏不再显示 0）。
+    bool loadSessionState();
 
     // 最近一次预算评估产生的警告列表（供 UI 展示）。
     std::vector<std::string> contextWarnings() const { return last_warnings_; }

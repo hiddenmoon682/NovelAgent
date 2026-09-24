@@ -110,8 +110,8 @@ void SessionRuntime::saveSessionState() {
     }
 }
 
-void SessionRuntime::loadSessionState() {
-    if (!persistence_) return;
+bool SessionRuntime::loadSessionState() {
+    if (!persistence_) return true;   // 未注入持久化 = 无历史可载，不算失败
     try {
         auto loaded = persistence_->load(session_id_);
         if (!loaded.messages().empty()) {
@@ -119,9 +119,17 @@ void SessionRuntime::loadSessionState() {
             memory_ = std::move(loaded);
             memory_.setSystemPrompt(prompt);
             persisted_ = true;
+            // 载入后立刻刷新上下文用量：usage_ 只在 process 结束时更新，物化进来的历史会话
+            // 若不刷新，状态栏的 token/百分比会一直停在 0（或上一个会话的值），误导用户。
+            // 代价是一次 TokenCounter 单遍统计（毫秒级），远小于随后的物化动作本身。
+            refreshUsage();
         }
+        return true;                   // 正常载入 / 会话本就为空（合法空会话）
     } catch (const std::exception& e) {
-        spdlog::warn("[SessionRuntime] 会话 {} 恢复失败（从空会话开始）: {}", session_id_, e.what());
+        // 载入失败必须上报调用方（返回 false）：静默吞掉会让"列表里有会话、点开却空白"
+        // 且无任何提示，与"数据损坏"的真实故障难以区分（历史缺陷）。
+        spdlog::error("[SessionRuntime] 会话 {} 恢复失败: {}", session_id_, e.what());
+        return false;
     }
 }
 

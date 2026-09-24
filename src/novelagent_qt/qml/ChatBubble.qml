@@ -10,6 +10,10 @@ ColumnLayout {
     property string reasoning: ""
     property bool streaming: false
     property bool reasoningExpanded: false
+    // 气泡正文字体：默认取主题「对话正文」档位（无衬线 MiSans，与阅读区衬线分工）。
+    // 抽成可覆盖属性是为了能用**真组件**在同一次渲染里并列多款候选字体出对照图
+    // （docs/design/previews/chat-font-compare.png），避免手搓仿制品与真实气泡走形。
+    property string bodyFont: Theme.fontChat
 
     width: parent ? parent.width : 0
     spacing: Theme.gapXs
@@ -22,7 +26,9 @@ ColumnLayout {
     // 与消息正文一致：去掉尾部换行/空行，避免把末行下方的空行也计入高度，
     // 使思考过程框只包裹可见文本（此前 reasoning 直接 text: root.reasoning，尾部换行会让框变高、文本偏上）；
     // 键帽 emoji 与正文同一渲染机制，同样做归一化（见 normalizeKeycapEmoji 注释）。
-    readonly property string displayReasoning: normalizeKeycapEmoji(reasoning).replace(/\n+$/, "")
+    // 注意：思考过程正文**不再预做成 property**——属性绑定是无条件求值的，会让每条消息的
+    // 正则归一化（reasoning 可达数千字符）在折叠态也照样执行；改为在展开态 Text 的绑定里内联
+    // 求值（见下方 reasoningText.text）。
 
     // 键帽 emoji（1️⃣ 2️⃣ 🔟 #️⃣ *️⃣）由"数字/符号 + U+FE0F 变体选择符 + U+20E3 组合键帽框"组成，
     // 衬线主题字体（Noto Serif SC）只有基础字形：数字正常、键帽框字形缺失，
@@ -92,6 +98,10 @@ ColumnLayout {
     }
 
     // ── 展开的思考过程正文（左侧竖线 + 弱化小字）──
+    // 折叠态不做任何思考过程文本工作：这里的 implicitHeight 绑定会强制 Text 排版，
+    // 而 visible:false 并不阻止绑定求值——若 text 一直指向全文，每条历史消息（含切换
+    // 会话重建的全部 delegate、reasoning 可达数千字符）都会白排版一次。故 text 只在
+    // 展开时求值（归一化也一并延后），折叠态为空串。
     Rectangle {
         visible: !root.isUser && root.reasoningExpanded && root.reasoning.length > 0
         Layout.leftMargin: Theme.gapSm
@@ -114,7 +124,9 @@ ColumnLayout {
                 leftMargin: Theme.gapMd
                 topMargin: Theme.gapSm
             }
-            text: root.displayReasoning
+            text: root.reasoningExpanded
+                  ? root.normalizeKeycapEmoji(root.reasoning).replace(/\n+$/, "")
+                  : ""
             wrapMode: Text.Wrap
             font.family: Theme.fontUi
             font.pixelSize: Theme.sizeCaption + 1
@@ -137,7 +149,14 @@ ColumnLayout {
         // 短消息（如"你好"，文本仅 ~30px）也会被强撑到 40px 文本区→气泡约 64px，
         // 实际文本只占左侧、右侧多出一段死白。改用较小地板（留出 24px 保底），
         // 使气泡贴合文本、两侧留白对称。
-        implicitWidth: Math.min(bubbleText.maxWidth, Math.max(Theme.gapMd * 2, textMeasurer.contentWidth)) + Theme.gapMd * 2
+        //
+        // 宽度来源改为**已排版正文的 contentWidth**（不再用额外的隐藏测量 Text）：
+        // 正文 Text 以固定上限宽度排版（见下 width: maxWidth），因此 contentWidth 就是
+        // "不超过上限时文本的真实宽度"——单行短文本 = 自然宽度，换行长文本 = 上限。
+        // 这样既省掉"把整段正文再排版一遍"的隐藏 Text（实测占会话切换 delegate 创建
+        // 耗时的一半以上），也不会出现 bubbleText.width ↔ bubbleRect.width 的绑定环
+        //（正文宽度只依赖面板宽度 root.width，与气泡宽度无关）。
+        implicitWidth: Math.min(bubbleText.maxWidth, Math.max(Theme.gapMd * 2, bubbleText.contentWidth)) + Theme.gapMd * 2
         implicitHeight: bubbleText.contentHeight + Theme.gapXs * 2
         radius: Theme.radiusMd
         color: root.isUser ? Theme.accentSoft : Theme.bgElevated
@@ -145,22 +164,15 @@ ColumnLayout {
         border.color: Theme.divider
 
         Text {
-            id: textMeasurer
-            visible: false
-            text: bubbleText.text
-            font: bubbleText.font
-            textFormat: bubbleText.textFormat
-            wrapMode: Text.NoWrap
-        }
-
-        Text {
             id: bubbleText
             x: Theme.gapMd
             y: Theme.gapXs
             property real maxWidth: root.width * 0.82 - Theme.gapMd * 2
-            width: bubbleRect.width - Theme.gapMd * 2
+            // 固定为上限宽度（不跟随气泡宽度）：这是上面 implicitWidth 直接取 contentWidth
+            // 的前提——宽度依赖面板而非气泡，既无绑定环，也无需第二次排版来测自然宽度。
+            width: maxWidth
             text: root.formattedText + (!root.isUser && root.streaming ? "▍" : "")
-            font.family: Theme.fontDisplay
+            font.family: root.bodyFont
             font.pixelSize: Theme.sizeBody
             // 用字体自然行高，别再额外放大（1.4 / FixedHeight20）：Noto Serif SC 15px 自然行高约 22px
             // 已含充分的 CJK 行距；再放大到 ~31px 会把约 13px 的字形挤到行框顶部、下方多出大片空白，

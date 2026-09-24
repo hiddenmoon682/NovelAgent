@@ -108,4 +108,17 @@ inline size_t utf8ByteCount(const std::u32string& s)
     return bytes;
 }
 
+// 按**码点**（"字"）截断 UTF-8 串：超过 max_chars 个码点时截断并追加省略号。
+//
+// 为什么必须是码点口径而不是字节口径：中文 1 字 3 字节，按 30 字节截断只得 10 个汉字，
+// 与"30 个字符"的展示口径差 3 倍。会话标题曾因此两处不一致（库里按字节、内存里按字符），
+// 表现为同一个会话点开前后标题长度突变——故收敛到本函数，两端共用同一口径。
+inline std::string truncateChars(const std::string& s, size_t max_chars,
+                                 const std::string& ellipsis = "…")
+{
+    const std::u32string u32 = utf8ToU32(s);
+    if (u32.size() <= max_chars) return s;
+    return u32ToUtf8(u32.substr(0, max_chars)) + ellipsis;
+}
+
 } // namespace utils::utf8

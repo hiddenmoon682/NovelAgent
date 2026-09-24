@@ -99,7 +99,7 @@ ApplicationWindow {
         height: parent ? parent.height : 40
         contentItem: Text {
             text: parent.text
-            font.family: "Segoe MDL2 Assets"
+            font.family: Theme.fontIcon
             font.pixelSize: 12
             color: parent.hovered ? parent.hoverText : Theme.textSecondary
             horizontalAlignment: Text.AlignHCenter

@@ -44,7 +44,15 @@ public:
             stop_ = true;
         }
         cv_.notify_all();
-        // std::jthread 析构自动 join
+        // 必须在函数体内显式 join，不能只依赖 std::jthread 的析构 join：成员按声明逆序
+        // 析构，而 workers_ 声明在最前 → 它最后才析构。若把 join 推迟到那时，
+        // mutex_/cv_/tasks_ 已经先被销毁，而 worker 在 workerLoop 退出前仍会对 mutex_
+        // 加锁、读 tasks_ → 对已析构对象加锁（析构期 UAF，且无任何编译期提示）。
+        // 显式 join 让"等待 worker 退场"严格发生在同步原语仍存活期间。
+        // 注：join() 不触发 request_stop，worker 的退出条件是本类的 stop_（上面已置位）。
+        for (auto& w : workers_) {
+            if (w.joinable()) w.join();
+        }
     }
 
     // 提交任务，返回 future。
@@ -65,7 +73,11 @@ public:
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (stop_) {
-                // 线程池已停止，直接在当前线程执行避免任务丢失
+                // 池已停止（只可能发生在 ~ThreadPool 置位 stop_ 之后），改在当前线程执行
+                // 以免任务丢失。约束：调用方不得在 stop_ 之后提交——此时任务体跑在调用线程
+                // 上，若它自身还要获取调用方已持有的锁（SessionPool 的任务收尾会自锁
+                // in_flight_mutex_），同线程二次加锁即自死锁。当前产品路径只在 GUI 线程
+                // 提交、stop_ 仅由析构置位，故不可达；新增调用方请遵守本约束。
                 (*task)();
                 return future;
             }

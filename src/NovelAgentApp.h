@@ -49,9 +49,14 @@ public:
     bool setSkillEnabled(const std::string& name, bool enabled);
 
 private:
+    // ── 成员声明顺序 = 生命周期契约（C++ 按声明逆序析构）──
+    // agent_（内含 SessionPool → 共享线程池）**必须最后声明**：池任务收尾会写 novel.db
+    // （SessionRuntime::saveSessionState）并访问 project_access_/vector_store_/persistence_，
+    // 而 ThreadPool 析构会 join 全部工作线程（含 cancelAllAndWait 2s 超时后的残留任务）。
+    // 最后声明 → 最先析构 → join 期间这些依赖全部存活；此前 agent_ 声明在第 3 位，
+    // 依赖先销毁、残留任务后跑，构成析构期 UAF（配合 ~NovelAgentApp 里的 shutdown 见 .cpp）。
     llm::LLMClientFactory client_;                  // LLM 客户端工厂，持有 Provider 配置
     agent::ToolRegistry registry_;                  // 工具注册表（内置工具登记处）
-    agent::Agent agent_;                            // 多会话并行门面（会话内存由各 SessionRuntime 持有）
     std::shared_ptr<Project> project_;              // 当前项目（未打开时为空项目）
     std::shared_ptr<ProjectAccess> project_access_; // 项目受控访问层（P2/P3：工具/索引/GUI 唯一入口）
     llm::TokenCounter calibrator_;                  // Token 计量/校准器
@@ -65,6 +70,7 @@ private:
     std::unique_ptr<agent::ProjectIndexService> index_service_;  // 项目索引服务
     skill::SkillRegistry skill_registry_;           // 技能注册表
     agent::prompt::RulesProvider rules_provider_;   // 规则层（全局 + 项目规则叠加）
+    agent::Agent agent_;                            // 多会话并行门面（最后声明 = 最先析构，见上）
 
     // 装配入口：依序调用各分段辅助函数完成 Agent 全部初始化（无外部参数）。
     void setupAgent();

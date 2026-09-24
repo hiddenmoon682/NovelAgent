@@ -81,6 +81,16 @@ Popup {
         _ordered = arr
     }
 
+    // 展示模型随入参同步重建：标题栏的"第 N 章"（currentNum）与抽屉是否打开无关，
+    // 必须在 chapters 变化时就绪，不能只等 onOpened（onOpened 仍会再建一次，幂等）。
+    onChaptersChanged: _buildOrdered()
+    Component.onCompleted: _buildOrdered()
+
+    // 当前章节的全局序号文案（"第 N 章"；当前章不在列表中时为空串）。
+    // 标题栏（ReaderPanel.headerTitle）与抽屉行内前缀、页脚"当前 · 第 x 章"共用此编号，
+    // 保证同一章在两处显示同一个序号（排序只在 _buildOrdered 一处定义）。
+    readonly property string currentNum: root._currentNum()
+
     // 当前章节在展示模型中的行号（-1 = 不存在）
     function _rowOf(id) {
         for (var i = 0; i < _ordered.length; ++i)
@@ -183,7 +193,7 @@ Popup {
                 Label {
                     anchors.centerIn: parent
                     text: "\uE8BB"   // Segoe MDL2 关闭
-                    font.family: Theme.fontUi
+                    font.family: Theme.fontIcon
                     font.pixelSize: Theme.sizeUi
                     color: Theme.textSecondary
                 }
@@ -267,19 +277,25 @@ Popup {
                 width: root.width
                 height: 36
                 radius: Theme.radiusSm
-                // 选中/悬停均派生自视图状态（委托无状态，官方规则）
-                color: (index === listView.currentIndex || rowMa.containsMouse)
-                       ? Theme.bgHover : "transparent"
+                // 两个"选中"状态分开派生（委托无状态，官方规则）：
+                //   isCurrent —— 已载入正文的那一章（currentChapterId）：朱砂半透明底 +「当前」徽标
+                //   isCursor  —— 键盘光标行（currentIndex）：只出朱砂标条
+                // 分开的原因：抽屉内 ↑↓ 只移动光标、Enter 才载入章节（onAccepted → _pick），
+                // 若「当前」徽标也绑光标行，↑↓ 途中会显示"当前"而正文并未切换，属撒谎。
+                readonly property bool isCurrent: chapterRow.model.cid === root.currentChapterId
+                readonly property bool isCursor: chapterRow.index === listView.currentIndex
+                color: chapterRow.isCurrent ? Theme.accentTint
+                     : (rowMa.containsMouse ? Theme.bgHover : "transparent")
                 Behavior on color { ColorAnimation { duration: Theme.animFast } }
 
-                // 朱砂选中标条（项目选中态规范）
+                // 朱砂选中标条（项目选中态规范）：跟随键盘光标行
                 Rectangle {
                     anchors { left: parent.left; verticalCenter: parent.verticalCenter }
                     width: Theme.markBar
                     height: 16
                     radius: 2
                     color: Theme.accent
-                    visible: chapterRow.index === listView.currentIndex
+                    visible: chapterRow.isCursor
                 }
 
                 RowLayout {
@@ -290,8 +306,10 @@ Popup {
                     }
                     spacing: Theme.gapSm
 
+                    // 行文案「第 N 章 · 标题」：序号 num 由 _buildOrdered 统一生成，
+                    // 与标题栏、页脚同源（预览稿行内即此格式）
                     Label {
-                        text: chapterRow.model.title
+                        text: chapterRow.model.num + " · " + chapterRow.model.title
                         font.family: Theme.fontUi
                         font.pixelSize: Theme.sizeUi
                         color: Theme.textPrimary
@@ -304,6 +322,23 @@ Popup {
                         font.family: Theme.fontUi
                         font.pixelSize: Theme.sizeCaption
                         color: Theme.textFaint
+                    }
+                    // 「当前」徽标：仅当前已载入章显示（不可见时布局自动跳过，不占宽度）
+                    Rectangle {
+                        Layout.preferredWidth: badgeText.implicitWidth + Theme.gapCozy
+                        Layout.preferredHeight: 16
+                        Layout.alignment: Qt.AlignVCenter
+                        radius: Theme.radiusXs
+                        color: Theme.accent
+                        visible: chapterRow.isCurrent
+                        Label {
+                            id: badgeText
+                            anchors.centerIn: parent
+                            text: "当前"
+                            font.family: Theme.fontUi
+                            font.pixelSize: Theme.sizeMini
+                            color: Theme.textPrimary
+                        }
                     }
                 }
 
