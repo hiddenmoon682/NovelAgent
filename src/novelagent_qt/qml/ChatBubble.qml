@@ -22,7 +22,10 @@ ColumnLayout {
     readonly property string displayText: content.replace(/\n{2,}/g, "\n").replace(/\n+$/, "")
     // 去掉尾部换行/空行：若保留，contentHeight 会把末行下方的空行也计入，气泡底部凭空多出空白，
     // 视觉上文本"偏上、下空隙大于上间隙"（与用户消息 displayText 的处理保持一致）。
-    readonly property string formattedText: isUser ? displayText : mdWithHardBreaks(normalizeKeycapEmoji(content)).replace(/\n+$/, "")
+    // 正文渲染前的显示层归一化链（三步都不改 root.content 原文，复制按钮仍取原文）：
+    // 键帽 emoji → 单换行转硬换行 → 中文标点旁的 ** 加粗修复。
+    readonly property string formattedText: isUser ? displayText
+                                                   : fixCjkStrong(mdWithHardBreaks(normalizeKeycapEmoji(content))).replace(/\n+$/, "")
     // 与消息正文一致：去掉尾部换行/空行，避免把末行下方的空行也计入高度，
     // 使思考过程框只包裹可见文本（此前 reasoning 直接 text: root.reasoning，尾部换行会让框变高、文本偏上）；
     // 键帽 emoji 与正文同一渲染机制，同样做归一化（见 normalizeKeycapEmoji 注释）。
@@ -55,6 +58,38 @@ ColumnLayout {
                     lines[j] += "  "
             }
             parts[i] = lines.join(nl)
+        }
+        return parts.join("```")
+    }
+
+    // ── 中文语境的 ** 加粗修复（CommonMark flanking 规则对 CJK 不友好）──
+    // CommonMark 规定：闭合 ** 必须"右侧定界符合法"——其前一个字符不能是标点，除非其后一个
+    // 字符是空白或标点。中文里没有词间空格，于是「…（或魔幻现实）**的路子」这种写法里，
+    // 闭合 ** 前是全角右括号、后是汉字，两条都不满足 → 该 ** 无资格闭合强调，
+    // 解析器把它当普通文本输出（用户可见"星号外露"）。开标记后紧跟标点时间理，如
+    // 「氛围是**「悬疑」**的路子」。这是 CommonMark 的已知边界（commonmark-spec#650，
+    // 2020 年至今未修），ChatGPT、OpenClaw 等同样中招（OpenAI 社区有中/日/韩文报告）。
+    // 修法：在成对 ** 的**内侧**各插一个 U+2060 WORD JOINER——零宽字符，且不像 U+200B
+    // 那样产生断行机会，使两侧重新成为合法定界符。效果与上游 CJK-friendly 修订草案
+    // （把 flanking 判定里的"标点"收窄为"非 CJK 标点"）等价；Qt 的 markdown 是 md4c
+    // 移植版、没有插件挂载点，只能落在渲染前这一层。
+    // 边界处理：
+    //   ① 只处理**内侧紧贴非空白**的成对 **：`** 加粗 **`（内边带空格）在 CommonMark 里
+    //      本就是字面量，保持原样不动，避免改动超出必要范围。
+    //   ② 跳过 ****粗****（加粗+斜体）这类相邻星号：其前/后紧邻 * 时不处理。
+    //   ③ 代码块（```…```）内不处理：那里的 ** 本就该是字面量。
+    //   ④ 单 * 斜体与下划线 _ 不处理：中文输出罕见，且 _ 与 story_structure 这类标识符冲突风险高。
+    function fixCjkStrong(src) {
+        var wj = "\u2060"
+        var parts = src.split("```")
+        for (var i = 0; i < parts.length; i += 2) {   // 偶数段在代码块外
+            parts[i] = parts[i].replace(/\*\*([^\s\n*](?:[^\n*]*[^\s\n*])?)\*\*/g,
+                function (m, inner, offset, whole) {
+                    var prev = offset > 0 ? whole.charAt(offset - 1) : ""
+                    var next = whole.charAt(offset + m.length)
+                    if (prev === "*" || next === "*") return m
+                    return "**" + wj + inner + wj + "**"
+                })
         }
         return parts.join("```")
     }
@@ -157,7 +192,10 @@ ColumnLayout {
         // 耗时的一半以上），也不会出现 bubbleText.width ↔ bubbleRect.width 的绑定环
         //（正文宽度只依赖面板宽度 root.width，与气泡宽度无关）。
         implicitWidth: Math.min(bubbleText.maxWidth, Math.max(Theme.gapMd * 2, bubbleText.contentWidth)) + Theme.gapMd * 2
-        implicitHeight: bubbleText.contentHeight + Theme.gapXs * 2
+        // 上下内边距用 gapSm(8) 而非 gapXs(4)：4px 时文字几乎贴着上下边框（实测顶边到首行墨迹
+        // 仅约 5 逻辑px），与左右 12px 的内边距相比明显偏紧。8/12 的组合是聊天气泡的常见比例
+        // （文字块的行框本身已含约 2.4px 上下行距，视觉留白≈10px 对 12px，观感均衡）。
+        implicitHeight: bubbleText.contentHeight + Theme.gapSm * 2
         radius: Theme.radiusMd
         color: root.isUser ? Theme.accentSoft : Theme.bgElevated
         border.width: root.isUser ? 0 : 1
@@ -166,7 +204,7 @@ ColumnLayout {
         Text {
             id: bubbleText
             x: Theme.gapMd
-            y: Theme.gapXs
+            y: Theme.gapSm      // 与 implicitHeight 的上下内边距保持一致（见上）
             property real maxWidth: root.width * 0.82 - Theme.gapMd * 2
             // 固定为上限宽度（不跟随气泡宽度）：这是上面 implicitWidth 直接取 contentWidth
             // 的前提——宽度依赖面板而非气泡，既无绑定环，也无需第二次排版来测自然宽度。

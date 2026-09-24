@@ -1,5 +1,61 @@
 # Changelog
 
+## [2026-09-24] 中文语境的 ** 加粗修复（CommonMark flanking 规则对 CJK 不友好）
+
+- **症状**：AI 消息里 `氛围是**悬疑 / 超自然（或魔幻现实）**的路子` 星号原样外露、没加粗；
+  同一条消息内 `**已有章节《雨夜来客》分析**`、`1. **先补框架**：` 却正常加粗（"半条消息格式化"）。
+- **根因**：CommonMark 的定界符 **flanking 规则**——闭合 `**` 必须"右定界符合法"：其前一个字符
+  不能是标点，**除非**其后一个字符是空白或标点。中文没有词间空格，于是
+  「…（或魔幻现实）`**`的路子」里闭合 `**` 前是全角右括号、后是汉字，两条都不满足 →
+  该 `**` 无资格闭合强调，被当普通文本输出。开标记后紧跟标点（`氛围是**「悬疑」**的路子`）同理。
+  真机最小复现（`Text.MarkdownText`，14 例）确认：闭合前是 `。`/`）` → 外露；闭合前是汉字 /
+  闭合后是 `，` → 正常；`中文**加粗**中文`、行首 `**目前缺口**` → 正常。
+- **不是我们的 bug**：CommonMark 官方 issue
+  [#650「Emphasis with CJK punctuation」](https://github.com/commonmark/commonmark-spec/issues/650)
+  2020-05 开、至今 open（237 讨论 / 38 👍）；ChatGPT 同样中招（OpenAI 开发者社区有
+  [中文](https://community.openai.com/t/markdown-bold-formatting-error-in-chinese/1150886)/
+  日文/全角标点/韩文 报告）；OpenClaw 的 issue
+  [#101120](https://github.com/openclaw/openclaw/issues/101120) 症状一字不差，已由
+  [PR #101230](https://github.com/openclaw/openclaw/pull/101230) 修复。
+- **业界两种修法**：① 解析器层——上游
+  [markdown-cjk-friendly](https://github.com/tats-u/markdown-cjk-friendly) 修订草案把 flanking
+  判定里的"标点"收窄为"**非 CJK 标点**"（对既有 CommonMark 语料输出一字不差），已实现为
+  markdown-it / micromark(remark) / goldmark 插件，**OpenClaw 就是挂这个插件**；② 渲染前预处理
+  ——"粘住"标记（llm_internals、taiwan-md 等）。
+- **本仓库选 ②**：Qt 的 markdown 是 **md4c 的移植版**、封在 `QTextMarkdownImporter` 里，
+  **没有插件挂载点也没有 CJK 开关**（亦无 QTBUG 在修），①不可用。
+  新增 `ChatBubble.fixCjkStrong()`：在成对 `**` 的**内侧**各插一个 **U+2060 WORD JOINER**
+  （零宽，且不像 U+200B 那样产生断行机会），使两侧重新成为合法定界符；效果与上游草案等价。
+  接入渲染前归一化链：`fixCjkStrong(mdWithHardBreaks(normalizeKeycapEmoji(content)))`。
+- **边界（不越界修改）**：只处理**内侧紧贴非空白**的成对 `**`（`** 加粗 **` 在 CommonMark 里
+  本就是字面量，保持原样）；跳过 `****粗****`（前/后紧邻 `*`）；跳过代码块 ```` ``` ````；
+  不碰单 `*` 斜体与下划线 `_`（中文罕见，且 `_` 与 `story_structure` 这类标识符冲突风险高）。
+  **复制按钮仍取 `root.content` 原文**，数据库存储与模型输出都不动。
+- **验证**：`qmllint` ChatBubble.qml **2 条 = HEAD 基线 2 条（零新增）**；
+  `cmake --build --preset release` 通过；重启后 stderr **0 字节**（新函数/正则解析正常）；
+  真机同一条消息：改前「氛围是\*\*悬疑 / 超自然（或魔幻现实）\*\*的路子」（星号外露）→
+  改后「氛围是悬疑 / 超自然（或魔幻现实）的路子」（加粗、无星号），
+  同消息内原本正常的 `**目前缺口**` 等加粗不受影响。
+
+## [2026-09-24] 消息气泡上下内边距 4px → 8px（文字不再贴上下边框）
+
+- **诉求**：AI 返回消息的气泡**上下**留白偏小，文字几乎贴着上下边框，要求"增加一点点"。
+- **根因**：`ChatBubble.qml` 里气泡的水平内边距用 `Theme.gapMd`(12)，垂直内边距却用
+  `Theme.gapXs`(4)——只有左右的三分之一。真机像素实测（1.5× 物理像素）：
+  气泡顶边框 y=192、首行墨迹 y=202（**间隙 8px ≈ 5.3 逻辑px**）；末行墨迹 y=456、
+  底边框 y=466（**间隙 9px ≈ 6 逻辑px**）。视觉上确实"贴边"。
+- **改动**（`src/novelagent_qt/qml/ChatBubble.qml` 两处，仍取 Theme 档位、无内联魔法值）：
+  - `implicitHeight: bubbleText.contentHeight + Theme.gapSm * 2`（原 `gapXs * 2`）
+  - `bubbleText.y: Theme.gapSm`（原 `Theme.gapXs`）
+  垂直 8 / 水平 12 是聊天气泡的常见比例：文字行框自带约 2.4px 上下行距，
+  视觉留白≈10px 对 12px，观感均衡。**注意**：该内边距为 user/assistant 共用，
+  用户气泡同步变松（若只要 AI 气泡变松需另加按角色的档位）。
+- **验证**：`qmllint` ChatBubble.qml **2 条 = HEAD 基线 2 条（第 67/68 行既有告警，零新增）**；
+  `cmake --build --preset release` 通过（rcc 重打包 QML + 重链）；真机重启后
+  stderr **0 字节**（无 QML 告警）、stdout 5 行正常加载会话。
+- **踩坑**：截图进程若为 DPI 未感知，`PrintWindow` 抓到的是 1× 逻辑像素（文字发虚、
+  4px 级差异被抹平）；须在加载 System.Drawing 前 `SetProcessDPIAware()`，得到 1.5× 物理像素图。
+
 ## [2026-09-24] 对话列表正文改用无衬线 MiSans：与阅读区衬线明确分工
 
 - **诉求**：小说正文（阅读区）保留 Noto Serif SC，**对话列表的消息正文换成其他字体**。
