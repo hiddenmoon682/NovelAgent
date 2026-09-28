@@ -188,6 +188,14 @@ if(BUILD_GUI)
         Qt6::Core Qt6::Quick Qt6::QuickControls2
     )
     target_precompile_headers(novelagent_gui REUSE_FROM novelagent_core)
+
+    # ── 性能探针宿主（仅测量用，不参与发布）──
+    # QML 无法观测 frameSwapped，滚动流畅度（帧间隔）只能在 C++ 侧测；见 tests/probe_scroll.cpp。
+    # 构建：cmake --build --preset release --target probe_scroll
+    # 运行：probe_scroll.exe tests/probe_chat_scroll.qml -- --reuse=1 ...
+    add_executable(probe_scroll tests/probe_scroll.cpp)
+    target_link_libraries(probe_scroll PRIVATE Qt6::Core Qt6::Quick)
+    set_target_properties(probe_scroll PROPERTIES AUTOMOC ON)
 endif()
 
 # ── 自动复制 MSYS2 DLL（双击 exe 无需配置 PATH）──

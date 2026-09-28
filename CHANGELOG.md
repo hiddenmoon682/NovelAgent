@@ -1,5 +1,520 @@
 # Changelog
 
+## [2026-09-28] 对话区滚轮"不够丝滑"：定性到 Qt 6.6 起的比例滚轮机制；记录方案 A（官方环境变量）
+
+- **诉求**：中栏对话消息列表（`AgentPanel.chatView`）滚轮上下滚动"不够丝滑、手感不好"。
+- **先定性（Qt 6.8.3 源码 + 真机日志，不猜）**：
+  1. 默认 `wheelDeceleration = 15000`，内部阈值 `_q_MaximumWheelDeceleration = 14999`
+     （本机私有头 `D:\QT\QT\6.8.3\mingw_64\include\QtQuick\6.8.3\QtQuick\private\qquickflickablebehavior_p.h:70`）
+     → 走 `qquickflickable.cpp:1678` 的"**无加速**、位移正比于 angleDelta"分支。
+     每格位移 = `wheelScrollLines × 24` 逻辑px；本机 `WheelScrollLines=3` → **72 逻辑px**
+     （1.5 DPR，实测 108 **物理**px，与公式一致）。
+  2. 每格都 `resetTimeline()` 再 `timeline.moveBy(..., OutExpo, 3*fixupDuration/4)`
+     （源:1713-1718；`fixupDuration=400` → **300ms**）：**逐格重置时间线**、丢掉上一格动画的速度
+     → 速度剖面呈"一顿一顿"的锯齿；停手后画面还会以极慢速度挪 ~300ms（体感"发飘/拖尾"）。
+     实测单格位移曲线（真机、前台、长会话）：60ms→49%、105ms→82%、151ms→94%、201ms→98%、
+     约 270ms→100%（可见最后 ~6% 的位移占了近一半时长）。
+  3. 同一毫秒内的第二个滚轮事件被**整条丢弃**（`elapsed <= 0 → return`，源:1666-1671）。
+     真机快转（≈318 格/秒）实测丢 50 个事件 / 82 格刻度（占到达刻度 5.2%）；**正常滚速 0 丢失**
+     → 只对自由滚轮/高分辨率滚轮明显。另实测 Windows 会把滚轮消息合并投递（单事件最大 110~231 格），
+     而 Qt 对每个事件只开**一段** 300ms 缓动 → "一甩滑很远再慢慢停"。
+  4. Qt 为何如此（官方 commit 06540cdb，Qt 6.6）：用户抱怨滚轮"几乎不可控：很难滚短距离、
+     连点几格就冲过头"，于是把滚轮加速默认关闭，并留环境变量 `QT_QUICK_FLICKABLE_WHEEL_DECELERATION`
+     恢复旧行为。**QML 侧没有任何滚轮参数可调**（`wheelDeceleration` 不在 Q_PROPERTY 列表里）。
+- **方案 A（官方环境变量；本次已固化进程序，用户显式设置优先）**：设置
+  `QT_QUICK_FLICKABLE_WHEEL_DECELERATION`（全局，应用内所有 Flickable 生效）。该分支为连续减速，
+  单格动画时长 ≈ `12/√a` 秒：
+
+  | a | 单格时长 | 体感 |
+  |---|---|---|
+  | 15000（默认=关闭） | 300ms OutExpo | 现况：发飘、拖尾 |
+  | 10000 | ≈120ms | 最跟手、几乎无惯性 |
+  | 5000（Qt 6.6 前旧默认） | ≈170ms | 跟手 + 快转有惯性 |
+  | 2000 | ≈268ms | 惯性明显、滑得远 |
+
+  单格总位移在两种模式下都是 72 逻辑px（官方设计：`initialWheelFlickDistance = wheelScrollLines × 24`），
+  差别只在"怎么走完"与"连转时的速度累积"。**手感好坏由用户真机判定**（主观项，不写结论）。
+- **测量工具（新增，均在 `tests/`＝本地忽略目录）**：`inject_wheel_diag.ps1`（真实滚轮注入 +
+  精确刻度数 + 注入期间"是否在前台"自证）、`capture_notch_profile.ps1` + `measure_profile.ps1`
+  （单格之后的逐帧位移曲线）、`probe_wheel_fidelity.qml` + `run_wheel_fidelity.ps1`（探针内直接读
+  `contentY`，量位移保真度）。
+- **三个测量踩坑（务必记住，否则数据是假的）**：
+  1. **日志证明不了位移**。第一轮用 `-Delta -120`（向下）注入，而 app 打开会话时视口贴底、
+     且当时该会话内容**短于视口** → Qt 两个方向的越界分支都直接 `vMoved=false`，**一像素不动**；
+     但调试打印在分支**之前**，于是日志里 124 条事件一条不少。我把"事件到达"误读成"位移已生效"。
+     教训：要位移证据就读 `contentY`（探针）或肉眼看，别拿事件日志当位移证据。
+  2. **不要用截图互相关量位移**。内容纹理稀疏时会出现退化匹配（最优代价恰为 0），结果完全不可信
+     （实测同一组图给出 0/108/216/580/652 等互不相容的值）。量位移请直接读 `contentY`。
+  3. **先把窗口弄成前台再测**。非前台时 Windows 会攒批投递（出现过 454ms 的投递停顿、
+     单事件合并 10 格），前台则 40ms 档完美 1 事件/格。
+- **方案 B（自建平滑滚轮）——已实现、机械验证通过，但按用户真机反馈撤回**：
+  - **做过什么**：`WheelHandler` 接管滚轮（官方文档：`blocking` 默认 true，"prevents other items or
+    handlers behind it from handling the same wheel event"）+ 累加目标 + `SmoothedAnimation` 连续追踪
+    （官方文档：目标变化时曲线 "smoothly spliced together … maintains the current velocity"，
+    补上 Qt `resetTimeline` 丢掉的速度）；并自己维护 `userAtBottom`（程序化写 `contentY` 不置位
+    `moving/flicking`，不维护的话上翻后会被 `snapToEnd()` 拽回底部）。改动面：`Theme.qml` 两个档位
+    （`wheelStep=72` / `wheelSmoothMs=110`）+ `AgentPanel.qml` 三处，共 73 行。
+  - **当时的机械证据全过**：`./scripts/verify.sh --build` 与 `cmake --build --preset release` 退出码 0；
+    `qmllint` 零新增（35→35，用"把改动逆向后生成基线"的口径）；运行期 stderr **0 行**；
+    `QT_LOGGING_RULES=qt.quick.flickable.wheel=true` 下 **Qt 自带滚轮分支日志 0 行**（证明接管生效）；
+    注入 8 格前后截图 `build/diag/B0.png`→`B1.png` 证明确实滚动。
+  - **结论：用户真机试用判定"不行，而且有 BUG" → 已完整撤回**。撤回口径已核对：
+    `AgentPanel.qml` 767 行、相对 HEAD 的改动量由 327 行回落到 254 行（正好是新增的 73 行），
+    `Theme.qml` 无残留，全库已无 `WheelHandler`/`SmoothedAnimation`/`wheelBy` 痕迹。
+    **BUG 的具体现象待用户补充后再记入本条——此处不写猜测性根因。**
+  - **教训（值得记住）**：机械证据（构建 / qmllint / 日志 / 位移截图）只能证明"改动按设计生效"，
+    **证明不了手感，也覆盖不到真实交互路径上的副作用**。"接管输入路径"这类改动尤其如此——
+    下次这类改动应当**先做成可一键退回原生路径的开关**再让人试，而不是直接落地。
+- **方案 A 的固化与验证（本次最终落地）**：
+  - **固化位置**：`src/novelagent_qt/QmlApp.cpp`（与既有的 `QT_QUICK_CONTROLS_STYLE=Fusion` 同一处，
+    在 QML 引擎加载前）：`if (qEnvironmentVariableIsEmpty("QT_QUICK_FLICKABLE_WHEEL_DECELERATION"))
+    qputenv(..., "5000");` —— **程序默认 5000**，但**用户/环境显式设置者优先**（不改代码即可试手感：
+    10000 更跟手、2000 惯性更明显、15000 = 退回 Qt 默认）。
+  - **客观证据（`QT_LOGGING_RULES=qt.quick.flickable=true` 时 `flick()` 打的那句日志）**：
+    · 不设环境变量启动 → `choosing deceleration 5000 for QEvent::Wheel`（内置默认生效）；
+    · 显式设 `QT_QUICK_FLICKABLE_WHEEL_DECELERATION=8000` 启动 → `choosing deceleration 8000`
+      （覆盖优先级生效）。
+    这句日志**只出现在连续减速分支**，因此它同时证明"已从默认的 72px/300ms OutExpo 分支切换过来了"。
+  - 两次运行的其余 stderr 均为**空**（无 QML 警告）；构建两道门（`verify.sh --build` /
+    `cmake --build --preset release`）退出码 0。
+  - **手感好坏仍由用户真机判定**（主观项，本文件不写结论）。
+
+## [2026-09-28] 修复「应用启动依赖工作目录」：配置加载不再采用工作目录下的 config.json
+
+- **症状**：从某些目录启动时，应用**连项目都不打开**、侧栏没有任何会话，且**完全静默**
+  （无警告、无提示、也不弹首启向导）。同一可执行文件换一个工作目录启动就一切正常。
+- **根因（读码定位，三层，都在 `src/config/AppConfig.cpp`）**：
+  1. `load()` 旧实现是"**当前工作目录**有 `config.json` 就用它，否则回退 `~/.novelagent/config.json`"。
+     仓库根目录恰好躺着一份 2026-07-25 的旧 `config.json`（有 provider、**没有 `last_project_path`**），
+     于是以仓库根为工作目录启动时加载的是它 → 没有可恢复的项目 → 静默按"无项目"启动。
+  2. `loadFromFile()` 把传入路径**原样**记进 `source_path`，而 `load()` 传的是相对名 `"config.json"`。
+  3. `save()` 无参版本回写 `source_path` → **"在哪启动就把设置/密钥写到哪"**（这条比第 1 条更严重：
+     在那样的启动方式下改 API key，写的是工作目录里那份文件，而不是全局配置）。
+- **改法（`AppConfig` + `QmlBridge` + 设置界面）**：
+  - `load()` 只认**唯一**来源 `~/.novelagent/config.json`，去掉隐式 cwd 优先。
+    **设计取舍（评审后两次收窄）**：实现过程中曾加过两样东西——① 环境变量 `NOVELAGENT_CONFIG` 作为
+    "显式覆盖"出口（理由"给高级用户留个出口"）② "检测到工作目录下有 `config.json` 就警告一句"的迁移提示。
+    评审后**两者都已移除**：项目尚未发布、不存在需要迁移的存量用户，两者都是假想需求（项目规则本就写着
+    "不要为未来可能的扩展添加东西"）；而 ① 更与本次修复的目标相抵触——**多一个来源就多一个"配置到底从
+    哪来"的答案**。现在配置来源唯一，确需用另一份配置时手工替换该文件即可。
+  - `loadFromFile()` 把 `source_path` **绝对化**，`save()` 因此永远写回同一文件，与工作目录无关。
+    绝对化走 `std::filesystem::path`（本工具链对窄字符串按 UTF-8 转换，中文路径安全——`fs::path` 这条路
+    是这个工程处理中文路径的既有约定，单元测试里专门覆盖了含中文的相对路径）。
+  - 可见性（这才是让此类"静默退化"不再发生的部分）：启动固定打一行 `[config] 使用配置文件: <绝对路径>`
+    （**自证**：本次这个坑难查，正是因为没有任何地方说明"实际用了哪份配置"）；新增
+    `QmlBridge::configPath` 属性并在**设置 → 调试**页底部显示该路径（hover 显示完整路径）；
+    `tryAutoStart()` 在"有 `last_project_path` 但项目不存在/读不到标题"时，改为**状态栏 + Toast 明确告知**
+    （此前静默，"项目打不开"与"全新安装"在界面上无法区分）。
+  - 现场清理：仓库根那份陈旧 `config.json` 移出仓库（备份到 `%TEMP%\novelagent-config-repo-20260725.json.bak`），
+    消除这个"配置刺客"。
+- **验证（都跑了，含反例回归）**：
+  - **反例回归（最关键）**：修复后**故意保留**仓库根那份 `config.json`，分别以
+    `仓库根` / `build-release` / `%TEMP%` 为工作目录启动三次 —— 三次日志都是
+    `使用配置文件: C:\Users\kami\.novelagent\config.json`，且三次都恢复了会话 `s-multi-7`。
+    （证明修的是"cwd 优先级"，而不是"删了个文件"。）移除环境变量后重新跑了同样的三目录对照，结论一致。
+  - 单元：`tests/test_app_config.cpp` 新增两条契约并通过（17/17）——① `load()` 不采用工作目录下的
+    `config.json`（用标记配置占住工作目录来验，且断言来源只能是全局路径或空）② `source_path` 绝对化且
+    无参 `save()` 回写同一文件（含中文相对路径）。
+  - `./scripts/verify.sh` **33/33**；`qmllint` 仅 `SettingsDialog.qml` 由 34 → 35 条（多出的 1 条是
+    `bridge.configPath` 的既有 `[unqualified]` 告警族，已把取用收敛为单点，是"能在界面显示它"的最小代价）；
+    `ChatBubble.qml` 仍 0 条。
+  - 真机冒烟（`仓库根` 与 `build-release` 两种 cwd，各带约 128 次真实滚轮注入）：stderr **0 字节**。
+  - 另用一次临时自证（`Component.onCompleted: console.log("[SELFTEST] …")`）确认**设置弹窗在启动时确实被
+    实例化**、`cfgPath` 绑定已求值——否则"启动 stderr 无警告"根本不覆盖这个新增绑定。自证行已撤除（残留检查 0）。
+
+## [2026-09-24] 修复「点侧栏切换会话后，中栏仍显示上一个会话的内容」：根因是 reuseItems 与整表换 model 冲突
+
+- **症状**：点侧栏某条会话后，中栏（`chatView`）画出来的还是**上一个会话的行**（含其工具卡片/正文），
+  且因为新会话内容更短，下方留出一大片空白；用户两次截图复现，`s-multi-7` 为当前会话而屏上是 `s-multi-4`。
+- **先取证再动手（关键结论：不是数据丢失）**：
+  - 库 `~/.novelagent/projects/测试/.novelagent/novel.db` 里 `s-multi-4` 40 条、`s-multi-7` 4 条**全在且正文非空**
+    （用 `sqlite3` 查证；中文路径需先复制到 ASCII 路径，否则 sqlite3.exe 打不开——AGENTS.md 记过这个坑）。
+  - 截图里那个"删除旧章节，重新创建并写入纯文本正文。"是 `s-multi-4` 的 **seq 24 一条 assistant 消息**（不是用户消息）
+    → 坐实"中栏渲染的是另一个会话"。
+  - 中栏内容只到 seq 27 且下方留白 → 不是"模型少填"，而是**旧委托还在画、新内容比旧内容短**。
+- **根因（已用最小复现锁定，单变量）**：`ListView.reuseItems: true` 与"整表换 model"冲突。
+  Qt 6.8.3 实测（`tests/probe_list_swap_fix.qml`：长列表滚到底 → 换成 4 行新 model，只改一个变量）：
+
+  | 变体 | 结果 |
+  |---|---|
+  | `reuseItems: true` + 换 model（= 原 `reloadHistory` 写法） | 可见 12 行、**全部是旧 model 的数据** ✗ |
+  | `reuseItems: false` + 换 model | 可见 4 行、全是新数据 ✓ |
+  | `reuseItems: true` + 先 `model = null` 再赋值 | 仍全是旧数据 ✗ |
+  | `reuseItems: false` + `clear()+append()` | 行对了但视口停在旧偏移（空屏）✗ |
+  | **`reuseItems: true`，仅"换 model 那一瞬"关掉、下一轮恢复** | **可见 4 行、全是新数据 ✓** |
+
+  即：开启 reuse 后，**整表重建不会把已实例化的委托重新绑定到新 model**——`contentHeight` 会更新成新内容的
+  尺寸，但屏幕上的行仍持有旧 model 的数据。官方文档（[ListView#Reusing Items](https://doc.qt.io/qt-6/qml-qtquick-listview.html#reusing-items)）
+  只说"复用时模型角色会被更新"与"池中的行仍可能存活"，未提"整表换 model"这一情形。
+  **为什么侧栏一直是对的**：侧栏 `ListView` 没开 `reuseItems`（默认 false），全仓 `reuseItems: true` 只有中栏这一处。
+- **修法**（`AgentPanel.qml` 的 `reloadHistory()`）：换 model 前 `chatView.reuseItems = false`，
+  换完用 `Qt.callLater` 恢复 `true`——既修掉串档，又保住滚动时的委托复用（那才是当初开它的目的）。
+  该 `callLater` 安全：此处对象与面板同生命周期，不像 delegate 会被销毁重建。
+- **真机验收**：用户在同一构建上手点三个会话来回切换，中栏内容每次跟随会话变化、不再串档 ✓；
+  带诊断的构建日志亦自洽（`sid=s-multi-7 list=3 hist=4 model=4`，"model 前三"与"屏上前三"一致）。
+- **纠正上一轮我自己的一个错误判断**：截图里侧栏"只有 3 行"**不是 bug**——库中 15 个会话有 12 个
+  `archived = 1`（归档＝列表不可见的既定语义），`listSessions()` 的 SQL 就是 `WHERE archived = 0`，
+  剩下的正好是截图那 3 条、顺序也一致（`s-multi-7` / `s-multi-15` / `s-multi-4`）。
+- **顺带发现的独立问题（未修，仅记录）**：**应用启动依赖工作目录**。Qt Creator 以构建目录为 cwd 启动时能正常
+  恢复最近项目；以仓库根目录为 cwd 启动时 `bridge.sessionList()` 为 0、连项目都没打开（`tryAutoStart` 静默退化）。
+  **同时纠正我此前的一条验证声明**：早先那几次"真机启动 stderr 0 字节 ✓"的冒烟都是在仓库根目录下启动的，
+  那时应用根本没加载项目，故只证明了"能干净启动"，并未验证界面；本次已改为 `cwd=build-release` 启动，
+  并用带诊断的构建确认项目/会话/历史/行数自洽后再做冒烟。
+- **验证**：`./scripts/verify.sh` **33/33**；`qmllint` 基线不变（AgentPanel 38、ChatBubble 0、ToolCallCard 0）；
+  真机以正确 cwd 启动 + **172 次真实滚轮注入**后 stderr **0 字节**。
+- **新增本地排查工具**（`tests/` 属 .gitignore，不进版本库）：`probe_list_swap_fix.qml`（上述单变量矩阵）、
+  `inject_click.ps1`（Win32 真实点击注入，用于复现"点侧栏"这条路径）。
+
+## [2026-09-24] 流式渲染改为「已定稿前缀 + 生长尾段」分块：单次写入代价从 O(整段) 降到 O(尾段)，20000 字时 23.2ms → 3.3ms
+
+- **先纠正方向（查源码后否掉了原计划）**：上一轮遗留的设想是"给消息加 `frozen` 标记、把定稿消息的 `text` 冻住"。
+  读 Qt 6.8.3 源码后确认这是**空操作**：`QQuickText::setText()`（qquicktext.cpp:2028）对**相同字符串提前 return**，
+  而定稿消息的 `content` 本来就不会被再写（`AgentPanel` 只在流式那条上 `setProperty`）→ 它的 `text` 绑定
+  既不重求值、`setText` 也零代价。真正在付重排代价的自始至终只有**正在增长的那一条**。故未做该重构（避免"改了没用"的改动）。
+- **源码依据（本次结论全部落在代码行上）**：
+  - `QQuickText::setText`：文本不同才 `updateDocumentText()` → `doc->setMarkdown(text)`（md4c 整段重新解析），
+    随后 `updateLayout()` → `updateSize()` 里 `doc->size()` 强制全文重排；文本相同则直接返回。
+  - 宽度变化只走 `ensureDoc()` + `setTextWidth`（**不重新 `setMarkdown`**）→ 拖 SplitView 改宽度只重排、不重解析。
+  - `setText` 里 `setFlag(ItemObservesViewport, text.size() > 10000)`：只有超长文本才按视口裁剪字形。
+  - markdown 段落间距来自 `qtextmarkdownimporter.cpp`：`m_paragraphMargin = 解析时 doc 默认字体.pointSize()*2/3`
+    加在段落块上下边距上；而 `qquicktext.cpp:501` 是在 `updateSize()` 里才 `doc->setDefaultFont(自己的字体)`，
+    **顺序在解析之后** → 首次解析与应用字体绑定，二次解析起才与本 Text 的字体绑定（实测口径差异见下）。
+- **做法**（`ChatBubble.qml`，仅作用于 `streaming` 中的助手消息）：
+  - 把正文按**空行块边界**切成「已定稿前缀」+「仍在生长的尾段」两个 `Text` 竖直堆叠（接缝间距 0，见下）；
+    前缀的 `text` 只在切点前进时才变 → 其余时间 `setText` 提前返回，排版缓存与场景图字形节点都保留，
+    每个 token 只重解析尾段。
+  - 切点用**纯函数**求值（`computeFoldCut`），不存任何跨帧状态 → delegate 被 `reuseItems` 回收复用时不会残留陈旧切点。
+  - 安全条件：① 代码围栏（``` / ~~~，按同字符配对）内不切；② 切点后一行若是列表项/引用/缩进续行则不切
+    （`- 甲\n\n- 乙` 在 CommonMark 里是同一个松散列表，从中间切开会让后半段编号重新开始）；③ 尾段 ≥ 320 字
+    （按实测约 6µs/字，320 字 ≈ 2ms，压在 240Hz 的 4.17ms 一帧预算内；再小则折叠过频，而每次折叠都要重排整个前缀）。
+  - `streaming` 结束后**退回单 Text 整段渲染**（与改动前完全一致）；尾段用的就是原来那个 `bubbleText`，
+    定稿时它拿到全文属于"二次解析"（流式期间它已重解析过很多次）→ 段落口径与接缝均为 0，高度不跳变。
+  - **预热**：前缀 `Text` 首次赋值喂一个 `U+2060` WORD JOINER（零宽，且此时 `visible: false` 不闪现），
+    用一次微型解析把"首次解析"用掉；否则前缀的**每条内部接缝**都会是 6px，并在下一次折叠时整体跳一次。
+    用 `Component.onCompleted` 翻牌 `mdPrefixWarmed` 而与属性赋值顺序解耦（该信号在创建期同步发出、
+    必然晚于所有绑定的首次求值）；**不用 `Qt.callLater`**——本组件会被 ListView 销毁重建，回调可能在
+    对象已销毁后才触发，赋值到已销毁对象会产生 QML 警告（本项目 QML 警告零容忍）。
+    块类型矩阵实测过反例：前缀含 2 条接缝时偏差 +12px。
+- **实测收益**（`tests/probe_chat_scroll.qml`，同一份文件用 `--live=0/1` 切两条渲染路径，单变量；
+  真机 240Hz、`--data=real`、同一批 160 个 token、每 token 一写 = 生产实际节奏）：
+
+  | 流式消息长度 | 整段渲染（改动前） | 分块渲染（改动后） | 提升 |
+  |---|---|---|---|
+  | 2 000 字 | 5.55 ms/次写 | **2.59 ms/次写** | 2.1× |
+  | 8 000 字 | 14.25 ms/次写 | **2.83 ms/次写** | 5.0× |
+  | 20 000 字 | 23.17 ms/次写 | **3.34 ms/次写** | 6.9× |
+
+  → 单次写入代价从"随整段长度线性增长"变成"只随尾段"，**20000 字时也落进一帧预算内**。
+- **验收证据（都是本轮实跑的输出）**：
+  - `tests/probe_stream_visual.qml` 块类型矩阵 **16/16 delta=0.00 OK**：8 个样本（纯段落 / 标题 / 切点两侧的代码块 /
+    列表 / 引用 / 多接缝尾段）× 两项验收 —— A「分块渲染与整段渲染高度逐像素相等」（两侧先对齐到二次解析口径）、
+    B「`streaming` true→false 定稿翻牌不改变高度」（即"回复结束时文字不跳"）。
+  - 叠加对比图（两条路径以 50% 不透明度完全重叠）文字锐利无重影。
+  - 三档长度的端到端 `goContentHeight` 两条路径**完全相同**（3220 / 96828 / 240028）。
+  - `qmllint ChatBubble.qml` 0 条告警；真机启动与**带 167 次真实滚轮注入**的滚动冒烟 stderr 均 **0 字节**。
+- **边界与代价（诚实记录）**：
+  - 折叠瞬间要把新增段落并入前缀 → 需重排整个前缀，代价 ≤ 改动前的单次写入代价（最坏等于今天，不劣化）。
+  - **delegate 创建变重约 +0.15ms/条（≈+10%）**：每条气泡多了一个前缀 `Text`（定稿消息里它只持有一个零宽
+    字符且 `visible: false`，但对象本身仍要构造）。同一探针 30 个 `ChatBubble` 实测：`bench-create-ms`
+    43.1–46.0 → 48.1–49.9、`avg-create-ms` 1.37–1.53 → 1.60–1.66；换算到一次 40 条的会话切换约 +6ms。
+    同批次的 `total-h`（30 条气泡高度和）改动前后**完全一致 = 6360**，再次印证非流式渲染未被改动。
+    若日后这条开销变得要紧，可把前缀 `Text` 挪到 `Loader` 里按需创建（内层 Text 仍需在自身
+    `Component.onCompleted` 里先解析一次零宽占位符，否则会重新掉回上面那个"首次解析 6px"的坑）。
+  - **无空行的超长单段正文不会折叠**（切点只取空行），此时行为与改动前一致（无回归）。真实会话数据里
+    `\n\n` 出现 50 次 / 21040 字，多段落是常态，故正常路径都能吃到收益。
+  - 未动"纯滚动（不生成）"路径：定稿消息的 `text` 本就不重写，滚动不触发任何 markdown 解析（源码层面已确认）。
+- **新增探针（`tests/` 属本地忽略目录）**：`probe_md_split.qml`（切分保真度：归一化链可切分性 + 接缝间距口径，
+  9 档字号实测接缝 = 应用字体 9pt×2/3 = 6px，与正文 `font.pixelSize` 无关）、`probe_stream_visual.qml`（上述 16/16 验收 + 叠加图）、
+  `probe_chat_scroll.qml` 新增 `--live` 开关（在同一份组件源码上切"整段 vs 分块"两条路径做单变量 A/B）。
+- **本轮发现但未修的既有问题**：同一段 markdown，**刚生成完**（气泡 Text 已重解析多次 → 段落边距 0px）与
+  **切换会话重建后**（新建 Text 的首次解析 → 段落边距 6px）段落间距不同，即同一条消息刷新前后会差 6px/段。
+  这是 Qt 把"解析时 doc 默认字体"用于计算段落边距、而 `setDefaultFont` 又晚于解析所导致的既有口径不一致，
+  改动它会引入 delegate 创建期"一帧塌陷"（先渲染零宽占位再撑开），代价大于收益，故本次只记录不修。
+
+## [2026-09-24] 真机帧探针尝试并撤回：Qt QML 里没有 `process` 对象，环境变量开关静默失效
+
+- **目的**：前述滚动排查只能在探针环境里测，想对"用户正在运行的实例"直采帧数据，以区分"代码问题"与"调度/负载抖动"（同参数多次跑，p95 在 8ms 与 40ms 之间跳）。
+- **做法（已全部撤回）**：新增 `FrameProbe.qml`，用 Qt 6.4+ 的 `FrameAnimation`（每渲染帧触发一次，等效 C++ 侧 `QQuickWindow::afterFrameEnd`——QML 的 `Window` 不暴露帧信号）采样相邻帧间隔，每 5 秒汇总 p50/p95/p99/max 并逐条记录 >33ms 慢帧；`MainWindow.qml` 用 `Loader { active: <环境变量判断> }` 条件实例化，输出经 `console.log` → stderr。
+- **失败根因（已实测确认）**：`Loader.active` 写的是
+  `typeof process !== "undefined" && process.env.NOVELAGENT_FRAME_PROBE === "1"` ——
+  而 **Qt 6.8.3 的 QML 里根本没有 `process` 对象**。实测（`qml.exe` 跑诊断脚本）：
+  `typeof process === "undefined"`、`process.env` 抛 `ReferenceError: process is not defined`。
+  于是 `active` **恒为 false、且不产生任何 QML 警告**——正是本项目 AGENTS.md 记录的那类陷阱
+  （"QML 引用未定义 id 时绑定静默失效"）。后果：App 正常启动 12 秒，`probe.log` **0 字节**，探针从未被创建。
+- **另一处踩坑**：最初用 `QtCore` 的 `FileIO` 落盘日志，Qt 6.8.3 报 **"FileIO is not a type"**——
+  查 `qml/QtCore/plugins.qmltypes` 确认该模块只导出 `StandardPaths`，**没有 `FileIO`**；已改为 stderr 输出。
+- **决定与撤回**：用户明确表示不再继续测量，且一个"开了也不知道有没有生效"的诊断开关不应留在代码里，
+  故**完整撤回**：删除 `FrameProbe.qml`、`MainWindow.qml` 的 Loader/Timer 与 `git checkout` 还原、移除
+  `CMakeLists.txt` 的 QML 登记、回退此前为它加的 `AgentPanel.chatContentY` 只读属性。**净改动为零。**
+- **沉淀（后续若要做同类诊断）**：QML **读不到进程环境变量**（无 `process`）；可用的开关通道只有
+  ① 命令行参数（`Qt.application.arguments`，但需从终端启动，窗口子系统程序双击启动看不到 stderr）、
+  ② C++ 侧读环境变量后注册成 context property、③ C++ 侧直接写文件。另：**QML 探针的启用条件必须
+  自己先验证"确实生效"**（本次是打印一行启动标记才发现恒 false），否则测出来的 0 数据会被误读成"指标很好"。
+- **保留**：`tests/probe_scroll.cpp` 探针宿主（`cmake --build --preset release --target probe_scroll`）与
+  `tests/probe_chat_scroll.qml` 等测量工具仍在（`tests/` 属本地忽略目录），它们是前述所有量化结论的来源。
+
+## [2026-09-24] 对话滚动卡顿排查：量化定位到"流式 markdown 重排"，改为 16ms 合并写入（实测降 9 倍）
+
+- **诉求**：中栏对话列表滚轮上下滚动"不够流畅丝滑，有时突然卡一点点"，在「我当前在测试，你随便写点什么小说内容都可以」（`s-multi-4`）这个会话下最明显。
+- **先量后改（新增可复用的滚动性能探针）**：
+  - `tests/probe_scroll.cpp`（C++ 宿主，把 `QQuickWindow::frameSwapped` / `afterFrameEnd` 桥到 QML——QML 的 `Window` 类型不暴露帧信号，此前项目无法在 QML 侧观测帧）；
+  - `tests/probe_chat_scroll.qml`（复刻 `chatView` 的 ListView 配置 + **真实** `ChatBubble`/`ToolCallCard` delegate；支持 `--data=real` 直接喂真实会话数据、`--stream/--streamlen` 造流式、`--reuse/--cache/--dur` 等单变量）；
+  - `tests/probe_real_session.js`（从 `novel.db` 导出的 `s-multi-4` 真实 40 条消息：19 条工具卡片 + 21 条消息）；
+  - `tests/inject_wheel.ps1` + `tests/run_scroll_bench.ps1`（Win32 `mouse_event` 注入**真实滚轮**——Qt6 的滚轮滚动是"一段动画中的移动"，直接改 `contentY` 测不到真实手感）。
+  - 构建：`cmake --build --preset release --target probe_scroll`。
+- **真机环境**（与用户一致）：窗口 1707×1019 逻辑像素（注册表 `savedWidth/savedHeight` + 1.5 DPR）、显示器 **240Hz（一帧预算 4.17ms）**、D3D11 + threaded render loop。
+- **实测数据（纯滚动，真实会话数据）**：mean 4.2–5.6ms、**p50 4.17ms（正好等于 240Hz 一帧）**、p95 8.3ms、GUI 线程 >16ms 阻塞 **0 次**。
+  → **结论：滚动路径本身没有结构性瓶颈**；`Text` 只在 `text` 变化时重排，滚动不会触发重排，delegate 创建在滚动期间 ≈0ms。
+- **根因（量到的、可复现的）**：`ChatBubble` 正文是 `Text.MarkdownText`，Qt 官方性能文档明确 "Calculating text layouts can be a slow operation"，而 MarkdownText **每次 `text` 变化都要重新解析整段并重排全文、没有分块缓存**。逐 token 直接 `setProperty` 时，代价随正文长度线性上升：
+
+  | 可见气泡正文 | 合并=1（每 token 一写，修复前） | 合并=4 | 合并=16（≈一帧） |
+  |---|---|---|---|
+  | 2 000 字 | 1960.8ms / 160 次写 | 718.1ms / 40 次 | **212.4ms / 10 次** |
+  | 8 000 字 | 2519.0ms / 160 次 | 806.1ms / 40 次 | **210.8ms / 10 次** |
+  | 20 000 字 | 4627.5ms / 160 次 | 1222.3ms / 40 次 | **325.1ms / 10 次** |
+
+  （同一批 160 个 token，只有"写进模型的次数"不同；总耗时几乎与写入次数成正比 → 每次写入都要重排整段。单次写入代价：2000 字 12.3ms、8000 字 15.7ms、20000 字 28.9ms，**都远超 4.17ms 的一帧预算**。）
+  → 这就是"时不时突然卡一下"的来源：只要在生成过程中滚动/阅读，每个 token 都可能吃掉 1～7 帧。主流客户端同源做法：Vercel AI SDK 官方 recipe 把"每个 token 重新渲染 markdown"列为必须 memoize 的反模式；VS Code 把流式 markdown 渲染改成 rAF 批量。
+- **修法（`AgentPanel.qml`）**：新增流式写入缓冲——`onTokenReceived`/`onReasoningReceived` 的 delta 先累积进纯 JS 字符串（**不进模型、不触发任何绑定**），由 `flushTimer`（16ms ≈ 一帧）**合并成一次 `setProperty`**；写入频率与渲染帧率解耦且不超过屏幕刷新率。
+  - **语义不变**：`content`/`reasoning` 仍是严格单调追加，最终文本与逐 token 写入完全一致。
+  - **收尾必须先 flush**：`onToolCallStarted` / `onResponseComplete` / `onErrorOccurred` 三处收尾前先 `flushTokens()`——否则残留缓冲会让"有内容"的占位气泡被判为空回复删除（丢字），或让末尾几个 token 追加到已定稿气泡上。
+  - **切会话丢弃**：缓冲带 `bufSessionId`，`onSessionReset` 与 flush 时核对会话，避免旧 token 串写进新会话。
+- **诚实说明（未证实的部分）**：本次**没能复现纯滚动（不生成时）的明显卡顿**——真机探针里纯滚动 jank（>24ms）仅 1–3 帧/约 1200 帧，GUI 线程零阻塞；且 Qt 的 `qt.scenegraph.time.renderloop` 日志本身会把帧时间从 4ms 拖到 50ms（**测量工具污染**，早期"性能崩塌"数据已据此全部剔除）。纯滚动侧的客观事实是"p50 = 4.17ms 正好贴着 240Hz 预算线"，即**几乎没有余量**，任何抖动都会表现为掉帧；这与"偶尔卡一点点"的体感一致，但未定位到具体代码缺陷。
+- **顺带排除（单变量实测，均非原因）**：delegate 创建（滚动期间 ≈0ms）、`newTurn` 的 `chatModel.get()` 查询（**0.6µs/行**）、`add` 过渡（开/关 1 vs 2 个卡顿帧）、Debug vs Release 构建（4.25 vs 4.22ms，无差异）、会话切换（40 条重建仅 11–20ms）、`Text` 未显式指定 `textFormat`（本已显式）、delegate 内 `clip`（本就只在 ListView 上）。`cacheBuffer` 调大是 Qt 官方点名的"只能推迟问题"的手段，本会话（内容不足一屏）本就全量实例化，故未再放大。
+- **验证门**：`./scripts/verify.sh` 全量回归 **33/33 通过**；`cmake --build --preset test` 退出码 0；`qmllint`：**ChatBubble 0 条、ToolCallCard 0 条**；AgentPanel 全文件 40 条（HEAD 基线 37 条，差值来自插入代码造成的行号漂移，**新增节流代码区 160–206 行零告警**；该文件既有告警绝大多数是 `[unqualified]`——C++ 注册的上下文属性 `bridge` 的既有用法，非本次引入）；探针跑真实组件渲染 **0 条 QML 告警**。
+- **遗留（下一步，未做）**：真正消除 markdown 重排要"只让正在生成的那条付代价"——已定稿消息的 `text` 永不变（其排版与 GPU batch 得以长期复用）+ 按块 memoize。这属于较大改动（需要缓存/分块层），本次未动。
+
+## [2026-09-24] 最大化/退出最大化后工具卡片被画到视口外（显式定宽 + 布局管理 = undefined behavior）
+
+- **症状**（用户截图 + 我对其做了逐像素扫描取证）：窗口最大化/退出最大化后，**部分 `ToolCallCard`
+  的折叠条被画到视口左侧之外**——文字被 ListView 的 `clip` 从半个字处切掉。实测（物理像素）：
+  正常行的首个墨迹 x≈399（气泡）/417（思考过程条）/431（工具条），异常行只有 **364~371**，
+  即整条左移约 60px（≈40 逻辑px）；同一屏里气泡行与思考过程行均在正常位置。
+- **根因**：`ToolCallCard` 的折叠条**同时**设了显式 `width: headerRow.implicitWidth + …`，又把它
+  交给 `ColumnLayout` 管理——这正是 QML 官方文档点名的 **undefined behavior**（qmllint 原话：
+  "Detected width on an item that is managed by a layout. This is undefined behavior; use implicitWidth
+  or Layout.preferredWidth instead."）。窗口尺寸变化时 `QQuickLinearLayout` 会重跑布局，此时这类
+  "显式定宽的子项"被摆到了错误的位置，于是出现左移/被裁切。旁证：上一轮把 `ChatBubble` 去布局化
+  （A）之后，**同一屏里 ChatBubble 的两类行（气泡、思考过程条）位置都正常**，只有仍留在
+  `ColumnLayout` 里的工具条出问题——两者差异恰好就是"是否被布局管理器管理"。
+- **修法**：`ToolCallCard` 根节点由 `ColumnLayout` 改为 `Item` + anchors 链（与 `ChatBubble` 同一改法、
+  同一依据——官方性能文档："use anchors rather than bindings for relative positioning within a
+  delegate"）：折叠条 `anchors.left/top` + 显式 `width/height`，展开详情 `anchors.top: barRect.bottom`
+  + `rowGap`，组件总高由 `implicitHeight` 取最后可见行的底边供外层 `Loader` 读取；
+  `import QtQuick.Layouts` 随之删除，本文件已无 `Layout.*`。
+- **验证**：`cmake --build --preset release` 通过；`qmllint ToolCallCard.qml` **0 条（基线 2 条，
+  正是那两条 layout-positioning 告警，随去布局化消失）**；启动后 stderr **0 字节**。
+  **未能自证**：我这边启动的实例停在首启界面（另一个实例占着项目/DB，`tryAutoStart()` 失败），
+  无法复现"最大化/退出最大化"这一操作路径，因此**修复效果需用户在会话里最大化/还原后确认**。
+  若仍复现，下一顺位嫌疑是 `ListView.reuseItems: true`（官方文档提醒池化项仍存活、需谨慎），
+  其次才是 `cacheBuffer`。
+
+## [2026-09-24] 滚动优化（三）：delegate 去布局化（A）+ 视口定位去手工 contentY（B）
+
+**A. `ChatBubble` 从 `ColumnLayout` 改为 `Item` + anchors 链**
+
+- 依据（官方 Qt Quick 性能文档「Views」）："The fewer elements that are in a delegate, the faster
+  they can be created… Keep the number of bindings in a delegate to a minimum; in particular,
+  use anchors rather than bindings for relative positioning within a delegate"。项目规则同样允许
+  "delegate 行内定位"用 anchors。
+- 改法：三行（思考折叠条 / 思考正文 / 气泡）不再由布局管理器排布，改为
+  `anchors.top` 链 + `topMargin`（`root.rowAboveBody` / `root.rowAboveBubble` 两个只读属性给出
+  "上一可见行"），并由 `implicitHeight` 取最后可见行的底边供外层 `Loader` 读取（原由 ColumnLayout
+  的隐式高度承担）；气泡对齐改为"统一锚右边"——助手气泡宽度 = 整行减左右各一个 `bubbleMargin`，
+  左边缘因此自然落在缩进处；用户气泡仍按 `bubbleText.contentWidth` 收紧（右对齐）。
+- 收益：每个 delegate 少一个 `QQuickLinearLayout` + 若干 `Layout.*` 附加对象，且不再每次文本变化
+  （流式逐 token、面板宽度变化）都跑一整轮布局。`import QtQuick.Layouts` 随之删除，本文件已无
+  `Layout.*` 用法。
+
+**B. 视口定位不再手写 `contentY`（ListView 的上下留白改为 header/footer 占位）**
+
+- 依据：官方 ListView 文档明确 "**It is not recommended to use contentX or contentY** to position
+  the view at a particular index… the actual start of the view can vary based on the size of the
+  delegates."；而 margin 按官方定义是"内容之外**额外**保留的空间"（reserved in addition to
+  contentWidth/Height）——它不参与 `positionViewAtEnd()` 的落点，却参与 ListView 自身的滚动钳制
+  （真机实测差 16px），这正是原先必须手写 `contentY += bottomMargin` 与 `contentY = -topMargin`
+  的原因。
+- 改法：`topMargin: 0` / `bottomMargin: 0`，改用 `header` / `footer` 各 16px（`Theme.gapLg`）占位
+  ——留白成为内容的一部分，参与 `contentHeight` 与定位计算；`snapToEnd()` 里两处手工 contentY
+  删除，只剩官方 API：`positionViewAtEnd()`（内容高于视口）/ `positionViewAtBeginning()`（不足一屏）。
+  左右仍用 margin（水平方向不参与竖直钳制与定位）。
+- 净效果：留白观感不变（首条上方 16px、末条下方 16px），但"贴底落点"与"ListView 钳制末端"由构造
+  保证一致，不再依赖那两行手工补偿；代码里已无任何手工 `contentY`。
+
+**验证**：`cmake --build --preset release` 通过；重启后 stderr **0 字节**（无 QML 警告、无绑定环）。
+`qmllint`：`ChatBubble.qml` **0 条（基线 2 条，原 2 条正是 `Layout` 相关告警，随去布局化一并消失）**；
+`AgentPanel.qml` **38 = 本轮改动前 38**（零新增）。
+**未覆盖**：本次启动的实例停在首启界面（未打开项目，疑因另一个实例占着同一项目/DB，`tryAutoStart()`
+失败），因此**新 delegate 与 header/footer 定位的渲染路径没有被这次 stderr 检查覆盖**，需在会话中
+肉眼确认（气泡宽度/对齐、行间距、贴底精确性、短会话首条上方留白、复制按钮）。
+
+## [2026-09-24] 滚动优化（二）：按官方 delegate 性能建议给消息 delegate 瘦身
+
+- **背景**：上一轮加 `cacheBuffer` / `reuseItems` 后用户仍反馈"有点卡，且有时滑得多有时滑得少"。
+  按要求回到官方文档找"这种情况的推荐实现"，两条关键原文：
+  1. 变高 delegate 的估算问题（ListView「Variable Delegate Size and Section Labels」）：
+     "ListView estimates its content size from allocated items (usually only the visible items,
+     the rest are assumed to be of similar size), and variable delegate sizes prevent an accurate
+     estimation. To reduce this effect, cacheBuffer can be set to higher values…"
+     → 滚动距离忽多忽少属于**官方已承认的固有估算误差**，文档给的缓解手段只有调大 cacheBuffer。
+  2. delegate 构造代价（Qt Quick 性能文档「Views」）："View delegates should be kept as simple as
+     possible… Any additional functionality which is not immediately required … should not be
+     created until needed"；"The fewer elements that are in a delegate, the faster they can be
+     created, and thus the faster the view can be scrolled"；"Keep the number of bindings in a
+     delegate to a minimum; in particular, use anchors rather than bindings for relative
+     positioning within a delegate"；且 ListView 文档明确 "setting a cacheBuffer will only
+     postpone issues caused by slow-loading delegates, **it is not a solution**"。
+     → 卡顿的真解是**把 delegate 变轻**，不是继续加缓存。
+- **修法（本轮）**：
+  1. **「复制」不再每条气泡各带一个隐藏 TextEdit**（delegate 里最重的一个额外 Item：每实例一份
+     QTextDocument + 光标）。`ChatBubble` 新增 `signal copyRequested(string text)` 只上报，
+     `AgentPanel` 持有一个面板级共享 `TextEdit`（`copyToClipboard()`）执行复制。
+  2. **去掉流式"光标呼吸"动画**：原先 `SequentialAnimation on color { running: streaming }` 每帧改
+     `Text.color` → 每帧重绘整段正文（助手回复可达数千字符），且每个 delegate 常驻 3 个动画对象。
+     改为静态光标 "▍"，流式期间不再有整段重绘。
+- **试过又退回**：把「思考过程」整块（折叠条 + 展开正文）包进 `Loader.active` 惰性创建。功能可行，
+  但内联 `Component` 让 `ChatBubble.qml` 的 qmllint 从 2 条涨到 10 条（1×missing-property +
+  7×unqualified）——要做得干净得拆成独立 qml 文件 + 改 qrc 清单，收益（只对无 reasoning 的条目省
+  7 个 Item）不值这个面积，故退回，原样内联。
+- **验证**：`cmake --build --preset release` 通过；重启后 stderr **0 字节**（运行期无 QML 警告）。
+  `qmllint`：`ChatBubble.qml` **2 = 基线 2**（零新增）；`AgentPanel.qml` **38 vs 基线 35** ——
+  与 HEAD 逐类对比为 `unqualified` 32→35（前一轮 reasoningExpanded 2 条 + 本轮复制接线 1 条）、
+  `layout-positioning` 2→2、`missing-property` 1→1，**没有新增警告类别**。滚动/复制按钮
+  由用户真机手测。
+
+## [2026-09-24] 对话区滚轮滚动一卡一卡 + 首次上翻仍只挪一点点（cacheBuffer / reuseItems）
+
+- **背景**：上一条"用户手势中不重新锚定"的守卫**没有**消除"贴底后第一次上翻只挪一点点"。
+  复查 Qt 源码后确认：该守卫只挡住了**我们自己**写的 contentY（`snapToEnd`），而剩下的那次
+  短滚动来自 Qt 自身——ListView 在滚轮移动中重填（`QQuickListView::viewportMoved` →
+  `refillOrLayout()`）导致估算高度变化 → `contentHeight` 变化 → Flickable 的
+  `setContentHeight()` 走 `else if (!pressed && vData.fixingUp)` 分支
+  （滚轮移动期间 `data.fixingUp` 恒为 true）→ `fixupMode = ExtentChanged` + `fixupY()` →
+  `QQuickFlickablePrivate::fixup()` 在"位置越过新末端"时 `resetTimeline()` +
+  `adjustContentPos(data, maxExtent)`，把这次滚动动画替换成一次回到新底部的动画。
+  也就是说：**滚动量被"估算高度修正"吃掉了**，而这正是官方文档点名的变高 delegate 估算问题。
+- **用户同时反馈**：上下滚动不丝滑，长正文会话（「我当前在测试，你随便写点什么小说内容都可以」）
+  尤其"一卡一卡"。
+- **根因（两个症状同源）**：会话气泡是**又高又贵**的 delegate——单条可达数百 px，且新建一条要跑
+  三遍正则归一化（`normalizeKeycapEmoji` / `mdWithHardBreaks` / `fixCjkStrong`，长正文数千字符）
+  + 一次 markdown 排版（`Text.MarkdownText`）+ `ColumnLayout`/`Loader`/隐藏 `TextEdit` 构造；
+  而 `cacheBuffer` 默认仅 320px（≈半屏），于是每次滚动都在成批新建/销毁 delegate（掉帧），
+  同时视口外条目一直只是 `averageSize` 估算值（滚动时才被真实高度替换 → 高度/原点漂移 → 末端修正）。
+- **修法**（`AgentPanel.qml` 的 `ListView`，两行 + 注释）：
+  1. `cacheBuffer: Math.max(600, chatView.height)`：前后各缓存约一屏。官方对变高 delegate 的
+     建议手段；短会话（内容高度 < 两屏）干脆全实例化，不再有估算。
+  2. `reuseItems: true`：delegate 复用，滚动不再反复重建这条高代价的 delegate。本 delegate 全走
+     `required property` + 绑定，没有 `Component.onCompleted` 之类构造期状态，满足官方复用前提。
+- **验证**：`cmake --build --preset release` 通过；`qmllint AgentPanel.qml` 37 条 = 改动前 37 条
+  （零新增）；重启后 stderr **0 字节**（运行期无 QML 警告）。**滚动是否变丝滑、首次上翻是否恢复正常，
+  由用户真机手测确认。**
+
+## [2026-09-24] 贴底后第一次滚轮上翻只挪一点点（锚定掐断了用户滚动动画）
+
+- **症状**：切到某会话后视口落在消息底部，此时滚轮**第一次**上翻只挪很小一段；之后继续上翻正常。
+- **根因**（`AgentPanel.qml` 的 `snapToEnd()` 在用户手势进行中被重入触发，把这次滚动掐断）：
+  1. Qt6 的滚轮滚动是**一段动画中的移动**：Flickable 滚轮分支走
+     `timeline.moveBy(vData.move, scrollPixel, OutExpo, 3*fixupDuration/4)`（默认 ≈300ms），
+     同时 `vData.fixingUp = true`、`movementStarting()` 置 `moving = true`
+     （`qquickflickable.cpp` 滚轮处理，`wheelDeceleration` 默认 15000 > 其内部上限 → 走这段直移分支）。
+  2. **程序化写 `contentY` 会掐断正在进行的移动**：`QQuickFlickable::setContentY()` 一进来就是
+     `if (isMoving() || isFlicking()) movementEnding(false, true);` + `resetTimeline(...)`。
+     而 `snapToEnd()` 的两条分支都会写 `contentY`（`positionViewAtEnd()` 与 `contentY += bottomMargin`），
+     所以它在手势中被调用一次 = 用户这次滚动当场结束（只剩已完成的头几像素）。
+  3. **它确实会在第一帧被重入触发**：ListView 的重填发生在 contentItem 几何变化触发的
+     `viewportMoved()` 里（`QQuickListView::viewportMoved` → `refillOrLayout()`，重填会创建
+     首屏外 delegate、`updateAverageSize()` 重算平均项高 → `contentHeight` 变化 →
+     发 `contentHeightChanged`）；而 `itemGeometryChanged` 的顺序是
+     **先 `viewportMoved()`，后 `emit contentYChanged()`**（`qquickflickable.cpp`）。
+     于是滚轮第一帧的时序是：内容上移 → 重填 → `contentHeightChanged` →（我们的）
+     `snapToEnd()` 锚回底部 + 掐断动画 → 才轮到 `onContentYChanged` 去把 `userAtBottom` 置 false。
+     第一帧的重填之所以动静特别大，是因为刚切完会话时首屏外条目全是未创建的估计值
+     （此前实测：9 条会话 `contentHeight` 估计 356px vs 稳定后 1360px）；第二帧起新条目已建好、
+     `contentHeight` 不再变，于是不再触发锚定 → 恢复正常滚动。这也解释了"只有第一次短"。
+- **修法**（`AgentPanel.qml`，1 行 + 注释）：`snapToEnd()` 增加
+  `if (chatView.moving || chatView.flicking) return` —— 用户手势进行中绝不重新锚定。
+  这是 Qt 自身的既有约定：Flickable 的内容尺寸变化修正同样有 `!pressed && !moving` 守卫
+  （`setContentHeight`），ListView 的 `viewportMoved` 也自带 `inViewportMoved` 防重入。
+  会话切换等程序化定位时 `moving/flicking` 为假，原有锚定行为不变。
+- **验证**：`cmake --build --preset release` 通过；重启后 stderr **0 字节**（运行期无 QML 警告）；
+  `qmllint AgentPanel.qml` 37 条 = 改动前 37 条（零新增）。**真机首次滚轮上翻的手感由用户手测确认。**
+- **补记（同日）**：用户手测反馈该守卫**未**消除症状。守卫本身仍是对的（不该在用户手势中写
+  `contentY`），但真因在 Qt 侧——估算高度变化触发的末端修正，见上一节 cacheBuffer / reuseItems。
+
+## [2026-09-24] 消息列表审查发现的两处缺陷修复
+
+- **① 出错时的"空回复占位"不清理**（`AgentPanel.onErrorOccurred`）：发送时先 append 一个
+  streaming 空占位气泡，若在第一个 token 之前就失败（会话不存在、网络/接口错误等），
+  这里只把 `streaming` 置 `false` 再追加 `⚠` 提示，**不删这个空占位**；
+  而 `onResponseComplete` / `onToolCallStarted` 都有"空则 `remove()`"的分支 → 三条收尾路径
+  口径不一致。残留条目不渲染气泡（ChatBubble 的 `visible` 依赖 content/streaming），
+  但仍在列表里占位：`newTurn` 为真时会白留一个 `gapMd`(12px) 空隙。
+  改为与另两条路径同口径：内容与 reasoning 都为空 → 直接 `remove()`。
+- **② 思考过程展开态不落模型**（`ChatBubble` + `AgentPanel`）：工具卡片早就把 `toolExpanded`
+  存进 model 条目（理由：delegate 滚出视口会被销毁、组件内属性丢失），而思考过程的
+  `reasoningExpanded` 只是组件内属性 → **展开后滚走再滚回来会自己折叠**。
+  改为同一口径：`ChatBubble` 新增 `expandedToggled` 信号（自身只渲染 + 上报点击，不再就地改状态），
+  `AgentPanel` 的 delegate 新增 `required property bool reasoningExpanded`，6 个
+  `append()` 点全部补上该字段，点击经 `chatModel.setProperty` 写回。
+- **验证**：`cmake --build --preset release` 通过；重启后 stderr **0 字节**（运行期无 QML 警告）。
+  `qmllint`：`ChatBubble.qml` 2 条 = HEAD 基线 2 条（零新增）；`AgentPanel.qml` **37 条 vs 基线 35 条**——
+  多出的 2 条是 `[unqualified]`（`reasoningExpanded: delegateRoot.…` 与守卫里的 `delegateRoot.index`），
+  与文件里既有的 12 条同类警告同源（嵌套 `Component` 里引用外层 id，除非给全文件加
+  `pragma ComponentBehavior: Bound` 并逐个限定 `bridge`/`chatModel` 访问，否则无法消除），
+  是本模式的固有代价，不是新引入的问题类型；**运行期 QML 警告仍为 0 条**（项目验收标准）。
+
+## [2026-09-24] 切换会话后对话区停在最旧消息（视口跟随开关跨会话粘滞）
+
+- **症状**：切换会话时，"有时候显示最旧的消息、有时候显示最新的消息"，期望每次都在最新。
+- **根因**（两个机制叠加，缺一不可）：
+  1. **整表换 model 会把视口重置到内容开头**。`reloadHistory()` 用"换新 ListModel"替代
+     `clear()+append()`（为避免陈旧 delegate，见该属性处注释），而 ListView 在模型重置时
+     把视口拉回起点。qml.exe 最小复现（临时探针，验证后已删除）：
+     `contentY` 由切换前的 465 直接回到 **-16（= -topMargin）**，可见条目 `0..4`，
+     **末条甚至尚未创建**。
+  2. **`chatView.userAtBottom` 跨会话粘滞**。该开关只在用户手势
+     （`moving || flicking`）时被更新，一旦在某个会话里上翻过就永久为 `false`；
+     而 `reloadHistory()` 末尾的 `snapToEnd()` 第一行就是
+     `if (!chatView.userAtBottom) return` → 锚定被直接跳过，且此后 `onContentHeightChanged`
+     等事件触发的重锚定同样被挡，视口会**一直**停在开头（探针实测 2.3s 内无任何自愈）。
+  - 于是"是否停在最旧消息"取决于"切会话前有没有上翻过"——正是用户看到的"有时好有时坏"。
+- **修法**（`AgentPanel.qml`，1 行 + 注释）：`reloadHistory()` 在换 model **之前**把
+  `chatView.userAtBottom` 复位为 `true`——换会话/换项目 = 看另一段对话，
+  "跟随到底部"这个视图状态必须随会话一起复位，而不是延续上一会话的手势状态。
+- **验证**（都在本轮跑过）：
+  - 探针复现：粘滞 `false` 时切表 → `contentY=-16`、可见 `0..4`、`atYBeginning=true`
+    （= 用户症状）；候选修复路径切表 → 可见 `14..17/17`（末条可见）、末条底边距视口下沿
+    `-16px`（= 正好一个 `bottomMargin` 的留白）、`atYEnd=true`。
+  - 稳定性：修复后连续 6 次重复 `snapToEnd()`，`contentY`/`contentHeight`/落点**逐次完全一致**
+    （幂等、无累计漂移）；2.3s 内无回弹。
+  - 短会话（内容不足一屏）切表 → `contentY=-16`、`atYBeginning=atYEnd=true`、全部可见（回顶正确）。
+  - 真机（临时插入探针日志测得，日志已移除）：`reloadHistory()` 后 700ms 内 `contentHeight`
+    由 356 长到 1360，视口收敛到 `atYEnd=true`、可见条目 `4..8`（9 条中的**末条可见**）——
+    确认"异步创建 delegate + 事件驱动重锚定"这条链路确实落到真正底部。
+  - **真机切会话的端到端确认交由用户手测**：本轮模拟鼠标手势未能成功驱动侧栏切换会话，
+    没有真实点击证据的部分不声称已验证。
+  - `qmllint` AgentPanel.qml **35 条 = HEAD 基线 35 条（零新增）**；
+    `cmake --build --preset release` 通过；重启后 stderr 0 字节。
+
+## [2026-09-24] AI 回复气泡改为占满对话列表整行宽度
+
+- **诉求**：把 AI 回复气泡的宽度拉到对话列表框的宽度（左右仍需留间距）。
+- **原实现**：助手/用户气泡共用一个 `Layout.maximumWidth: root.width * 0.82`，
+  助手气泡还按正文 `contentWidth` 收紧，所以长消息只占 82%，右侧留出约 18% 死白。
+- **改动**（`ChatBubble.qml`，抽出两个语义化档位，仍全部取 Theme 档位）：
+  - 新增 `bubbleMargin: Theme.gapSm` —— 气泡相对列表行的左右缩进（使气泡左边缘与
+    「思考过程 / 工具调用」行对齐，那两行也是 `gapSm` 缩进）。
+  - 新增 `bubbleLimit`：助手 = `width - bubbleMargin * 2`（**占满整行**）；
+    用户 = `width * 0.82`（**保持原样**，短消息仍按文本收紧、右对齐）。
+  - `Layout.maximumWidth` / `implicitWidth` / `bubbleText.maxWidth` 全部改为引用
+    `bubbleLimit`，`Layout.rightMargin` 助手侧由 0 改为 `bubbleMargin`（左右对称）。
+  - 实际边距：列表行本身已有 `gapLg`(16) 左右 margin，再加 `gapSm`(8) → 气泡距对话面板左右各 24px。
+  - **思考过程展开后的正文框同步加宽**：`Layout.preferredWidth` 由 `width * 0.82` 改为
+    `root.bubbleLimit`，并补上右侧 `bubbleMargin`，使其左右边缘与助手气泡对齐。
+- **验证**：`qmllint` **2 条 = HEAD 基线 2 条（零新增）**；`cmake --build --preset release` 通过；
+  重启后 stderr **0 字节**；实机目视：两个助手气泡均占满整行、左右对称，左边缘与
+  「思考过程 / 工具调用」行对齐；右上角用户气泡「你好」仍为贴文本的小气泡（未受影响）。
+
 ## [2026-09-24] 中文语境的 ** 加粗修复（CommonMark flanking 规则对 CJK 不友好）
 
 - **症状**：AI 消息里 `氛围是**悬疑 / 超自然（或魔幻现实）**的路子` 星号原样外露、没加粗；

@@ -69,6 +69,10 @@ QmlBridge::QmlBridge(QObject* parent)
     , indexing_(std::make_shared<std::atomic<bool>>(false))
 {
     config_ = AppConfig::load();
+    // 配置来源必须"自证"：历史上这个坑（工作目录里的 config.json 静默顶掉全局配置，导致启动后
+    // 既不恢复最近项目也不报错）难查，就是因为没有任何地方说明"实际用了哪份配置"。这行固定打印。
+    spdlog::info("[config] 使用配置文件: {}",
+                 config_.source_path.empty() ? AppConfig::defaultPath() : config_.source_path);
 
     // 环境变量优先：DEEPSEEK_API_KEY / KIMI_API_KEY / CLAUDE_API_KEY
     // 覆盖配置文件中的值（仅运行时生效；用户在设置里保存才会落盘）
@@ -211,6 +215,12 @@ QString QmlBridge::projectPath() const {
     if (app_ && app_->projectAccess())
         return QString::fromStdString(app_->projectAccess()->path());
     return {};
+}
+
+QString QmlBridge::configPath() const {
+    // 尚未落盘时给出"保存会写到哪"，避免界面上显示空白让人以为没配置来源
+    return QString::fromStdString(config_.source_path.empty() ? AppConfig::defaultPath()
+                                                              : config_.source_path);
 }
 
 QString QmlBridge::modelName() const {
@@ -1424,21 +1434,40 @@ bool QmlBridge::tryAutoStart() {
     if (!prov || prov->api_key.empty() || isPlaceholderKey(prov->api_key))
         return false;
 
-    // 上次项目仍有效则自动恢复；无效则以“无项目”状态启动
+    // 上次项目仍有效则自动恢复；无效则**明确告知**后以“无项目”状态启动。
+    // 此前这里是静默退化：项目路径失效时既不恢复也不提示，界面表现与"从没打开过项目"完全一样
+    //（排查时只能靠反复换工作目录做对照才定位到，见 CHANGELOG）。缺 last_project_path（全新安装）
+    // 属正常情形，不提示。
     std::shared_ptr<Project> project;
+    QString restore_notice;
     if (!config_.last_project_path.empty()) {
         ProjectManager pm;
         if (pm.isValid(config_.last_project_path)) {
             Project p = pm.open(config_.last_project_path);
-            if (!p.title.empty())
+            if (!p.title.empty()) {
                 project = std::make_shared<Project>(std::move(p));
+            } else {
+                restore_notice = QStringLiteral("上次的项目读不到标题，已按无项目启动：")
+                                 + QString::fromStdString(config_.last_project_path);
+            }
+        } else {
+            restore_notice = QStringLiteral("上次的项目不存在或打不开，已按无项目启动：")
+                             + QString::fromStdString(config_.last_project_path);
         }
+        if (!restore_notice.isEmpty())
+            spdlog::warn("[QmlBridge] {}", restore_notice.toStdString());
     }
 
     QString err;
     if (!rebuildApp(config_.default_provider, std::move(project), &err)) {
         spdlog::warn("[QmlBridge] 自动启动失败: {}", err.toStdString());
         return false;
+    }
+
+    // 提示放在 rebuildApp 之后：它内部会把状态栏置为“就绪”，否则这条刚写的提示会被立刻覆盖。
+    if (!restore_notice.isEmpty()) {
+        setStatus(restore_notice);
+        emit uiErrorOccurred(restore_notice);
     }
     return true;
 }

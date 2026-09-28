@@ -5,22 +5,44 @@
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <cstdlib>
+#include <filesystem>
 
 using json = nlohmann::json;
 
-AppConfig AppConfig::load() {
-    // 优先从当前目录加载 config.json，不存在则回退到 ~/.novelagent/config.json
-    std::string localPath = kDefaultConfigFile; // 当前目录
-    if (utils::file::exists(localPath)) {
-        return loadFromFile(localPath);
-    }
+namespace {
 
-    std::string globalPath = utils::file::joinPath(utils::file::configDir(), kDefaultConfigFile);
+// 把（可能是相对的）路径绝对化。
+// 【为什么必须绝对化】save() 会把配置回写到 source_path；若记住的是相对路径，写回位置就会随
+// 启动时的工作目录漂移——即"在哪启动就把设置/密钥写到哪"。实测过：以仓库根为工作目录启动时
+// 加载的是 `<repo>/config.json`，此后任何设置保存都写进仓库里那份文件，而不是全局配置。
+// 【为什么走 std::filesystem::path】本工具链（MinGW libstdc++）对窄字符串按 UTF-8 ↔ 宽字符
+// 转换，中文路径安全；而 std::ifstream 的窄构造按系统 ANSI 解释路径、中文路径会打不开
+//（见 AGENTS.md 记录）。
+std::string absolutePath(const std::string& path) {
+    if (path.empty()) return path;
+    std::error_code ec;
+    const std::filesystem::path abs = std::filesystem::absolute(std::filesystem::path(path), ec);
+    if (ec) return path;   // 绝对化失败保持原样：诊断用途不得改变主流程
+    return abs.string();
+}
+
+} // namespace
+
+AppConfig AppConfig::load() {
+    // 配置来源必须**确定**：只认唯一默认位置 ~/.novelagent/config.json，既不依赖进程的当前工作目录，
+    // 也不提供"另一份配置"的额外入口——多一个来源就多一个"配置到底从哪来"的答案，而来源不唯一正是本模块
+    // 踩过的坑：旧实现是"当前目录有 config.json 就用它"，于是工作目录里任何一个同名文件都会**静默**顶掉
+    // 用户配置——实测把一份旧的 config.json 放在启动目录（仓库根）会导致 last_project_path 丢失：
+    // 启动后既不恢复最近项目、也不报错，表现为"没有过去的会话"。
+    // （设计取舍：曾加过环境变量 NOVELAGENT_CONFIG 作为"显式覆盖"出口、以及"检测到工作目录下有
+    //   config.json 就警告一句"的迁移提示，评审后均移除——项目尚未发布，不存在需要迁移的存量用户，
+    //   两者都是假想需求；确需用另一份配置时手工替换该文件即可。）
+    const std::string globalPath = utils::file::joinPath(utils::file::configDir(), kDefaultConfigFile);
     if (utils::file::exists(globalPath)) {
         return loadFromFile(globalPath);
     }
 
-    // 配置文件不存在时返回空配置，由调用方继续尝试环境变量。
+    // 配置文件不存在时返回空配置，由调用方继续尝试环境变量（API key）等其他来源。
     return {};
 }
 
@@ -50,7 +72,7 @@ AppConfig AppConfig::loadFromFile(const std::string& path) {
         // 配置损坏时不让程序崩溃，记录警告后继续使用空配置。
         spdlog::warn("Failed to load config from {}: {}", path, e.what());
     }
-    config.source_path = path;
+    config.source_path = absolutePath(path);   // 绝对化：save() 回写位置不得随工作目录漂移
     return config;
 }
 

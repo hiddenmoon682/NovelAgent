@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 
 // ToolCallCard — 工具调用折叠条：与"思考过程"卡片逐参数同构（对照
 // ChatBubble.qml:57-125）：纯文本标题条 + ▸/▾ + 点击展开，展开区为
@@ -8,7 +7,16 @@ import QtQuick.Layouts
 //（"工具调用 · write_chapter"），展开正文只含状态/参数/结果。
 // status: "running" | "ok" | "error"；展开态由模型条目 toolExpanded 驱动
 // （防 delegate 回收复用后状态错乱），经 expandedToggled 回写。
-ColumnLayout {
+//
+// 【2026-09-24】根节点由 ColumnLayout 改为 Item + anchors 链，与 ChatBubble 同一改法：
+// 原先折叠条同时设了显式 `width` 又被 ColumnLayout 管理，这是 QML 官方明确点名的
+// undefined behavior（qmllint: "Detected width on an item that is managed by a layout…
+// use implicitWidth or Layout.preferredWidth instead"）。真机症状：**窗口最大化/退出最大化
+// 之后**，部分工具卡片的折叠条被画到视口左侧之外（左侧被 ListView 的 clip 切掉半个字），
+// 即 QQuickLinearLayout 在重新布局时把"显式定宽的子项"摆到了错误的位置。
+// 改法同 ChatBubble：整块改用 anchors 定位（官方性能文档对 delegate 的建议也是
+// "use anchors rather than bindings for relative positioning within a delegate"）。
+Item {
     id: root
 
     property string toolName: ""
@@ -20,7 +28,12 @@ ColumnLayout {
     signal expandedToggled
 
     width: parent ? parent.width : 0
-    spacing: Theme.gapXs
+    // 行间距（原 ColumnLayout 的 spacing: gapXs）
+    readonly property real rowGap: Theme.gapXs
+    // 组件总高：展开时取详情框底边，否则取折叠条底边（供外层 Loader 读取；
+    // 原由 ColumnLayout 的隐式高度承担）
+    implicitHeight: detailRect.visible ? detailRect.y + detailRect.height
+                                       : barRect.y + barRect.height
 
     // JSON 原文 → 美化缩进；解析失败（非 JSON 文本）原样返回。
     function prettyJson(src) {
@@ -47,10 +60,12 @@ ColumnLayout {
     }
 
     // ── 折叠条（与"思考过程"同参：标题 textFaint sizeCaption + ▸/▾；
-    //    height24 / radiusSm / hover 渐变 / AlignLeft / leftMargin gapSm）──
+    //    height24 / radiusSm / hover 渐变 / 左对齐 / 左缩进 gapSm）──
     Rectangle {
-        Layout.alignment: Qt.AlignLeft
-        Layout.leftMargin: Theme.gapSm
+        id: barRect
+        anchors.left: parent.left
+        anchors.leftMargin: Theme.gapSm
+        anchors.top: parent.top
         width: headerRow.implicitWidth + Theme.gapMd * 2
         height: 24
         radius: Theme.radiusSm
@@ -90,10 +105,14 @@ ColumnLayout {
 
     // ── 展开详情（与"思考过程"展开区同构：左竖线 + 单一 Text 弱化小字）──
     Rectangle {
+        id: detailRect
         visible: root.expanded
-        Layout.leftMargin: Theme.gapSm
-        Layout.preferredWidth: root.width * 0.82
-        implicitHeight: detailTextItem.implicitHeight + Theme.gapSm * 2
+        anchors.top: barRect.bottom
+        anchors.topMargin: root.rowGap
+        anchors.left: parent.left
+        anchors.leftMargin: Theme.gapSm
+        width: root.width * 0.82
+        height: detailTextItem.implicitHeight + Theme.gapSm * 2
         color: "transparent"
 
         Rectangle {

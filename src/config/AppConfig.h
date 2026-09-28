@@ -123,21 +123,23 @@ struct AppConfig {
     std::vector<std::string> recent_projects;  // 最近打开过的项目目录（最近在前、去重、不设上限）
     bool verbose = false;           // 调试日志开关
 
-    // 运行时记录本配置的加载来源文件，不参与序列化。
-    // save() 无参版本回写到该路径，避免“从 A 加载却存到 B”。
+    // 运行时记录本配置的加载来源文件（**绝对路径**），不参与序列化。
+    // save() 无参版本回写到该路径，避免“从 A 加载却存到 B”；
+    // 绝对化是为了让"写回哪"与启动时的工作目录无关。
     std::string source_path;
 
-    // 从默认位置加载配置：优先当前目录 config.json，
-    // 不存在则回退 ~/.novelagent/config.json。
+    // 从**唯一**的确定位置加载配置：~/.novelagent/config.json。
+    // **不**看当前工作目录下的 config.json——那会让工作目录里任何一个同名文件静默顶掉用户配置
+    //（历史 bug：启动后不恢复最近项目且无任何提示）。也不提供环境变量等额外覆盖入口：
+    // 配置来源唯一，才不会出现"到底用了哪份配置"的排查成本。
     //
-    // @return 加载到的配置；两处均不存在时返回默认构造的空配置，
-    //         由调用方继续尝试环境变量等其他来源。
+    // @return 加载到的配置；文件不存在时返回默认构造的空配置，由调用方继续尝试环境变量等其他来源。
     static AppConfig load();
 
     // 从指定路径加载配置。
     //
-    // @param path 配置文件路径；无论解析成败与否都记录到 source_path
-    //             供 save() 回写。
+    // @param path 配置文件路径；无论解析成败与否都把**绝对化后**的路径记录到
+    //             source_path 供 save() 回写。
     // @return 加载到的配置；解析失败时记录警告并返回空配置（不抛异常）。
     static AppConfig loadFromFile(const std::string& path);
 

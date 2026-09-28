@@ -21,6 +21,16 @@ int runQmlApp(int argc, char** argv) {
     // 完全可预测，不会像 Material 那样动态推 topPadding（负值致占位符/光标飞出框外）或用偏浅默认遮罩。
     qputenv("QT_QUICK_CONTROLS_STYLE", "Fusion");
 
+    // 滚轮手感：启用 Qt 的"滚轮连续减速"档位（见 CHANGELOG 2026-09-28）。
+    // 背景：Qt 6.6 起滚轮默认走"位移正比于 angleDelta"的无加速分支（wheelDeceleration=15000），
+    // 且**每格** resetTimeline 重开一段 300ms OutExpo —— 逐格丢速度，体感"一顿一顿、停手后还发飘"。
+    // Qt 为这种诉求留了 QT_QUICK_FLICKABLE_WHEEL_DECELERATION（1..14999 走连续减速分支，默认 15000=关闭）；
+    // 该值在**每个 Flickable 构造时**读取，故必须在 QML 引擎加载前设好。
+    // 取值手感（单格动画时长 ≈ 12/√a 秒）：10000≈120ms（最跟手）/ 5000≈170ms（Qt 6.6 前旧默认）
+    // / 2000≈268ms（惯性明显）。这里取 5000；**显式设置环境变量者优先**（便于不改代码试手感）。
+    if (qEnvironmentVariableIsEmpty("QT_QUICK_FLICKABLE_WHEEL_DECELERATION"))
+        qputenv("QT_QUICK_FLICKABLE_WHEEL_DECELERATION", "5000");
+
     QGuiApplication app(argc, argv);
 
     // Fusion 无 Material.theme:Dark，改用应用级 QPalette 表达深色主题与高亮色：

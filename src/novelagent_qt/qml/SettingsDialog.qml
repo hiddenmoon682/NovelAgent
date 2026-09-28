@@ -27,9 +27,12 @@ Popup {
         border.color: Theme.divider
     }
 
+    // 实际生效的配置文件路径：只在此取一次 bridge.configPath，供下方「调试」页显示。
+    // 单点取用是为了把新增的 [unqualified] 告警压到最少（本文件对 bridge 的既有用法已属该告警族）。
+    readonly property string cfgPath: bridge.configPath
+
     // 打开并定位到指定页：0=模型 1=项目 2=调试
-    function openAt(pageIndex) {
-        railRepeater.model = null   // 强制刷新选中态
+    function openAt(pageIndex) {        railRepeater.model = null   // 强制刷新选中态
         railRepeater.model = ["模型", "项目", "调试"]
         railRow.currentIndex = pageIndex
         open()
@@ -721,6 +724,22 @@ Popup {
                             }
                         }
                         Item { Layout.fillHeight: true }
+                        // 配置文件来源：把"实际生效的是哪份配置"摆在明面上。
+                        // 起因（历史 bug）：配置加载曾优先采用**工作目录**下的 config.json，于是从不同目录
+                        // 启动会静默换到另一份配置，表现为"设置改了没反应 / 没有过去的会话"且无任何提示。
+                        // 现在来源唯一（~/.novelagent/config.json），显示出来便于一眼确认。
+                        Label {
+                            Layout.fillWidth: true
+                            text: "配置文件：" + root.cfgPath
+                            font.family: Theme.fontUi
+                            font.pixelSize: Theme.sizeCaption
+                            color: Theme.textFaint
+                            elide: Text.ElideMiddle
+                            ToolTip.visible: cfgPathHover.hovered
+                            ToolTip.text: root.cfgPath
+                            ToolTip.delay: 300
+                            HoverHandler { id: cfgPathHover }
+                        }
                     }
                 }
             }

@@ -46,6 +46,9 @@ class QmlBridge : public QObject {
     Q_PROPERTY(int totalTokens READ totalTokens NOTIFY usageChanged)
     Q_PROPERTY(int contextPercent READ contextPercent NOTIFY usageChanged)
     Q_PROPERTY(QString currentSessionId READ currentSessionId NOTIFY currentSessionIdChanged)
+    // 实际生效的配置文件路径（绝对路径）。供设置界面展示——"改了设置没反应"这类问题，
+    // 第一件事就是确认"你看的是哪份配置"。运行期不变，故用 CONSTANT。
+    Q_PROPERTY(QString configPath READ configPath CONSTANT)
 
 public:
     explicit QmlBridge(QObject* parent = nullptr);
@@ -55,6 +58,8 @@ public:
     bool agentReady() const { return app_ != nullptr; }
     QString projectName() const;
     QString projectPath() const;
+    // 实际生效的配置文件绝对路径；尚未落盘时返回默认路径（保存时会写到那里）。
+    QString configPath() const;
     QString statusText() const { return status_text_; }
     // 全局 busy（聚合信号，D12/阶段 4）：索引重建进行中或任一会话运行即为 true。
     // 用于全局操作锁（重建/切技能）与 QML 禁用按钮；输入框按会话 busy 由 sessionBusy 表达。
