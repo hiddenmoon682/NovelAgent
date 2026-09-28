@@ -26,10 +26,13 @@ int runQmlApp(int argc, char** argv) {
     // 且**每格** resetTimeline 重开一段 300ms OutExpo —— 逐格丢速度，体感"一顿一顿、停手后还发飘"。
     // Qt 为这种诉求留了 QT_QUICK_FLICKABLE_WHEEL_DECELERATION（1..14999 走连续减速分支，默认 15000=关闭）；
     // 该值在**每个 Flickable 构造时**读取，故必须在 QML 引擎加载前设好。
-    // 取值手感（单格动画时长 ≈ 12/√a 秒）：10000≈120ms（最跟手）/ 5000≈170ms（Qt 6.6 前旧默认）
-    // / 2000≈268ms（惯性明显）。这里取 5000；**显式设置环境变量者优先**（便于不改代码试手感）。
+    // 取值手感（单格动画时长 ≈ 12/√a 秒）：10000≈120ms（最脆）/ 5000≈170ms（Qt 6.6 前的旧默认）
+    // / 3000≈219ms / 2000≈268ms（惯性明显）。**本值 3000 由用户真机手选定档**（2026-09-28：
+    // 5000 主观"滑得稍快"，3000 定为最终值）；**显式设置环境变量者优先**（便于不改代码试手感）。
+    // 注意：该值只影响"一格 72 逻辑px 走多久"，不改"一格滚多远"（后者 = wheelScrollLines × 24，
+    // 在连续减速分支里与 a 无关：dist = v²/(2a) 且 v = 12√a ⇒ dist 恒为 72）。
     if (qEnvironmentVariableIsEmpty("QT_QUICK_FLICKABLE_WHEEL_DECELERATION"))
-        qputenv("QT_QUICK_FLICKABLE_WHEEL_DECELERATION", "5000");
+        qputenv("QT_QUICK_FLICKABLE_WHEEL_DECELERATION", "3000");
 
     QGuiApplication app(argc, argv);
 

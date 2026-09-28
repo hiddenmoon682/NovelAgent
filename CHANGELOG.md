@@ -33,7 +33,7 @@
   | 2000 | ≈268ms | 惯性明显、滑得远 |
 
   单格总位移在两种模式下都是 72 逻辑px（官方设计：`initialWheelFlickDistance = wheelScrollLines × 24`），
-  差别只在"怎么走完"与"连转时的速度累积"。**手感好坏由用户真机判定**（主观项，不写结论）。
+  差别只在"怎么走完"与"连转时的速度累积"。**最终由用户真机手选定档为 3000**（见本条目末节）。
 - **测量工具（新增，均在 `tests/`＝本地忽略目录）**：`inject_wheel_diag.ps1`（真实滚轮注入 +
   精确刻度数 + 注入期间"是否在前台"自证）、`capture_notch_profile.ps1` + `measure_profile.ps1`
   （单格之后的逐帧位移曲线）、`probe_wheel_fidelity.qml` + `run_wheel_fidelity.ps1`（探针内直接读
@@ -68,16 +68,21 @@
 - **方案 A 的固化与验证（本次最终落地）**：
   - **固化位置**：`src/novelagent_qt/QmlApp.cpp`（与既有的 `QT_QUICK_CONTROLS_STYLE=Fusion` 同一处，
     在 QML 引擎加载前）：`if (qEnvironmentVariableIsEmpty("QT_QUICK_FLICKABLE_WHEEL_DECELERATION"))
-    qputenv(..., "5000");` —— **程序默认 5000**，但**用户/环境显式设置者优先**（不改代码即可试手感：
-    10000 更跟手、2000 惯性更明显、15000 = 退回 Qt 默认）。
+    qputenv(..., "3000");` —— **程序默认 3000**，但**用户/环境显式设置者优先**（不改代码即可试手感：
+    10000 更脆 / 5000 = Qt 6.6 前旧默认 / 2000 惯性更明显 / 15000 = 退回 Qt 默认）。
+  - **取值由用户真机手选定档**：先以 5000 试（反馈"滑得稍快"），再给 3000（单格 ≈219ms）试用，
+    用户判定 **3000 为最终值**（2026-09-28）。这也是本条唯一由主观试用手测决定的参数。
   - **客观证据（`QT_LOGGING_RULES=qt.quick.flickable=true` 时 `flick()` 打的那句日志）**：
-    · 不设环境变量启动 → `choosing deceleration 5000 for QEvent::Wheel`（内置默认生效）；
+    · 不设环境变量启动 → `choosing deceleration 3000 for QEvent::Wheel`（内置默认生效）；
     · 显式设 `QT_QUICK_FLICKABLE_WHEEL_DECELERATION=8000` 启动 → `choosing deceleration 8000`
       （覆盖优先级生效）。
     这句日志**只出现在连续减速分支**，因此它同时证明"已从默认的 72px/300ms OutExpo 分支切换过来了"。
   - 两次运行的其余 stderr 均为**空**（无 QML 警告）；构建两道门（`verify.sh --build` /
-    `cmake --build --preset release`）退出码 0。
-  - **手感好坏仍由用户真机判定**（主观项，本文件不写结论）。
+    `cmake --build --preset release`）退出码 0，改动后已重新链接 `novelagent_gui.exe`。
+  - **边界澄清（用户问过，值得记下）**：本参数只改"一格 72 逻辑px 走多久"，**不改"一格滚多远"**——
+    连续减速分支里 `dist = v²/(2a)` 且 `v = 12√a`，故 `dist` 恒为 `wheelScrollLines × 24`（=72）。
+    若日后要改"一格滚多远"，两条路：① 系统级改 Windows「一次滚动下列行数」（3→2/1，Qt 直接读该值）；
+    ② 代码里钳 `Flickable.maximumFlickVelocity`（`flick()` 先钳 `v` 再算 `dist`，位移同比缩短）。
 
 ## [2026-09-28] 修复「应用启动依赖工作目录」：配置加载不再采用工作目录下的 config.json
 
