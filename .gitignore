@@ -33,46 +33,15 @@ config.json
 # Clangd index
 .cache/
 
-# Example novels are user data
-
-# External reference repos (not project code)
+# External reference repos / example novels (not project code, user data)
 _ref/
 examples/
-.claude/settings.local.json
-tui/my_novel/
-
-# Local development config
-opencode.json
-
-# Claude skills (local skills not tracked)
-.claude/skills/
-
-# Claude Code 本地工具配置（个人环境相关，不跟踪）
-.claude/settings.json
-
-# Tauri GUI
-gui/node_modules/
-gui/dist/
-gui/src-tauri/target/
-gui/src-tauri/binaries/novelagent-*.exe
-
-# 参考项目源码（不跟踪）
-_ref/
 
 # Qoder CLI local config
 .qoder/
 
 # MCP 服务配置（个人开发环境相关）
 .mcp.json
-
-# Git worktrees
-.worktrees/
-
-# 遗留 UI 原型（非项目代码）
-preview.html
-
-# 遗留顶层评审文档（正式评审在 docs/review/）
-review/
 
 # 遗留仓库内技能目录（运行时实际读取 ~/.novelagent/skills 与 <小说项目>/skills）
 skills/
@@ -85,12 +54,6 @@ CLAUDE.md
 tests/
 docs/
 scripts/
-
-# DSH 项目技能与本地 agent 配置（个人环境相关，不跟踪）
-.dsh/
-
-# SDD 工作区（计划执行脚手架，不跟踪）
-.superpowers/
 
 # Python 安装管理器的运行时缓存（在仓库根目录运行 py/python 时生成，非项目内容）
 Python/_cache/
