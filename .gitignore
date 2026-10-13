@@ -91,3 +91,6 @@ scripts/
 
 # SDD 工作区（计划执行脚手架，不跟踪）
 .superpowers/
+
+# Python 安装管理器的运行时缓存（在仓库根目录运行 py/python 时生成，非项目内容）
+Python/_cache/
