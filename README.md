@@ -19,7 +19,7 @@ NovelAgent 是一个用 **C++20** 编写的 AI 小说创作助手桌面应用。
 
 - 创建 / 编辑 / 打开小说项目，最近项目列表；
 - 章节以纯文本存储，按卷组织（卷 ID / 卷序 / 卷标题）；
-- 读写分离接口（`IProjectReader` / `IProjectWriter`），项目文件锁防并发破坏。
+- 受控访问层 `ProjectAccess`：跨会话共享一把锁，快照读（`get*`）与事务写（`add*`/`update*`/`remove*`）分离，项目文件锁防并发破坏。
 
 ### 检索与记忆（RAG）
 
@@ -44,9 +44,14 @@ NovelAgent 是一个用 **C++20** 编写的 AI 小说创作助手桌面应用。
 | 抽象接口 | 实现 | 职责 |
 |----------|------|------|
 | `llm::ILLMClient` | `llm::LLMClient` | 多 Provider 对话、SSE 流式、重试 |
-| `IProjectReader` / `IProjectWriter` | `ProjectAccess(Project&)` | 项目读写，读写分离 |
-| `IVectorStore` | `SqliteVectorStore` | 语义向量召回 |
-| `IOutputChannel` | `ConsoleOutput` 等 | 输出通道抽象 |
+| `retrieval::IVectorStore` | `SqliteVectorStore` | 语义向量召回 |
+| `retrieval::IEmbeddingGenerator` | `EmbeddingGenerator` | 文本嵌入生成 |
+| `agent::IMemory` | `Memory` | 对话记忆与上下文压缩 |
+| `agent::IIndexService` | `ProjectIndexService` | 项目索引重建 |
+| `agent::ISkillProvider` | `SkillRegistry` | 技能发现与加载 |
+| `agent::IToolProvider` | `ToolRegistry`、`ProgressiveToolProvider` 等 | 工具集合提供 |
+
+项目数据本身不通过抽象接口访问：`Project` 是纯数据模型，读写一律经 `ProjectAccess`（跨会话持锁的受控访问层，快照读 / 事务写 / `withReadLock`·`withWriteLock`）——它是具体类，但承担了并发保护与读写边界。
 
 ### 源码模块（`src/`）
 

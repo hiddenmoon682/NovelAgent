@@ -2,7 +2,7 @@
 
 // RulesProvider — “全局规则 + 项目规则”双层 Markdown 叠加（无状态、无缓存）。
 //
-// 上下文分层约定（见 CLAUDE.md）：
+// 上下文分层约定（见 AGENTS.md「决策规则」与 docs/wiki/reference/coding-conventions.md）：
 //   - 全局规则：<config_dir>/rules.md — 跨项目、每次对话都需要的硬约束/静态参考
 //   - 项目规则：<project>/.novelagent/rules.md — 单项目定制，叠加在全局之后
 // 每次 buildSystemPrompt（会话边界）时重新读盘，用户修改文件后下个会话即生效。
