@@ -1,5 +1,10 @@
 # Changelog
 
+## [2026-10-14] 删除未接入的死代码 ContextualToolProvider；清理本地杂物
+
+- **删除死代码 `src/agent/tool/ContextualToolProvider.{h,cpp}`**：该类从未列入 `cmake/Sources.cmake` 构建表、`src/` 与 `tests/` 内无任何 `#include` 或构造/调用点，功能已被实际启用的 `ProgressiveToolProvider` 取代（`SessionRuntime` 持有的是后者，见 `src/agent/session/SessionRuntime.h:189`）。因从不参与编译，删除不影响构建，无需改 cmake。同步移除 `docs/wiki/` 中 4 处对它的引用：`modules/agent-tools.md`（文件表 / IToolProvider 对比表 / 扩展点注意事项各 1）与 `reference/interfaces.md`（1 处，保留仍存在的 `RestrictedToolProvider` 说明）。
+- **清理本地杂物**（均属 `.gitignore`，不进版本库）：删除 `tests/` 下基准与调试输出残留（11 个 `.bench*/` 日志目录 + 约 50 个 `.err`/`.out` 空壳，~732K）、`docs/` 下无引用的设计预览图与原型图（19 张 PNG + 3 个 HTML mockup，4.5M；保留有引用的 `chapter-nav-preview.html` 与 `recent-project-mockup.html`）、`.qtcreator/qtc-cmake-presets-*` 探测缓存（3.4M，保留个人配置 `CMakeLists.txt.user`）、`examples/` 三个空目录（`my-test-novel/`、`test-pio/`、`test-proj/chapters/`）。`_ref/`（两个可重拉的外部参考仓库）与全部测量工具（`tests/probe_*`、`*.ps1`、`probe_scroll.cpp`）保留。
+
 ## [2026-10-13] 新增 docs/wiki 项目文档与引用校验门；修正失实文档、清理仓库杂物
 
 - **新增机械校验门 `scripts/wiki_lint.mjs`**：扫描 `docs/wiki/` 正文（跳过围栏代码块），校验①引用的文件路径真实存在、②`src/...:行号` 的行号不超过该文件总行数、③内部链接可达、④页面结构合格（一级标题 + ≥3 个二级小节 + ≥40 非空行，否则判为占位桩）、⑤`A::B` 的限定符 `A` 真实存在。error 阻断、warning 需人工核对；退出码 0/1。
