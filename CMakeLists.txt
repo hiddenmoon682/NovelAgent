@@ -25,13 +25,39 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 
-if(EXISTS "D:/SoftWare/msys2/mingw64")
-    list(PREPEND CMAKE_PREFIX_PATH "D:/SoftWare/msys2/mingw64")
-endif()
+# ── 工具链根目录：从编译器自身路径推导，不硬编码本机安装位置 ──
+# c++.exe 在 <prefix>/bin/ 下，往上两级就是 MSYS2 的 mingw64 前缀。
+# tests/CMakeLists.txt 推导运行时 DLL 目录用的是同一套办法（那里注释也写明
+# "避免硬编码本机安装路径，保证跨机器可移植"），此处与之保持一致。
+get_filename_component(NOVELAGENT_TOOLCHAIN_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+get_filename_component(NOVELAGENT_TOOLCHAIN_PREFIX "${NOVELAGENT_TOOLCHAIN_BIN}" DIRECTORY)
+list(PREPEND CMAKE_PREFIX_PATH "${NOVELAGENT_TOOLCHAIN_PREFIX}")
+message(STATUS "工具链前缀（由编译器路径推导）：${NOVELAGENT_TOOLCHAIN_PREFIX}")
 
-# Qt 6.8.3（QML GUI 前端）
-if(EXISTS "D:/QT/QT/6.8.3/mingw_64")
-    list(PREPEND CMAKE_PREFIX_PATH "D:/QT/QT/6.8.3/mingw_64")
+# ── Qt6（QML GUI 前端）前缀探测 ──
+# Qt 由官方在线安装器装，不落 PATH 也不写注册表，无法像工具链那样推导，
+# 故按优先级探测：显式 -DNOVELAGENT_QT_PREFIX > 环境变量 QTDIR > 常见安装根下的
+# */mingw_64（GLOB 默认按字典序排，取最后一个即版本号最大的）。
+# 都没命中就不往 CMAKE_PREFIX_PATH 里塞，让下面 find_package(Qt6 REQUIRED) 报它自己的错。
+set(NOVELAGENT_QT_PREFIX "" CACHE PATH "Qt6 的 mingw_64 前缀（留空则自动探测）")
+if(NOT NOVELAGENT_QT_PREFIX AND DEFINED ENV{QTDIR})
+    set(NOVELAGENT_QT_PREFIX "$ENV{QTDIR}")
+endif()
+if(NOT NOVELAGENT_QT_PREFIX)
+    foreach(qt_install_root IN ITEMS "C:/Qt" "D:/Qt" "D:/QT" "D:/QT/QT")
+        file(GLOB qt_prefix_candidates "${qt_install_root}/*/mingw_64")
+        if(qt_prefix_candidates)
+            list(GET qt_prefix_candidates -1 NOVELAGENT_QT_PREFIX)
+            break()
+        endif()
+    endforeach()
+endif()
+if(NOVELAGENT_QT_PREFIX AND EXISTS "${NOVELAGENT_QT_PREFIX}")
+    list(PREPEND CMAKE_PREFIX_PATH "${NOVELAGENT_QT_PREFIX}")
+    message(STATUS "Qt6 前缀：${NOVELAGENT_QT_PREFIX}")
+else()
+    message(STATUS "Qt6 前缀未探测到（BUILD_GUI=ON 时 find_package 会报错）；"
+                   "可用 -DNOVELAGENT_QT_PREFIX=<.../mingw_64> 或设 QTDIR 指定")
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
@@ -39,13 +65,26 @@ include(CompilerSettings)
 
 # OpenSSL 必须在 FetchDependencies 之前查找，
 # 因为 cpp-httplib（HTTPLIB_USE_OPENSSL=ON）的 CMake 配置阶段就需要它
-set(OPENSSL_ROOT_DIR "D:/SoftWare/msys2/mingw64" CACHE PATH "OpenSSL root directory")
+#
+# 版本下限取 3.0（cpp-httplib 对 OpenSSL 3.x ABI 的真实需求），刻意不钉到本机
+# 在用的 3.6.3：Linux CI 的发行版包多为 3.0，钉死会把 CI 挡在门外。精确版本改由
+# 下面的配置期打印 + verify.sh 留痕负责——让漂移可见，而不是靠禁止来掩盖。
+# OpenSSL 也是唯一不走 FetchContent 的系统依赖：Windows 上自编它属于另一个工程。
+# 根目录同样由工具链前缀推导（就是 MSYS2 的 mingw64），不写死本机路径；
+# 仍可被 -DOPENSSL_ROOT_DIR 或预设覆盖。
+set(OPENSSL_ROOT_DIR "${NOVELAGENT_TOOLCHAIN_PREFIX}" CACHE PATH "OpenSSL root directory")
 if(NOT EXISTS "${OPENSSL_ROOT_DIR}")
     unset(OPENSSL_ROOT_DIR CACHE)
 endif()
-find_package(OpenSSL REQUIRED)
+find_package(OpenSSL 3.0 REQUIRED)
 
 include(FetchDependencies)
+
+# 依赖版本现场取证：写进每次配置日志，任何机器/CI 都能一眼比对实际用了什么。
+# 走系统包（FETCH_PINNED_DEPS=OFF）时这里会暴露系统包与 pin 的偏离。
+message(STATUS "依赖版本: OpenSSL=${OPENSSL_VERSION} nlohmann_json=${nlohmann_json_VERSION} "
+               "spdlog=${spdlog_VERSION} yaml-cpp=${yaml-cpp_VERSION}")
+message(STATUS "依赖来源: FETCH_PINNED_DEPS=${FETCH_PINNED_DEPS} 缓存=${FETCHCONTENT_BASE_DIR}")
 include(Sources)  # Fix #1: 模块化源文件列表
 
 # Fix #1: 模块化源文件列表（直接在 Sources.cmake 中定义变量，无需函数调用）
@@ -162,8 +201,11 @@ if(BUILD_GUI)
         src/novelagent_qt/qml/ConfirmDialog.qml
         src/novelagent_qt/qml/ModalDimmer.qml
         src/novelagent_qt/qml/Theme.qml
-        src/novelagent_qt/qml/qmldir
     )
+    # 注意：src/novelagent_qt/qml/qmldir **不进这个列表**——qt_add_qml_module 会自己
+    # 生成 qmldir，再塞一个手写的进 QML_FILES 会与之冲突。但该文件在磁盘上必须保留：
+    # tests/probe_*.qml 用 `import "../src/novelagent_qt/qml"` 这种文件系统目录导入，
+    # 靠它才能拿到 singleton Theme（删掉会让 probe_scroll 那套帧率测量全部失效）。
 
     add_library(novelagent_qt OBJECT ${NOVELAGENT_QT_SOURCES})
     target_include_directories(novelagent_qt PUBLIC src)
@@ -175,12 +217,6 @@ if(BUILD_GUI)
     # 复用 core 的 PCH（UNICODE 宏已在 novelagent_core 上统一，可安全复用）
     target_precompile_headers(novelagent_qt REUSE_FROM novelagent_core)
 
-    qt_add_resources(novelagent_qt "qml_resources"
-        PREFIX "/qml"
-        BASE src/novelagent_qt/qml
-        FILES ${NOVELAGENT_QML_FILES}
-    )
-
     add_executable(novelagent_gui src/main_gui.cpp)
     target_include_directories(novelagent_gui PRIVATE src)
     target_link_libraries(novelagent_gui PRIVATE
@@ -189,23 +225,76 @@ if(BUILD_GUI)
     )
     target_precompile_headers(novelagent_gui REUSE_FROM novelagent_core)
 
+    # ── QML 以模块形式注册，取代原先的 qt_add_resources ──
+    # 收益：qmlcachegen 在构建期把 .qml 编成字节码，启动时不再由 QML 引擎解析源码
+    # （原先 20 个 QML 文件全部在启动时解析）；同时生成 qmltypes 供 IDE 与 qmllint 使用。
+    # 挂在可执行文件而不是 novelagent_qt 上：官方文档明确 OBJECT 库不能当 backing target，
+    # 而把 novelagent_qt 改成 STATIC 会重演 REGISTER_TOOL 那类"静态初始化被链接器
+    # 丢弃"的风险（本项目 --gc-sections 常开，见 tests/CMakeLists.txt 的 whole-archive 处理）。
+    # Theme/Toast 是 pragma Singleton，必须显式声明，否则生成的 qmldir 不会标记 singleton。
+    set_source_files_properties(
+        src/novelagent_qt/qml/Theme.qml
+        src/novelagent_qt/qml/Toast.qml
+        PROPERTIES QT_QML_SINGLETON_TYPE TRUE
+    )
+    # QML 源在 src/novelagent_qt/qml/，相对 novelagent_gui 的源目录属"额外目录"，
+    # Qt 默认把这段相对路径整个当作资源别名，真实 URL 会变成
+    # qrc:/qml/NovelAgent/src/novelagent_qt/qml/MainWindow.qml（实测生成的 qrc 里
+    # alias 就是这个）——既难看又极易与 C++ 侧的加载路径写岔。逐个把别名压成
+    # basename，让资源平铺在模块前缀下。
+    foreach(qml_file IN LISTS NOVELAGENT_QML_FILES)
+        get_filename_component(qml_alias "${qml_file}" NAME)
+        set_source_files_properties("${qml_file}" PROPERTIES QT_RESOURCE_ALIAS "${qml_alias}")
+    endforeach()
+    # 资源路径 = RESOURCE_PREFIX + URI（点换斜杠）→ qrc:/qml/NovelAgent/
+    # QTP0004 必须显式设：QML 源文件在 src/novelagent_qt/qml/，相对 novelagent_gui
+    # 的源目录属"额外目录"，策略未设时 Qt 会发 dev warning。NEW 会为额外目录在
+    # **构建目录**（不是源码目录）生成带 prefer 指令的 qmldir，因此不会覆盖
+    # src/novelagent_qt/qml/qmldir —— 那份手写文件仍被 tests/probe_*.qml 的
+    # 文件系统导入依赖，必须原样保留。
+    qt_policy(SET QTP0004 NEW)
+    qt_add_qml_module(novelagent_gui
+        URI NovelAgent
+        VERSION 1.0
+        RESOURCE_PREFIX "/qml"
+        QML_FILES ${NOVELAGENT_QML_FILES}
+    )
+
     # ── 性能探针宿主（仅测量用，不参与发布）──
     # QML 无法观测 frameSwapped，滚动流畅度（帧间隔）只能在 C++ 侧测；见 tests/probe_scroll.cpp。
     # 构建：cmake --build --preset release --target probe_scroll
     # 运行：probe_scroll.exe tests/probe_chat_scroll.qml -- --reuse=1 ...
-    add_executable(probe_scroll tests/probe_scroll.cpp)
-    target_link_libraries(probe_scroll PRIVATE Qt6::Core Qt6::Quick)
-    set_target_properties(probe_scroll PROPERTIES AUTOMOC ON)
+    #
+    # tests/ 有意不进公开仓库（见 .gitignore），所以干净克隆与 git worktree 里没有它。
+    # 原先这里无条件引用 tests/probe_scroll.cpp，会让 BUILD_GUI=ON（默认）的配置阶段
+    # 直接死在 "Cannot find source file: tests/probe_scroll.cpp"——与用户是否要求测试无关。
+    if(EXISTS "${CMAKE_SOURCE_DIR}/tests/probe_scroll.cpp")
+        add_executable(probe_scroll tests/probe_scroll.cpp)
+        target_link_libraries(probe_scroll PRIVATE Qt6::Core Qt6::Quick)
+        set_target_properties(probe_scroll PROPERTIES AUTOMOC ON)
+    endif()
 endif()
 
 # ── 自动复制 MSYS2 DLL（双击 exe 无需配置 PATH）──
-if(WIN32 AND EXISTS "D:/SoftWare/msys2/mingw64/bin")
-    set(MSYS2_BIN "D:/SoftWare/msys2/mingw64/bin")
+# 目录取自推导出的工具链 bin（见文件开头 NOVELAGENT_TOOLCHAIN_BIN），不写死本机路径。
+if(WIN32 AND EXISTS "${NOVELAGENT_TOOLCHAIN_BIN}")
+    set(MSYS2_BIN "${NOVELAGENT_TOOLCHAIN_BIN}")
+    # spdlog 的运行时 DLL 名里带版本号（libspdlog-1.17.dll），而 pacman 是滚动发布：
+    # 升到 1.18 后旧文件名消失，POST_BUILD 的 copy_if_different 会失败并中断构建，
+    # 报错却只说 copy 失败、看不出根因是版本号。改为 configure 期通配。
+    # RELATIVE 是必须的：下面 foreach 用 "${MSYS2_BIN}/${dll}" 拼路径，
+    # 条目必须是纯文件名而不是绝对路径。
+    file(GLOB SPDLOG_RUNTIME_DLLS RELATIVE "${MSYS2_BIN}" "${MSYS2_BIN}/libspdlog-*.dll")
+    if(NOT SPDLOG_RUNTIME_DLLS)
+        # 通配为空时若静默放过，产物会缺 DLL —— 构建全绿但双击才崩，属最难查的一类。
+        message(WARNING "在 ${MSYS2_BIN} 没找到 libspdlog-*.dll；产出的 exe 双击会因缺 DLL 启动失败")
+    endif()
     set(NEEDED_DLLS
         libssl-3-x64.dll libcrypto-3-x64.dll
-        libspdlog-1.17.dll libwinpthread-1.dll
+        libwinpthread-1.dll
         libgcc_s_seh-1.dll libstdc++-6.dll
         libyaml-cpp.dll
+        ${SPDLOG_RUNTIME_DLLS}
     )
     if(BUILD_GUI)
         foreach(dll ${NEEDED_DLLS})

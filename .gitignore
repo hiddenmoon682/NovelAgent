@@ -30,6 +30,9 @@ config.json
 # ccache 编译缓存
 .ccache/
 
+# FetchContent 依赖源码缓存（独立于 build/，删构建目录不必重新联网）
+.deps-cache/
+
 # Clangd index
 .cache/
 

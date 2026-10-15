@@ -9,8 +9,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "OPENSSL_ROOT_DIR": "D:/SoftWare/msys2/mingw64",
-        "CMAKE_PREFIX_PATH": "D:/SoftWare/msys2/mingw64",
+        "FETCHCONTENT_BASE_DIR": "${sourceDir}/.deps-cache",
         "BUILD_TESTING": "OFF"
       }
     },
@@ -22,8 +21,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "OPENSSL_ROOT_DIR": "D:/SoftWare/msys2/mingw64",
-        "CMAKE_PREFIX_PATH": "D:/SoftWare/msys2/mingw64",
+        "FETCHCONTENT_BASE_DIR": "${sourceDir}/.deps-cache",
         "BUILD_TESTING": "ON"
       }
     },
@@ -35,8 +33,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "OPENSSL_ROOT_DIR": "D:/SoftWare/msys2/mingw64",
-        "CMAKE_PREFIX_PATH": "D:/SoftWare/msys2/mingw64",
+        "FETCHCONTENT_BASE_DIR": "${sourceDir}/.deps-cache",
         "BUILD_TESTING": "OFF"
       }
     }

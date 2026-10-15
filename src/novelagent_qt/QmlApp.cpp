@@ -74,7 +74,9 @@ int runQmlApp(int argc, char** argv) {
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("bridge"), &bridge);
 
-    const QUrl url(QStringLiteral("qrc:/qml/MainWindow.qml"));
+    // 路径由 CMakeLists.txt 里 qt_add_qml_module 的 RESOURCE_PREFIX("/qml") + URI("NovelAgent")
+    // 决定，改任一处都要同步这里；写错不会编译失败，只会在运行时静默加载不出界面。
+    const QUrl url(QStringLiteral("qrc:/qml/NovelAgent/MainWindow.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
         &app, [url](QObject* obj, const QUrl& objUrl) {
             if (!obj && url == objUrl)
