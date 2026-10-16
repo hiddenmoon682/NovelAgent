@@ -32,107 +32,93 @@ ValidationResult ParameterValidator::validate(
         return result;
     }
 
-    checkRequired(schema, arguments, result.errors);
-    checkTypes(schema, arguments, result.errors);
-    checkEnums(schema, arguments, result.errors);
-    checkAdditionalProperties(schema, arguments, result.errors);
+    checkNode(schema, arguments, "", result.errors);
 
     result.valid = result.errors.empty();
     return result;
 }
 
-void ParameterValidator::checkRequired(
-    const json& schema, const json& arguments,
+void ParameterValidator::checkNode(
+    const json& schema, const json& value,
+    const std::string& path,
     std::vector<ValidationError>& errors)
 {
-    if (!schema.contains("required") || !schema["required"].is_array()) return;
+    if (!schema.is_object()) return;
 
-    for (const auto& req : schema["required"]) {
-        std::string field = req.get<std::string>();
-        if (!arguments.contains(field)) {
-            errors.push_back({field, "缺少必填字段"});
+    // 枚举：enum 是"类型 + 取值列表"的合并约束，嵌套节点同样适用
+    if (schema.contains("enum") && schema["enum"].is_array()) {
+        bool found = false;
+        for (const auto& e : schema["enum"]) {
+            if (e == value) { found = true; break; }
+        }
+        if (!found) {
+            errors.push_back({path, "值不在允许的枚举范围内"});
         }
     }
-}
 
-void ParameterValidator::checkTypes(
-    const json& schema, const json& arguments,
-    std::vector<ValidationError>& errors)
-{
-    if (!schema.contains("properties") || !schema["properties"].is_object()) return;
-
-    for (auto it = schema["properties"].begin();
-         it != schema["properties"].end(); ++it) {
-        const std::string& name = it.key();
-        const auto& prop = it.value();
-
-        if (!arguments.contains(name)) continue;
-        if (!prop.contains("type")) continue;
-
-        std::string expected = prop["type"].get<std::string>();
-        const auto& value = arguments[name];
+    // 类型（只认 string 形态的 type；多类型数组如 ["string","null"] 不在此列，直接放行）
+    std::string expected;
+    if (schema.contains("type") && schema["type"].is_string()) {
+        expected = schema["type"].get<std::string>();
+    }
+    if (!expected.empty()) {
         bool type_ok = false;
-
-        if (expected == "string")  type_ok = value.is_string();
+        if (expected == "string")       type_ok = value.is_string();
         else if (expected == "integer") type_ok = value.is_number_integer();
         else if (expected == "number")  type_ok = value.is_number();
         else if (expected == "boolean") type_ok = value.is_boolean();
         else if (expected == "array")   type_ok = value.is_array();
         else if (expected == "object")  type_ok = value.is_object();
+        else                            type_ok = true;  // 未知类型名不拦，避免误伤
 
         if (!type_ok) {
-            errors.push_back({name, "类型不匹配（期望 " + typeName(expected)
+            errors.push_back({path, "类型不匹配（期望 " + typeName(expected)
                               + "，实际 " + std::string(value.type_name()) + "）"});
+            // 类型已不符即返回：对着错误类型继续取子节点只会产生一连串误报
+            return;
         }
     }
-}
 
-void ParameterValidator::checkEnums(
-    const json& schema, const json& arguments,
-    std::vector<ValidationError>& errors)
-{
-    if (!schema.contains("properties") || !schema["properties"].is_object()) return;
-
-    for (auto it = schema["properties"].begin();
-         it != schema["properties"].end(); ++it) {
-        const std::string& name = it.key();
-        const auto& prop = it.value();
-        if (!prop.contains("enum") || !prop["enum"].is_array()) continue;
-        if (!arguments.contains(name)) continue;
-
-        const auto& value = arguments[name];
-        bool found = false;
-        for (const auto& e : prop["enum"]) {
-            if (e == value) { found = true; break; }
+    // 数组 → 逐元素按 items 递归（此前不下探，是嵌套约束形同装饰的主因之一）
+    if (value.is_array() && schema.contains("items")) {
+        for (size_t i = 0; i < value.size(); ++i) {
+            checkNode(schema["items"], value[i],
+                      path + "[" + std::to_string(i) + "]", errors);
         }
-        if (!found) {
-            errors.push_back({name, "值不在允许的枚举范围内"});
+        return;
+    }
+
+    if (!value.is_object()) return;
+
+    // 必填字段（嵌套对象同样生效）
+    if (schema.contains("required") && schema["required"].is_array()) {
+        for (const auto& req : schema["required"]) {
+            if (!req.is_string()) continue;
+            const std::string name = req.get<std::string>();
+            if (!value.contains(name)) {
+                errors.push_back({path.empty() ? name : path + "." + name,
+                                  "缺少必填字段"});
+            }
         }
     }
-}
 
-void ParameterValidator::checkAdditionalProperties(
-    const json& schema, const json& arguments,
-    std::vector<ValidationError>& errors)
-{
-    // C4 修复：additionalProperties: false 时，未知字段应阻断（而非仅 warn）。
+    // 逐属性递归；additionalProperties:false 时未知字段阻断（而非仅 warn）。
     // 此前只 spdlog::warn 且刻意忽略 errors 参数（(void)errors），LLM 拼错字段名
-    // （如 charcter_id）被静默吞、浪费一轮工具调用。改为 push 错误使 validation.valid=false，
-    // ToolPipeline 会返回带 suggestion 的错误让 LLM 自纠。
-    bool allow_extra = true;
-    if (schema.contains("additionalProperties")) {
-        if (schema["additionalProperties"].is_boolean()) {
-            allow_extra = schema["additionalProperties"].get<bool>();
-        }
-    }
+    // （如 charcter_id）被静默吞、浪费一轮工具调用。改为 push 错误使
+    // validation.valid=false，ToolPipeline 会返回带 suggestion 的错误让 LLM 自纠。
+    const json* props = (schema.contains("properties") && schema["properties"].is_object())
+                        ? &schema["properties"] : nullptr;
+    const bool allow_extra = !schema.contains("additionalProperties")
+                          || !schema["additionalProperties"].is_boolean()
+                          || schema["additionalProperties"].get<bool>();
 
-    if (allow_extra) return;
-    if (!schema.contains("properties")) return;
-
-    for (auto it = arguments.begin(); it != arguments.end(); ++it) {
-        if (!schema["properties"].contains(it.key())) {
-            spdlog::warn("[ParameterValidator] 额外字段 '{}' 传入被拒绝", it.key());
-            errors.push_back({it.key(), "未知字段，请检查字段名拼写（该 schema 不允许额外属性）"});
+    for (auto it = value.begin(); it != value.end(); ++it) {
+        const std::string child = path.empty() ? it.key() : path + "." + it.key();
+        if (props && props->contains(it.key())) {
+            checkNode((*props)[it.key()], it.value(), child, errors);
+        } else if (!allow_extra) {
+            spdlog::warn("[ParameterValidator] 额外字段 '{}' 传入被拒绝", child);
+            errors.push_back({child, "未知字段，请检查字段名拼写（该 schema 不允许额外属性）"});
         }
     }
 }

@@ -96,7 +96,9 @@ public:
 
 // 完整替换指定角色的人际关系列表。
 // 参数: character_id (string, required), relationships (array of relationship objects, required)
-// 返回: { success, character_id, relationship_count }
+// 返回: { success, character_id, relationship_count }。输入中若有元素不是对象：写入合法项并
+//       额外返回 skipped 与 warning；若全部元素都不合法则拒绝执行（避免清空原有关系），
+//       返回 { error, skipped }。传空数组是明确的清空意图，照常执行。
 class UpdateCharacterRelationshipsTool : public BuiltInTool {
     std::shared_ptr<ProjectAccess> project_;
 public:
@@ -106,6 +108,28 @@ public:
         return "完整替换指定角色的人际关系列表（每项含 target_character_id/type/description/tension 等字段）。";
     }
     std::string brief() const override { return "替换角色人际关系列表"; }
+    nlohmann::json parameters() const override;
+    nlohmann::json execute(const nlohmann::json& args) override;
+    ToolCategory category() const override { return ToolCategory::Character; }
+};
+
+// 按目标角色 ID 局部修改某角色的一条关系（只改传入的字段，同一角色的其它关系原样不动）。
+// 参数: character_id (string, required), target_character_id (string, required), fields (object, required)
+// 返回: { success, character_id, target_character_id, updated_fields }
+// 与 update_character_relationships（整体替换）的分工：小改动用本工具，增删/重排整表才用那个。
+// 关系没有自己的 id，身份即 target_character_id；它同时是定位键——改指向对象等于「删一条 + 加一条」，
+// 只能走整体替换工具，故不在可改字段里。
+class UpdateRelationshipTool : public BuiltInTool {
+    std::shared_ptr<ProjectAccess> project_;
+public:
+    explicit UpdateRelationshipTool(std::shared_ptr<ProjectAccess> p) : project_(p) {}
+    std::string name() const override { return "update_relationship"; }
+    std::string description() const override {
+        return "按目标角色 ID 局部修改某角色的一条关系（改 type/description/tension 等字段）。"
+               "只动这一条，同角色其它关系不变；改动单条关系时优先用它，不要用 "
+               "update_character_relationships 重传整表。";
+    }
+    std::string brief() const override { return "局部修改单条人际关系"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Character; }

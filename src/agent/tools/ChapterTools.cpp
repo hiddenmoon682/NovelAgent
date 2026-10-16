@@ -8,6 +8,8 @@
 #include "utils/SchemaUtils.h"
 
 #include <algorithm>
+#include <map>
+#include <set>
 #include <spdlog/spdlog.h>
 
 namespace agent {
@@ -503,7 +505,9 @@ json UpdateChapterTool::execute(const json& args) {
                 if (key == "active_plot_threads") validateIdArray(plot_threads, arr, key, "update_chapter");
                 updated.push_back(key);
             }
-            // 不在白名单中的字段 → 静默忽略（包括 id/order/scenes/metadata）
+            // 白名单外的字段在这里被忽略（包括 id/order/scenes/metadata）。正常路径上管线层的
+            // 递归校验已会先拒掉未知键；这里的忽略是兜底——tool_search 当轮加载的工具不在
+            // schema 缓存里，校验会被整段跳过（见 ToolPipeline 的 schema_cache_ 注释）。
         }
     });
     if (!ok) {
@@ -610,10 +614,75 @@ json DeleteChapterTool::execute(const json& args) {
 // UpdateChapterScenesTool
 // ===========================================================================
 
+// 扫出场景列表里 "sc-NNN" 形式 ID 的最大号（非标准 ID 安全跳过，不参与编号统计）。
+static int maxSceneIdNumber(const std::vector<Scene>& scenes) {
+    int max_num = 0;
+    for (const auto& sc : scenes) {
+        if (auto num = utils::id::tryParseIdNumber(sc.id, "sc-")) {
+            max_num = std::max(max_num, *num);
+        }
+    }
+    return max_num;
+}
+
+// 场景 ID 规整：保证本章内 ID 非空且唯一。
+//
+// 为什么改由程序接管：场景 ID 此前完全由模型填写（可空、可重复、跨轮次还会漂移），
+// 而 ID 是按场景定位的唯一依据——ID 不可信时，按 ID 定位会打空或打错（且这类错误
+// 不是格式错误，校验器拦不住）。编号思路与 create_chapter 一致（扫 max 号 + 冲突递增）：
+//   ① 带了 ID 且不与前面重复 → 原样保留（不重新编号，否则改动一项会让其它场景 ID 漂移）；
+//   ② 空 ID → 补下一个可用号；
+//   ③ 与前面重复 → 改写为新号并记日志。
+// seed 必须同时覆盖"本章原有场景"与"本次传入场景"的最大号，否则补号会与旧号重叠。
+static void normalizeSceneIds(std::vector<Scene>& scenes, int seed) {
+    std::set<std::string> used;
+    int next = seed;
+    for (auto& sc : scenes) {
+        if (!sc.id.empty() && used.insert(sc.id).second) continue;
+        if (!sc.id.empty()) {
+            spdlog::warn("[update_chapter_scenes] 场景 ID '{}' 在本章内重复，改写为新号", sc.id);
+        }
+        sc.id = utils::id::formatSequentialId("sc-", ++next);
+        used.insert(sc.id);
+    }
+}
+
+// scenes 元素的嵌套 schema。
+// 为什么必须显式声明为 object：实现逐项按 Scene 结构体取值，模型只能从 schema
+// 得知可填哪些字段；此前用 stringArrayProp 声明成"字符串数组"，与实际接受格式
+// 相反——模型照 schema 提交字符串数组时会被实现逐项跳过（见 execute 里的拦截）。
+static json sceneItemSchema() {
+    return utils::schema::object({
+        {"id",               utils::schema::stringProp("场景 ID；新建场景可留空（系统会补 sc-N），"
+                                                      "修改已有场景请原样回传以保持 ID 稳定")},
+        {"title",            utils::schema::stringProp("场景标题")},
+        {"summary",          utils::schema::stringProp("场景摘要")},
+        {"goal",             utils::schema::stringProp("场景目标")},
+        {"conflict",         utils::schema::stringProp("场景冲突")},
+        {"outcome",          utils::schema::stringProp("场景结果")},
+        {"turning_point",    utils::schema::stringProp("转折点")},
+        {"emotional_beat",   utils::schema::stringProp("情绪节拍")},
+        {"reveal",           utils::schema::stringProp("揭示的信息")},
+        {"foreshadowing",    utils::schema::stringProp("埋设的伏笔")},
+        {"payoff",           utils::schema::stringProp("回收的伏笔")},
+        {"pov_character_id", utils::schema::stringProp("视点角色 ID")},
+        {"location_id",      utils::schema::stringProp("地点设定 ID")},
+        {"time_marker",      utils::schema::stringProp("时间标记")},
+        {"participants",     utils::schema::stringArrayProp("出场角色 ID 列表")},
+        {"plot_thread_ids",  utils::schema::stringArrayProp("关联剧情线 ID 列表")}
+    }, {}, /*allowExtra=*/true);
+    // allowExtra=true 的理由：Scene 的 to_json 总会输出 metadata（且 from_json 会把未知键收进
+    // metadata），而"保住 ID"要求模型把读到的场景对象原样回传；若这里设为 false，回传里的
+    // metadata 会被判成未知字段而整次拒绝。未声明的键由实现忽略（本工具不解析 metadata，
+    // 故也刻意不把 metadata 写进 properties，以免模型以为可写）。
+}
+
 json UpdateChapterScenesTool::parameters() const {
     return utils::schema::object({
         {"chapter_id", utils::schema::stringProp("章节 ID")},
-        {"scenes", utils::schema::stringArrayProp("场景对象数组（完整替换），每项含 id/title/summary/goal/conflict 等 Scene 字段")}
+        {"scenes", utils::schema::objectArrayProp(
+            "场景列表，完整替换本章全部场景；传空数组表示清空。每项为一个场景对象",
+            sceneItemSchema())}
     }, {"chapter_id", "scenes"});
 }
 
@@ -625,7 +694,8 @@ json UpdateChapterScenesTool::execute(const json& args) {
     // 锁外取校验快照（软校验用，不持锁）
     const auto characters = project_->getCharacters();
     const auto settings = project_->getSettings();
-    const auto plot_threads = project_->getOutline().plot_threads;
+    const auto outline = project_->getOutline();
+    const auto plot_threads = outline.plot_threads;
 
     std::vector<Scene> parsed;
     for (const auto& s : scenes_arr) {
@@ -654,6 +724,38 @@ json UpdateChapterScenesTool::execute(const json& args) {
         validateSceneRefs(characters, settings, plot_threads, sc, "update_chapter_scenes");
     }
 
+    // 元素解析不全时的处置（本工具是"整体替换"，下面这段决定坏输入会不会毁掉整表）：
+    //   ① 非空输入却一条都没解析出来 → 拒绝。这是"输入坏了"的确证——照旧执行会把
+    //      整章场景清空（修复前正是如此，还回报 success）。传空数组才是明确的清空意图。
+    //   ② 部分解析成功 → 写入合法项，但把被跳过的项逐条回报，避免"模型以为全写上了"。
+    json skipped = json::array();
+    if (parsed.size() != scenes_arr.size()) {
+        for (size_t i = 0; i < scenes_arr.size(); ++i) {
+            if (!scenes_arr[i].is_object()) {
+                skipped.push_back({{"index", i},
+                                   {"received_type", scenes_arr[i].type_name()},
+                                   {"reason", "不是对象；每项须为场景对象（含 title/summary/"
+                                              "goal/conflict 等字段）"}});
+            }
+        }
+        if (parsed.empty()) {
+            return {{"error", "scenes 的 " + std::to_string(scenes_arr.size()) +
+                              " 项都不是对象，已拒绝执行以免清空本章原有场景"},
+                    {"skipped", skipped}};
+        }
+    }
+
+    // 场景 ID 由程序接管（规则见 normalizeSceneIds）。种子取"本章原有场景"与"本次传入
+    // 场景"两者的最大号，保证补出的号既不与旧号重叠，也不与传入的号重叠。
+    int id_seed = maxSceneIdNumber(parsed);
+    for (const auto& ch : outline.chapters) {
+        if (ch.id == chapter_id) {
+            id_seed = std::max(id_seed, maxSceneIdNumber(ch.scenes));
+            break;
+        }
+    }
+    normalizeSceneIds(parsed, id_seed);
+
     // 锁内小改：整体替换场景列表（updateChapter 自动 markDirty）
     std::string result_id;
     size_t scene_count = 0;
@@ -665,7 +767,152 @@ json UpdateChapterScenesTool::execute(const json& args) {
     if (!ok) return {{"error", "章节不存在"}};
     project_->save();
     spdlog::info("[update_chapter_scenes] {} 更新 {} 个场景", result_id, scene_count);
-    return {{"success", true}, {"chapter_id", result_id}, {"scene_count", scene_count}};
+    json result = {{"success", true}, {"chapter_id", result_id}, {"scene_count", scene_count}};
+    if (!skipped.empty()) {
+        result["skipped"] = skipped;
+        result["warning"] = "有 " + std::to_string(skipped.size()) +
+                            " 项格式不合法已被跳过；本工具为整体替换，本章场景现为 " +
+                            std::to_string(scene_count) + " 个";
+    }
+    return result;
+}
+
+// update_scene 的 fields 白名单 schema。
+// 刻意**不含 id**：场景 ID 由程序维护（空则补号、重名改写，见 normalizeSceneIds），
+// 允许模型改 ID 会让"按 ID 定位"重新变得不可信；白名单外字段会被递归校验直接拦下。
+static json sceneEditableFieldsSchema() {
+    return utils::schema::object({
+        {"title",            utils::schema::stringProp("场景标题")},
+        {"summary",          utils::schema::stringProp("场景摘要")},
+        {"goal",             utils::schema::stringProp("场景目标")},
+        {"conflict",         utils::schema::stringProp("场景冲突")},
+        {"outcome",          utils::schema::stringProp("场景结果")},
+        {"turning_point",    utils::schema::stringProp("转折点")},
+        {"emotional_beat",   utils::schema::stringProp("情绪节拍")},
+        {"reveal",           utils::schema::stringProp("揭示的信息")},
+        {"foreshadowing",    utils::schema::stringProp("埋设的伏笔")},
+        {"payoff",           utils::schema::stringProp("回收的伏笔")},
+        {"pov_character_id", utils::schema::stringProp("视点角色 ID")},
+        {"location_id",      utils::schema::stringProp("地点设定 ID")},
+        {"time_marker",      utils::schema::stringProp("时间标记")},
+        {"participants",     utils::schema::stringArrayProp("出场角色 ID 列表")},
+        {"plot_thread_ids",  utils::schema::stringArrayProp("关联剧情线 ID 列表")}
+    });
+}
+
+json UpdateSceneTool::parameters() const {
+    return utils::schema::object({
+        {"chapter_id", utils::schema::stringProp("章节 ID")},
+        {"scene_id",   utils::schema::stringProp("要修改的场景 ID（先用 get_chapter_context 查得，勿臆造）")},
+        {"fields",     sceneEditableFieldsSchema()}
+    }, {"chapter_id", "scene_id", "fields"});
+}
+
+json UpdateSceneTool::execute(const json& args) {
+    const std::string chapter_id = args.value("chapter_id", "");
+    const std::string scene_id   = args.value("scene_id", "");
+    if (chapter_id.empty()) return {{"error", "chapter_id 不能为空"}};
+    if (scene_id.empty())   return {{"error", "scene_id 不能为空"}};
+    // 必须先 contains 再取：const operator[] 在缺键时是 assert/UB（Release 带 NDEBUG 会静默
+    // 解引用 end()）。正常管线有 required 校验兜底，但 tool_search 中途加载的工具当轮不在校验
+    // 缓存内、会被整段跳过，故这里不能依赖校验器一定跑过。
+    if (!args.contains("fields")) return {{"error", "fields 必须是非空的对象"}};
+    const json& fields = args["fields"];
+    if (!fields.is_object() || fields.empty()) return {{"error", "fields 必须是非空的对象"}};
+
+    // 锁外取校验快照（软校验用，不持锁）
+    const auto characters = project_->getCharacters();
+    const auto settings = project_->getSettings();
+    const auto plot_threads = project_->getOutline().plot_threads;
+
+    // 字段白名单：13 个字符串 + 2 个字符串数组（id 与 metadata 不在其中）
+    using StrField = std::string Scene::*;
+    static const std::map<std::string, StrField> kStringMap = {
+        {"title",            &Scene::title},
+        {"summary",          &Scene::summary},
+        {"goal",             &Scene::goal},
+        {"conflict",         &Scene::conflict},
+        {"outcome",          &Scene::outcome},
+        {"turning_point",    &Scene::turning_point},
+        {"emotional_beat",   &Scene::emotional_beat},
+        {"reveal",           &Scene::reveal},
+        {"foreshadowing",    &Scene::foreshadowing},
+        {"payoff",           &Scene::payoff},
+        {"pov_character_id", &Scene::pov_character_id},
+        {"location_id",      &Scene::location_id},
+        {"time_marker",      &Scene::time_marker},
+    };
+    using ArrField = std::vector<std::string> Scene::*;
+    static const std::map<std::string, ArrField> kArrayMap = {
+        {"participants",     &Scene::participants},
+        {"plot_thread_ids",  &Scene::plot_thread_ids},
+    };
+
+    // 锁内小改：只动命中的那个场景（updateChapter 自动 markDirty）
+    std::vector<std::string> updated;
+    std::string result_id;
+    // 命中条数：ID 由程序接管后应当唯一，但**历史数据**可能带着重复 ID 或空 ID 载入
+    // （from_json 不做规整），此时按歧义处理、一条都不改，而不是"改第一条却回报 success"。
+    size_t matches = 0;
+    const bool ok = project_->updateChapter(chapter_id, [&](Chapter& ch) {
+        result_id = ch.id;
+        matches = static_cast<size_t>(std::count_if(ch.scenes.begin(), ch.scenes.end(),
+                    [&](const Scene& s) { return s.id == scene_id; }));
+        if (matches != 1) return;
+        for (auto& sc : ch.scenes) {
+            if (sc.id != scene_id) continue;
+            for (auto it = fields.begin(); it != fields.end(); ++it) {
+                const std::string& key = it.key();
+                const json& value = it.value();
+                if (auto si = kStringMap.find(key); si != kStringMap.end() && value.is_string()) {
+                    sc.*si->second = value.get<std::string>();
+                    updated.push_back(key);
+                } else if (auto ai = kArrayMap.find(key); ai != kArrayMap.end() && value.is_array()) {
+                    auto& arr = sc.*ai->second;
+                    arr.clear();
+                    // 跳过非字符串元素而不是抛 type_error：单个坏元素不该让整次调用炸掉，
+                    // 且异常文案不会指明是哪一项（校验被跳过时这条路径实际可达）。
+                    for (const auto& v : value) {
+                        if (v.is_string()) arr.push_back(v.get<std::string>());
+                    }
+                    updated.push_back(key);
+                }
+                // 白名单外或类型不符 → 不计入 updated；只要有任一字段生效就返回 success，
+                // 未生效的字段名不会出现在 updated_fields 里（全部无效时才整次报错）。
+            }
+            // A6: 场景内跨实体引用软校验（warn 不阻断，与 update_chapter_scenes 保持一致）
+            validateSceneRefs(characters, settings, plot_threads, sc, "update_scene");
+            break;
+        }
+    });
+    if (!ok) return {{"error", "章节 '" + chapter_id + "' 不存在"}};
+    if (matches == 0) {
+        return {{"error", "场景 '" + scene_id + "' 不在本章中。请先用 get_chapter_context "
+                          "查得真实场景 ID，勿臆造"}};
+    }
+    if (matches > 1) {
+        return {{"error", "本章有 " + std::to_string(matches) + " 个场景共用 ID '" + scene_id
+                          + "'，无法确定要改哪一个。请用 update_chapter_scenes 整体替换以修正重复 ID"}};
+    }
+    if (updated.empty()) {
+        return {{"error", "没有可修改的字段（fields 只接受场景自身字段，且 id 由程序维护不可修改）"}};
+    }
+
+    project_->save();
+    std::string fields_str;
+    for (size_t i = 0; i < updated.size(); ++i) {
+        if (i > 0) fields_str += ", ";
+        fields_str += updated[i];
+    }
+    spdlog::info("[update_scene] {}/{} 更新 {} 个字段: {}",
+                 result_id, scene_id, updated.size(), fields_str);
+
+    return {
+        {"success", true},
+        {"chapter_id", result_id},
+        {"scene_id", scene_id},
+        {"updated_fields", updated}
+    };
 }
 
 } // namespace agent
@@ -677,3 +924,4 @@ REGISTER_TOOL(agent::CreateChapterTool, "create_chapter", create_chapter)
 REGISTER_TOOL(agent::UpdateChapterTool, "update_chapter", update_chapter)
 REGISTER_TOOL(agent::DeleteChapterTool, "delete_chapter", delete_chapter)
 REGISTER_TOOL(agent::UpdateChapterScenesTool, "update_chapter_scenes", update_chapter_scenes)
+REGISTER_TOOL(agent::UpdateSceneTool, "update_scene", update_scene)

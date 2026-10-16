@@ -2,8 +2,8 @@
 
 /// PromptSelector — 从 Project 中筛选与目标章节关联的对象的共享逻辑。
 ///
-/// 职责：提供复用选择函数供 PromptContextBuilder 和新工具使用。
-/// 原位于 PromptContextBuilder.cpp 的匿名命名空间中，现提取为公开 API。
+/// 职责：提供复用选择函数供工具侧使用。
+/// 原位于上下文构建器的匿名命名空间中，现提取为公开 API（构建器已删除，选择器由工具侧调用）。
 
 #include "project/Models.h"
 #include <nlohmann/json.hpp>
@@ -109,10 +109,6 @@ std::vector<const WorldRule*> selectWorldRules(
     const Project& project,
     const std::vector<const Setting*>& settings,
     std::size_t maxCount);
-
-/// 将 JSON 数组渲染为 Markdown 列表段。
-/// 每项取 name/title/id 作为标题，其余字段作为缩进键值对输出。
-std::string renderSectionList(const nlohmann::json& values, const std::string& heading);
 
 } // namespace selector
 } // namespace prompt

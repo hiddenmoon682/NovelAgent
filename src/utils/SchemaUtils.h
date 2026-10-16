@@ -94,4 +94,18 @@ inline nlohmann::json stringArrayProp(std::string description) {
     };
 }
 
+// array 类型属性（元素类型为 object，元素结构由 itemSchema 给出）。
+//
+// 为什么需要它：本项目存在"对象数组"形态的参数（章节场景列表、角色关系列表），
+// 数组元素是结构体而非字符串。此前按元素本意只能借用 stringArrayProp 声明成
+// 字符串数组、再用中文描述补救，导致 schema 与实际接受格式不一致——模型照
+// schema 提交字符串数组时会被实现逐项跳过（见各工具实现里的 is_object 判断）。
+inline nlohmann::json objectArrayProp(std::string description, nlohmann::json itemSchema) {
+    return {
+        {"type", "array"},
+        {"items", std::move(itemSchema)},
+        {"description", std::move(description)}
+    };
+}
+
 } // namespace utils::schema

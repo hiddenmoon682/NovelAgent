@@ -10,6 +10,8 @@
 //   - 字段类型是否匹配（string/integer/boolean/array）
 //   - string 枚举值是否在允许范围内
 //   - additionalProperties 检测
+// 以上四类检查**递归**进入 array.items 与嵌套 object.properties：
+// 嵌套不校验时，schema 里的嵌套约束形同装饰，模型传错嵌套类型不会被拦下。
 
 #include <nlohmann/json_fwd.hpp>
 #include <string>
@@ -45,28 +47,16 @@ public:
         const nlohmann::json& arguments);
 
 private:
-    // 校验必填字段。
-    static void checkRequired(
+    // 递归校验单个节点：required / 类型 / 枚举 / additionalProperties 四类检查
+    // 都在这里完成，并对 array.items 与嵌套 object.properties 继续下探。
+    //
+    // path 是出错时写入 ValidationError::field 的字段路径前缀：顶层为空（错误字段
+    // 就是裸字段名，如 chapter_id），嵌套时逐级拼成 scenes[0].title 形式，让模型
+    // 能直接定位到是第几个元素的哪个字段不合规。
+    static void checkNode(
         const nlohmann::json& schema,
-        const nlohmann::json& arguments,
-        std::vector<ValidationError>& errors);
-
-    // 校验字段类型。
-    static void checkTypes(
-        const nlohmann::json& schema,
-        const nlohmann::json& arguments,
-        std::vector<ValidationError>& errors);
-
-    // 校验枚举值。
-    static void checkEnums(
-        const nlohmann::json& schema,
-        const nlohmann::json& arguments,
-        std::vector<ValidationError>& errors);
-
-    // 检测额外字段（additionalProperties: false 时记录 warning）。
-    static void checkAdditionalProperties(
-        const nlohmann::json& schema,
-        const nlohmann::json& arguments,
+        const nlohmann::json& value,
+        const std::string& path,
         std::vector<ValidationError>& errors);
 
     // Schema type → 可读名称。

@@ -156,43 +156,5 @@ std::vector<const WorldRule*> selectWorldRules(
     return selected;
 }
 
-std::string renderSectionList(const nlohmann::json& values, const std::string& heading) {
-    if (!values.is_array() || values.empty()) {
-        return {};
-    }
-
-    std::ostringstream oss;
-    oss << "## " << heading << "\n";
-    for (const auto& item : values) {
-        const std::string title = item.value("name",
-            item.value("title", item.value("id", "Unnamed")));
-        oss << "- " << title << "\n";
-        for (auto it = item.begin(); it != item.end(); ++it) {
-            if (it.key() == "id" || it.key() == "name" || it.key() == "title") continue;
-            if (!isMeaningfulValue(it.value())) continue;
-
-            if (it.value().is_string()) {
-                oss << "  " << it.key() << ": " << it.value().get<std::string>() << "\n";
-            } else if (it.value().is_array()) {
-                std::vector<std::string> pieces;
-                for (const auto& entry : it.value()) {
-                    if (entry.is_string()) pieces.push_back(entry.get<std::string>());
-                    else pieces.push_back(entry.dump());
-                }
-                std::string joined;
-                for (size_t i = 0; i < pieces.size(); ++i) {
-                    if (i > 0) joined += ", ";
-                    joined += pieces[i];
-                }
-                oss << "  " << it.key() << ": " << joined << "\n";
-            } else {
-                oss << "  " << it.key() << ": " << it.value().dump() << "\n";
-            }
-        }
-    }
-    oss << "\n";
-    return oss.str();
-}
-
 } // namespace selector
 } // namespace prompt

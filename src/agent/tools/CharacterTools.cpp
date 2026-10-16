@@ -5,6 +5,8 @@
 #include "utils/SchemaUtils.h"
 
 #include <algorithm>
+#include <map>
+#include <set>
 #include <spdlog/spdlog.h>
 
 namespace agent {
@@ -263,7 +265,8 @@ json UpdateCharacterTool::execute(const json& args) {
                     validateIdArray(chapters, arr, "chapter_appearances", "update_character");
                 updated.push_back(key);
             }
-            // 不在白名单中的字段 → 静默忽略
+            // 白名单外的字段在这里被忽略；正常路径上管线层的递归校验会先拒掉未知键，这里的
+            // 忽略是兜底（校验被跳过的窗口见 ToolPipeline 的 schema_cache_ 注释）。
         }
     });
     if (!ok) {
@@ -387,10 +390,29 @@ json DeleteCharacterTool::execute(const json& args) {
 // UpdateCharacterRelationshipsTool
 // ===========================================================================
 
+// relationships 元素的嵌套 schema。
+// 与 scenes 同一错配模式：实现逐项按 Relationship 结构体取值，此前却用
+// stringArrayProp 声明成"字符串数组"，与实际接受格式相反。
+static json relationshipItemSchema() {
+    return utils::schema::object({
+        {"target_character_id", utils::schema::stringProp("关系指向的角色 ID")},
+        {"type",                utils::schema::stringProp("关系类型（如朋友/对手/师徒）")},
+        {"description",         utils::schema::stringProp("关系描述")},
+        {"public_status",       utils::schema::stringProp("对外公开的状态")},
+        {"private_feeling",     utils::schema::stringProp("私下真实情感")},
+        {"status",              utils::schema::stringProp("关系状态，默认 active")},
+        {"tension",             utils::schema::integerProp("关系张力值")}
+    }, {}, /*allowExtra=*/true);
+    // allowExtra=true 的理由同 scenes：Relationship 的 to_json 总会输出 metadata，整体替换要求
+    // 模型把读到的关系对象原样回传，严格模式会把回传的 metadata 判成未知字段而整次拒绝。
+}
+
 json UpdateCharacterRelationshipsTool::parameters() const {
     return utils::schema::object({
         {"character_id", utils::schema::stringProp("角色 ID")},
-        {"relationships", utils::schema::stringArrayProp("完整关系列表（替换全部），每项为 object 含 target_character_id/type/description 等字段")}
+        {"relationships", utils::schema::objectArrayProp(
+            "完整关系列表，替换该角色全部关系；传空数组表示清空。每项为一个关系对象",
+            relationshipItemSchema())}
     }, {"character_id", "relationships"});
 }
 
@@ -423,6 +445,26 @@ json UpdateCharacterRelationshipsTool::execute(const json& args) {
         rel.tension            = r.value("tension", 0);
     }
 
+    // 元素解析不全时的处置（与 update_chapter_scenes 同一策略）：
+    //   ① 非空输入却一条都没解析出来 → 拒绝：照旧执行会清空该角色全部关系却回报 success。
+    //   ② 部分解析成功 → 写入合法项，并把被跳过的项逐条回报，避免模型误以为全部写入。
+    json skipped = json::array();
+    if (parsed.size() != rels.size()) {
+        for (size_t i = 0; i < rels.size(); ++i) {
+            if (!rels[i].is_object()) {
+                skipped.push_back({{"index", i},
+                                   {"received_type", rels[i].type_name()},
+                                   {"reason", "不是对象；每项须为关系对象（含 target_character_id/"
+                                              "type/description 等字段）"}});
+            }
+        }
+        if (parsed.empty()) {
+            return {{"error", "relationships 的 " + std::to_string(rels.size()) +
+                              " 项都不是对象，已拒绝执行以免清空该角色原有关系"},
+                    {"skipped", skipped}};
+        }
+    }
+
     // 锁内小改：整体替换关系列表（updateCharacter 自动 markDirty）
     std::string result_id;
     size_t count = 0;
@@ -434,7 +476,14 @@ json UpdateCharacterRelationshipsTool::execute(const json& args) {
     if (!ok) return {{"error", "角色不存在"}};
     project_->save();
     spdlog::info("[update_character_relationships] {} 更新 {} 条关系", result_id, count);
-    return {{"success", true}, {"character_id", result_id}, {"relationship_count", count}};
+    json result = {{"success", true}, {"character_id", result_id}, {"relationship_count", count}};
+    if (!skipped.empty()) {
+        result["skipped"] = skipped;
+        result["warning"] = "有 " + std::to_string(skipped.size()) +
+                            " 项格式不合法已被跳过；本工具为整体替换，该角色关系现为 " +
+                            std::to_string(count) + " 条";
+    }
+    return result;
 }
 
 // ===========================================================================
@@ -502,6 +551,118 @@ json AddCharacterDevelopmentTool::execute(const json& args) {
     return {{"success", true}, {"development_id", dev_id}};
 }
 
+// update_relationship 的 fields 白名单 schema。
+// 刻意**不含 target_character_id**：它是定位键——改指向对象意味着"删掉旧关系 + 新增一条新关系"，
+// 不是字段编辑，只能走 update_character_relationships 整体替换；白名单外字段会被递归校验拦下。
+static json relationshipEditableFieldsSchema() {
+    return utils::schema::object({
+        {"type",            utils::schema::stringProp("关系类型（如朋友/对手/师徒）")},
+        {"description",     utils::schema::stringProp("关系描述")},
+        {"public_status",   utils::schema::stringProp("对外公开的状态")},
+        {"private_feeling", utils::schema::stringProp("私下真实情感")},
+        {"status",          utils::schema::stringProp("关系状态，默认 active")},
+        {"tension",         utils::schema::integerProp("关系张力值")}
+    });
+}
+
+json UpdateRelationshipTool::parameters() const {
+    return utils::schema::object({
+        {"character_id",        utils::schema::stringProp("角色 ID")},
+        {"target_character_id", utils::schema::stringProp("关系指向的目标角色 ID（先用 get_character 查得，勿臆造）")},
+        {"fields",              relationshipEditableFieldsSchema()}
+    }, {"character_id", "target_character_id", "fields"});
+}
+
+json UpdateRelationshipTool::execute(const json& args) {
+    const std::string cid    = args.value("character_id", "");
+    const std::string target = args.value("target_character_id", "");
+    if (cid.empty())    return {{"error", "character_id 不能为空"}};
+    if (target.empty()) return {{"error", "target_character_id 不能为空"}};
+    // 先 contains 再取：const operator[] 缺键时是 assert/UB（详见 update_scene 的同处注释）。
+    if (!args.contains("fields")) return {{"error", "fields 必须是非空的对象"}};
+    const json& fields = args["fields"];
+    if (!fields.is_object() || fields.empty()) return {{"error", "fields 必须是非空的对象"}};
+
+    // 锁外取校验快照（软校验用，不持锁）
+    const auto characters = project_->getCharacters();
+
+    // 字段白名单：5 个字符串 + 1 个整数（target_character_id 是定位键，不可改）
+    using StrField = std::string Relationship::*;
+    static const std::map<std::string, StrField> kStringMap = {
+        {"type",            &Relationship::type},
+        {"description",     &Relationship::description},
+        {"public_status",   &Relationship::public_status},
+        {"private_feeling", &Relationship::private_feeling},
+        {"status",          &Relationship::status},
+    };
+    using NumField = int Relationship::*;
+    static const std::map<std::string, NumField> kNumMap = {
+        {"tension",         &Relationship::tension},
+    };
+
+    // 锁内小改：只动 target_character_id 命中的那一条（updateCharacter 自动 markDirty）
+    std::vector<std::string> updated;
+    std::string result_id;
+    // target_character_id 是定位键，但整体替换工具并不按它去重，因此同一角色可能存在
+    // 两条指向同一目标的关系；此时按歧义处理、一条都不改，而不是"改第一条却回报 success"。
+    size_t matches = 0;
+    const bool ok = project_->updateCharacter(cid, [&](Character& ch) {
+        result_id = ch.id;
+        matches = static_cast<size_t>(std::count_if(ch.relationships.begin(), ch.relationships.end(),
+                    [&](const Relationship& r) { return r.target_character_id == target; }));
+        if (matches != 1) return;
+        for (auto& rel : ch.relationships) {
+            if (rel.target_character_id != target) continue;
+            for (auto it = fields.begin(); it != fields.end(); ++it) {
+                const std::string& key = it.key();
+                const json& value = it.value();
+                if (auto si = kStringMap.find(key); si != kStringMap.end() && value.is_string()) {
+                    rel.*si->second = value.get<std::string>();
+                    updated.push_back(key);
+                } else if (auto ni = kNumMap.find(key); ni != kNumMap.end() && value.is_number_integer()) {
+                    rel.*ni->second = value.get<int>();
+                    updated.push_back(key);
+                }
+                // 白名单外或类型不符 → 不计入 updated（下方统一报错，不静默吞掉）
+            }
+            // A6: 目标角色存在性软校验（warn 不阻断，与 update_character_relationships 一致）
+            validateIdArray(characters, std::vector<std::string>{rel.target_character_id},
+                            "target_character_id", "update_relationship");
+            break;
+        }
+    });
+    if (!ok) return {{"error", "角色 '" + cid + "' 不存在"}};
+    if (matches == 0) {
+        return {{"error", "角色 '" + cid + "' 没有指向 '" + target + "' 的关系。"
+                          "请先用 get_character 查得现有关系的 target_character_id，勿臆造"}};
+    }
+    if (matches > 1) {
+        return {{"error", "角色 '" + cid + "' 有 " + std::to_string(matches) + " 条指向 '" + target
+                          + "' 的关系，无法确定要改哪一条。请用 update_character_relationships "
+                          "整体替换以合并重复关系"}};
+    }
+    if (updated.empty()) {
+        return {{"error", "没有可修改的字段（可改：type/description/public_status/private_feeling/"
+                          "status/tension；target_character_id 不可改——改指向需删旧关系再新增）"}};
+    }
+
+    project_->save();
+    std::string fields_str;
+    for (size_t i = 0; i < updated.size(); ++i) {
+        if (i > 0) fields_str += ", ";
+        fields_str += updated[i];
+    }
+    spdlog::info("[update_relationship] {}/{} 更新 {} 个字段: {}",
+                 result_id, target, updated.size(), fields_str);
+
+    return {
+        {"success", true},
+        {"character_id", result_id},
+        {"target_character_id", target},
+        {"updated_fields", updated}
+    };
+}
+
 } // namespace agent
 
 REGISTER_TOOL(agent::GetCharacterTool, "get_character", get_character)
@@ -510,4 +671,5 @@ REGISTER_TOOL(agent::CreateCharacterTool, "create_character", create_character)
 REGISTER_TOOL(agent::UpdateCharacterTool, "update_character", update_character)
 REGISTER_TOOL(agent::DeleteCharacterTool, "delete_character", delete_character)
 REGISTER_TOOL(agent::UpdateCharacterRelationshipsTool, "update_character_relationships", update_character_relationships)
+REGISTER_TOOL(agent::UpdateRelationshipTool, "update_relationship", update_relationship)
 REGISTER_TOOL(agent::AddCharacterDevelopmentTool, "add_character_development", add_character_development)

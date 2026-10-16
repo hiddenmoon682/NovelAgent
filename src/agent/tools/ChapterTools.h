@@ -133,7 +133,9 @@ public:
 
 // 更新章节的场景列表（完整替换）。
 // 参数: chapter_id (string, required), scenes (array of scene objects, required)
-// 返回: { success, chapter_id, scene_count }
+// 返回: { success, chapter_id, scene_count }。输入中若有元素不是对象：写入合法项并额外
+//       返回 skipped（逐条索引/收到类型/原因）与 warning；若全部元素都不合法则拒绝执行
+//       （避免把本章场景清空），返回 { error, skipped }。传空数组是明确的清空意图，照常执行。
 class UpdateChapterScenesTool : public BuiltInTool {
     std::shared_ptr<ProjectAccess> project_;
 public:
@@ -143,6 +145,26 @@ public:
         return "完整替换指定章节的场景列表（每项含 goal/conflict/turning_point 等戏剧单元字段）。";
     }
     std::string brief() const override { return "替换章节场景列表"; }
+    nlohmann::json parameters() const override;
+    nlohmann::json execute(const nlohmann::json& args) override;
+    ToolCategory category() const override { return ToolCategory::Content; }
+};
+
+// 按 ID 局部修改单个场景的字段（只改传进来的字段，本章其它场景与本次未传的字段原样不动）。
+// 参数: chapter_id (string, required), scene_id (string, required), fields (object, required)
+// 返回: { success, chapter_id, scene_id, updated_fields }
+// 与 update_chapter_scenes 的分工：小改动用本工具，重排/增删整表才用那个（整体替换）。
+// fields 不接受 id——场景 ID 由程序维护（空则补号、重名改写），允许改 ID 会让按 ID 定位失效。
+class UpdateSceneTool : public BuiltInTool {
+    std::shared_ptr<ProjectAccess> project_;
+public:
+    explicit UpdateSceneTool(std::shared_ptr<ProjectAccess> p) : project_(p) {}
+    std::string name() const override { return "update_scene"; }
+    std::string description() const override {
+        return "按场景 ID 局部修改某章的单个场景：只更新 fields 里传的字段，本章其它场景与本次未传的"
+               "字段保持不变。改动单个场景或单个字段时优先用它，不要用 update_chapter_scenes 重传整表。";
+    }
+    std::string brief() const override { return "局部修改单个场景字段"; }
     nlohmann::json parameters() const override;
     nlohmann::json execute(const nlohmann::json& args) override;
     ToolCategory category() const override { return ToolCategory::Content; }
